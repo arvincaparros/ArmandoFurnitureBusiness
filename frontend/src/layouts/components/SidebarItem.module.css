@@ -1,0 +1,31 @@
+.root {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+
+  padding: 10px 14px;
+
+  text-decoration: none;
+
+  border-radius: 10px;
+
+  color: #475569;
+
+  transition: 0.2s;
+
+  cursor: pointer;
+}
+
+.root:hover {
+  background: #2563eb;
+  color: #eff6ff;
+}
+
+.active {
+  background: #2563eb;
+  color: #eff6ff;
+}
+
+.active:hover {
+  background: #2563eb;
+}
