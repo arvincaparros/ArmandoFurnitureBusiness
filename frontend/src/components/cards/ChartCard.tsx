@@ -1,8 +1,9 @@
 import {
+  ActionIcon,
   Card,
   Group,
+  Stack,
   Text,
-  ActionIcon,
 } from '@mantine/core'
 
 import { MoreHorizontal } from 'lucide-react'
@@ -23,13 +24,20 @@ const ChartCard = ({
   return (
     <Card
       withBorder
+      shadow="sm"
       radius="lg"
-      shadow="xs"
       p="lg"
+      h="100%"
     >
-      <Group justify="space-between" mb="md">
+      <Group
+        justify="space-between"
+        mb="lg"
+      >
         <div>
-          <Text fw={600}>
+          <Text
+            fw={600}
+            size="lg"
+          >
             {title}
           </Text>
 
@@ -37,6 +45,7 @@ const ChartCard = ({
             <Text
               size="sm"
               c="dimmed"
+              mt={4}
             >
               {subtitle}
             </Text>
@@ -50,7 +59,12 @@ const ChartCard = ({
         )}
       </Group>
 
-      {children}
+      <Stack
+        justify="center"
+        h="100%"
+      >
+        {children}
+      </Stack>
     </Card>
   )
 }

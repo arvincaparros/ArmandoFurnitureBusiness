@@ -6,7 +6,7 @@ import { dashboardStats } from '../mock/dashboardData'
 
 const DashboardStats = () => {
   return (
-    <Grid mb="xl">
+    <Grid mb="sm">
       {dashboardStats.map((stat) => (
         <Grid.Col
           key={stat.id}

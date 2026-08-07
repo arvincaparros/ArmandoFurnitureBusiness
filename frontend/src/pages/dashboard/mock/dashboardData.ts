@@ -1,66 +1,106 @@
 import {
-  Boxes,
-  Factory,
-  Package,
+  Archive,
+  DollarSign,
+  Trash2,
   TrendingUp,
 } from 'lucide-react'
 
 import type {
   DashboardStat,
-  ProductionTrend,
-  ResourceUsage,
   RecentActivity,
 } from '../types'
 
 export const dashboardStats: DashboardStat[] = [
   {
-    id: 'products',
-    title: 'Products',
-    value: 125,
-    description: '12 new this month',
-    icon: Package,
+    id: 'total-resources',
+    title: 'Total Available Resources',
+    value: '1,248 units',
+    description: 'Current inventory',
+    icon: Archive,
     color: 'blue',
   },
   {
-    id: 'resources',
-    title: 'Resources',
-    value: 58,
-    description: 'Available inventory',
-    icon: Boxes,
+    id: 'expected-revenue',
+    title: 'Expected Revenue',
+    value: '₱285,400',
+    description: 'Projected sales',
+    icon: DollarSign,
     color: 'green',
   },
   {
-    id: 'production',
-    title: 'Production',
-    value: 320,
-    description: 'Completed today',
-    icon: Factory,
+    id: 'expected-profit',
+    title: 'Expected Profit',
+    value: '₱96,720',
+    description: 'Estimated net profit',
+    icon: TrendingUp,
     color: 'orange',
   },
   {
-    id: 'efficiency',
-    title: 'Efficiency',
-    value: '95%',
-    description: 'Production efficiency',
-    icon: TrendingUp,
-    color: 'teal',
+    id: 'waste-percentage',
+    title: 'Waste Percentage',
+    value: '4.8%',
+    description: 'Material waste',
+    icon: Trash2,
+    color: 'red',
   },
 ]
 
-export const productionTrend: ProductionTrend[] = [
-  { month: 'Jan', production: 120 },
-  { month: 'Feb', production: 145 },
-  { month: 'Mar', production: 170 },
-  { month: 'Apr', production: 190 },
-  { month: 'May', production: 220 },
-  { month: 'Jun', production: 250 },
+export const productionRecommendations = [
+  {
+    id: 1,
+    name: 'Dining Table (6-seater)',
+    quantity: '12 units',
+    profit: '₱36,000',
+  },
+  {
+    id: 2,
+    name: 'Wardrobe Cabinet',
+    quantity: '6 units',
+    profit: '₱24,000',
+  },
+  {
+    id: 3,
+    name: 'Bookshelf',
+    quantity: '15 units',
+    profit: '₱18,000',
+  },
+  {
+    id: 4,
+    name: 'Carved Chair',
+    quantity: '24 units',
+    profit: '₱18,720',
+  },
 ]
 
-export const resourceUsage: ResourceUsage[] = [
-  { name: 'Wood', value: 40 },
-  { name: 'Steel', value: 25 },
-  { name: 'Fabric', value: 20 },
-  { name: 'Foam', value: 15 },
+export const resourceUtilization = [
+  {
+    name: 'Wood',
+    value: 33,
+  },
+  {
+    name: 'Labor',
+    value: 20,
+  },
+  {
+    name: 'Machine Hours',
+    value: 18,
+  },
+  {
+    name: 'Glue',
+    value: 8,
+  },
+  {
+    name: 'Nails',
+    value: 6,
+  },
+  {
+    name: 'Sandpaper',
+    value: 5,
+  },
+  {
+    name: 'Epoxy',
+    value: 4,
+  },
 ]
 
 export const recentActivities: RecentActivity[] = [
