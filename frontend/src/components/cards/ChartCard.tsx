@@ -1,3 +1,5 @@
+import type { ReactNode } from 'react'
+
 import {
   ActionIcon,
   Card,
@@ -11,15 +13,15 @@ import { MoreHorizontal } from 'lucide-react'
 interface ChartCardProps {
   title: string
   subtitle?: string
-  children: React.ReactNode
-  action?: React.ReactNode
+  children: ReactNode
+  rightSection?: ReactNode
 }
 
 const ChartCard = ({
   title,
   subtitle,
   children,
-  action,
+  rightSection,
 }: ChartCardProps) => {
   return (
     <Card
@@ -29,33 +31,27 @@ const ChartCard = ({
       p="lg"
       h="100%"
     >
-      <Group
-        justify="space-between"
-        mb="lg"
-      >
+      <Group justify="space-between" align="flex-start">
         <div>
-          <Text
-            fw={600}
-            size="lg"
-          >
+            <Text fw={700} size="xl">
             {title}
-          </Text>
-
-          {subtitle && (
-            <Text
-              size="sm"
-              c="dimmed"
-              mt={4}
-            >
-              {subtitle}
             </Text>
-          )}
+
+            {subtitle && (
+            <Text
+                size="sm"
+                c="dimmed"
+                mt={4}
+            >
+                {subtitle}
+            </Text>
+            )}
         </div>
 
-        {action ?? (
-          <ActionIcon variant="subtle">
+        {rightSection ?? (
+            <ActionIcon variant="subtle">
             <MoreHorizontal size={18} />
-          </ActionIcon>
+            </ActionIcon>
         )}
       </Group>
 

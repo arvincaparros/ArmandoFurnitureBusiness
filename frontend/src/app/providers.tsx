@@ -43,7 +43,7 @@ const AppThemeProvider = ({
           : classicTheme
       }
     >
-      <Notifications position="top-right" />
+      <Notifications position="bottom-right" />
       {children}
     </MantineProvider>
   )
