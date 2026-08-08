@@ -10,7 +10,7 @@ import { AppLayout } from '../layouts'
 import LoginPage from '../pages/auth/LoginPage'
 import DashboardPage from '../pages/dashboard/DashboardPage'
 import ResourcesPage from '../pages/resources-management/ResourcesPage'
-import ProductsPage from '../pages/products/ProductsPage'
+import ProductDataPage from '../pages/product-data-management/ProductDataPage'
 import ProductionPage from '../pages/production/ProductionPage'
 import ReportsPage from '../pages/reports/ReportsPage'
 import HistoryPage from '../pages/history/HistoryPage'
@@ -48,7 +48,7 @@ const AppRouter = () => {
 
           <Route
             path="/products"
-            element={<ProductsPage />}
+            element={<ProductDataPage />}
           />
 
           <Route

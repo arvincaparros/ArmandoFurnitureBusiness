@@ -67,6 +67,7 @@ const AppTable = <T extends object>({
               key={String(column.accessor)}
               w={column.width}
               style={{
+                whiteSpace: 'nowrap',
                 textAlign: column.textAlign,
                 cursor: column.sortable
                   ? 'pointer'
@@ -125,8 +126,11 @@ const AppTable = <T extends object>({
             <Table.Tr key={index}>
               {columns.map((column) => (
                 <Table.Td
-                    key={String(column.accessor)}
-                    ta={column.textAlign}
+                  key={String(column.accessor)}
+                  ta={column.textAlign}
+                  style={{
+                    whiteSpace: 'nowrap',
+                  }}
                 >
                     {column.render ? (
                         <Group
