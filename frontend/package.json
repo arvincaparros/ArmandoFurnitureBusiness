@@ -12,6 +12,7 @@
   "dependencies": {
     "@emotion/react": "^11.14.0",
     "@hookform/resolvers": "^5.7.1",
+    "@mantine/charts": "^9.5.1",
     "@mantine/core": "^9.5.1",
     "@mantine/form": "^9.5.1",
     "@mantine/hooks": "^9.5.1",

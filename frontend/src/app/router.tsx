@@ -12,7 +12,7 @@ import DashboardPage from '../pages/dashboard/DashboardPage'
 import ResourcesPage from '../pages/resources-management/ResourcesPage'
 import ProductDataPage from '../pages/product-data-management/ProductDataPage'
 import ProductionPage from '../pages/production-allocation/ProductionAllocationPage'
-import ReportsPage from '../pages/reports/ReportsPage'
+import ReportsPage from '../pages/resource-utilization-report/ResourceUtilizationReportPage'
 import HistoryPage from '../pages/history/HistoryPage'
 import ForecastPage from '../pages/forecast/ForecastPage'
 
