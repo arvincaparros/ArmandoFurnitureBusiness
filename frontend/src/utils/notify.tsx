@@ -4,6 +4,7 @@ import {
   Pencil,
   Trash2,
   Save,
+  Download,
 } from 'lucide-react'
 
 export const notify = {
@@ -40,6 +41,15 @@ export const notify = {
       title: 'Changes Saved',
       message: 'All changes were saved successfully.',
       icon: <Save size={18} />,
+    })
+  },
+
+  exported(type: 'CSV' | 'Excel') {
+    notifications.show({
+      color: 'green',
+      title: `${type} Export Complete`,
+      message: `Your ${type} file was downloaded successfully.`,
+      icon: <Download size={18} />,
     })
   },
 }

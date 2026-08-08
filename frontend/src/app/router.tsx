@@ -13,7 +13,7 @@ import ResourcesPage from '../pages/resources-management/ResourcesPage'
 import ProductDataPage from '../pages/product-data-management/ProductDataPage'
 import ProductionPage from '../pages/production-allocation/ProductionAllocationPage'
 import ReportsPage from '../pages/resource-utilization-report/ResourceUtilizationReportPage'
-import HistoryPage from '../pages/history/HistoryPage'
+import HistoryPage from '../pages/transaction-history/TransactionHistoryPage'
 import ForecastPage from '../pages/forecast/ForecastPage'
 
 const AppRouter = () => {
