@@ -9,7 +9,7 @@ import { AppLayout } from '../layouts'
 
 import LoginPage from '../pages/auth/LoginPage'
 import DashboardPage from '../pages/dashboard/DashboardPage'
-import ResourcesPage from '../pages/resources/ResourcesPage'
+import ResourcesPage from '../pages/resources-management/ResourcesPage'
 import ProductsPage from '../pages/products/ProductsPage'
 import ProductionPage from '../pages/production/ProductionPage'
 import ReportsPage from '../pages/reports/ReportsPage'
