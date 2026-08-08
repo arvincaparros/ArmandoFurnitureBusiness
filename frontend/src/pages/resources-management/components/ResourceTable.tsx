@@ -1,3 +1,4 @@
+import { ScrollArea } from '@mantine/core'
 import AppTable, {
   type Column,
 } from '../../../components/tables/AppTable'
@@ -60,14 +61,19 @@ const ResourceTable = ({
   ]
 
   return (
-    <AppTable<Resource>
-        columns={columns}
-        data={resources}
-        sortBy={sortBy}
-        reverse={reverse}
-        onSort={onSort}
-        emptyMessage="No resources found."
-    />
+    <ScrollArea
+      type="auto"
+      offsetScrollbars
+    >
+      <AppTable<Resource>
+          columns={columns}
+          data={resources}
+          sortBy={sortBy}
+          reverse={reverse}
+          onSort={onSort}
+          emptyMessage="No resources found."
+      />
+    </ScrollArea>
   )
 }
 

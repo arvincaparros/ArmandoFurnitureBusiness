@@ -1,5 +1,6 @@
 import {
   Avatar,
+  Box,
   Burger,
   Group,
   Menu,
@@ -25,26 +26,31 @@ const Header = ({
   opened,
   toggle,
 }: HeaderProps) => {
- const { mode } = useThemeMode()
+  const { mode } = useThemeMode()
+
   return (
     <Group
-      h="100%"
-      px="lg"
       justify="space-between"
+      h="100%"
+      px="md"
     >
-      <Group gap="lg">
+      <Group gap="sm">
         <Burger
           opened={opened}
           onClick={toggle}
           hiddenFrom="sm"
+          size="sm"
         />
 
         <Logo />
       </Group>
 
       <Group gap="sm">
-        <ThemeSwitcher />
-        
+        {/* Desktop only */}
+        <Box visibleFrom="md">
+          <ThemeSwitcher />
+        </Box>
+
         <Menu shadow="md" width={220}>
           <Menu.Target>
             <Group
@@ -53,17 +59,25 @@ const Header = ({
             >
               <Avatar
                 radius="xl"
-                color={mode === 'wood' ? 'wood' : 'blue'}
+                color={
+                  mode === 'wood'
+                    ? 'wood'
+                    : 'blue'
+                }
               >
                 A
               </Avatar>
 
-              <ChevronDown size={16} />
+              <Box visibleFrom="md">
+                <ChevronDown size={16} />
+              </Box>
             </Group>
           </Menu.Target>
 
           <Menu.Dropdown>
-            <Menu.Label>Account</Menu.Label>
+            <Menu.Label>
+              Account
+            </Menu.Label>
 
             <Menu.Item
               leftSection={<User size={16} />}
@@ -72,7 +86,9 @@ const Header = ({
             </Menu.Item>
 
             <Menu.Item
-              leftSection={<Settings size={16} />}
+              leftSection={
+                <Settings size={16} />
+              }
             >
               Settings
             </Menu.Item>
@@ -81,7 +97,9 @@ const Header = ({
 
             <Menu.Item
               color="red"
-              leftSection={<LogOut size={16} />}
+              leftSection={
+                <LogOut size={16} />
+              }
             >
               Logout
             </Menu.Item>

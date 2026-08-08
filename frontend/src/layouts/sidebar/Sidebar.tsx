@@ -1,7 +1,15 @@
 import {
   Box,
+  Divider,
+  Group,
   Stack,
+  Text,
+  UnstyledButton,
 } from '@mantine/core'
+
+import { useMediaQuery } from '@mantine/hooks'
+
+import ThemeSwitcher from '../../theme/ThemeSwitcher'
 
 import {
   Boxes,
@@ -11,6 +19,9 @@ import {
   LayoutDashboard,
   Package,
   HistoryIcon,
+  User,
+  Settings,
+  LogOut,
 } from 'lucide-react'
 
 import { useLocation } from 'react-router-dom'
@@ -58,6 +69,10 @@ const menus = [
 const Sidebar = () => {
   const location = useLocation()
 
+  const isMobile = useMediaQuery(
+    '(max-width: 48em)',
+  )
+
   return (
     <Box h="100%" p="md">
       <Stack gap={6}>
@@ -72,6 +87,70 @@ const Sidebar = () => {
             }
           />
         ))}
+
+        {isMobile && (
+          <>
+            <Divider my="md" />
+
+            <Text
+              size="sm"
+              fw={600}
+              c="dimmed"
+              mb="xs"
+            >
+              Appearance
+            </Text>
+
+            <ThemeSwitcher />
+
+            <Divider my="md" />
+
+            <Text
+              size="sm"
+              fw={600}
+              c="dimmed"
+              mb="xs"
+            >
+              Account
+            </Text>
+
+            <UnstyledButton>
+              <Group gap="sm">
+                <User size={18} />
+                <Text size="sm">
+                  Profile
+                </Text>
+              </Group>
+            </UnstyledButton>
+
+            <UnstyledButton mt="sm">
+              <Group gap="sm">
+                <Settings size={18} />
+                <Text size="sm">
+                  Settings
+                </Text>
+              </Group>
+            </UnstyledButton>
+
+            <Divider my="sm" />
+
+            <UnstyledButton>
+              <Group gap="sm">
+                <LogOut
+                  size={18}
+                  color="red"
+                />
+
+                <Text
+                  size="sm"
+                  c="red"
+                >
+                  Logout
+                </Text>
+              </Group>
+            </UnstyledButton>
+          </>
+        )}
       </Stack>
     </Box>
   )
