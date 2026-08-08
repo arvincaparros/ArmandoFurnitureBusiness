@@ -12,7 +12,6 @@ interface StatCardProps {
   value: string | number
   icon: LucideIcon
 
-  description?: string
   color?: string
 }
 
@@ -20,7 +19,6 @@ const StatCard = ({
   title,
   value,
   icon: Icon,
-  description,
   color = 'blue',
 }: StatCardProps) => {
   return (
@@ -30,7 +28,7 @@ const StatCard = ({
       p="lg"
       shadow="xs"
     >
-      <Group justify="space-between" mb="md">
+      <Group justify="space-between" mb="xs">
         <Text
           size="sm"
           c="dimmed"
@@ -44,26 +42,16 @@ const StatCard = ({
           size={42}
           radius="md"
         >
-          <Icon size={22} />
+          <Icon size={20} />
         </ThemeIcon>
       </Group>
 
       <Text
-        size="2rem"
+        size="1.5rem"
         fw={700}
       >
         {value}
       </Text>
-
-      {description && (
-        <Text
-          mt="xs"
-          size="sm"
-          c="dimmed"
-        >
-          {description}
-        </Text>
-      )}
     </Card>
   )
 }

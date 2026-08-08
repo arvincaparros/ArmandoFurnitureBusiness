@@ -9,7 +9,7 @@
 
   border-radius: 10px;
 
-  color: #475569;
+  color: var(--sidebar-text);
 
   transition: 0.2s;
 
@@ -17,15 +17,14 @@
 }
 
 .root:hover {
-  background: #2563eb;
-  color: #eff6ff;
+  background: var(--sidebar-hover);
 }
 
 .active {
-  background: #2563eb;
-  color: #eff6ff;
+  background: var(--sidebar-active);
+  color: var(--sidebar-active-text);
 }
 
 .active:hover {
-  background: #2563eb;
+  background: var(--sidebar-hover);
 }

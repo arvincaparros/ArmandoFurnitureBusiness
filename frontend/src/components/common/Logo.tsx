@@ -1,5 +1,5 @@
 import { Group, Text, ThemeIcon } from '@mantine/core'
-import { Package } from 'lucide-react'
+import { Hammer  } from 'lucide-react'
 
 const Logo = () => {
   return (
@@ -9,7 +9,7 @@ const Logo = () => {
         radius="md"
         variant="light"
       >
-        <Package size={22} />
+        <Hammer size={24} />
       </ThemeIcon>
 
       <div>

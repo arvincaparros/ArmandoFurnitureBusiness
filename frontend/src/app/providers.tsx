@@ -7,7 +7,15 @@ import {
   QueryClientProvider,
 } from '@tanstack/react-query'
 
-import { theme } from '../theme'
+import {
+  classicTheme,
+  woodTheme,
+} from '../theme'
+
+import {
+  ThemeProvider,
+  useThemeMode,
+} from '../theme/ThemeContext'
 
 const queryClient = new QueryClient({
   defaultOptions: {
@@ -22,15 +30,35 @@ const queryClient = new QueryClient({
   },
 })
 
-interface ProvidersProps extends PropsWithChildren {}
+const AppThemeProvider = ({
+  children,
+}: PropsWithChildren) => {
+  const { mode } = useThemeMode()
 
-const Providers = ({ children }: ProvidersProps) => {
+  return (
+    <MantineProvider
+      theme={
+        mode === 'wood'
+          ? woodTheme
+          : classicTheme
+      }
+    >
+      <Notifications position="top-right" />
+      {children}
+    </MantineProvider>
+  )
+}
+
+const Providers = ({
+  children,
+}: PropsWithChildren) => {
   return (
     <QueryClientProvider client={queryClient}>
-      <MantineProvider theme={theme}>
-        <Notifications position="top-right" />
-        {children}
-      </MantineProvider>
+      <ThemeProvider>
+        <AppThemeProvider>
+          {children}
+        </AppThemeProvider>
+      </ThemeProvider>
     </QueryClientProvider>
   )
 }

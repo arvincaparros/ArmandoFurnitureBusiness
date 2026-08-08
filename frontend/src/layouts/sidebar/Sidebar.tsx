@@ -7,10 +7,10 @@ import {
   Boxes,
   Factory,
   FileBarChart,
-  History,
+  ReceiptText,
   LayoutDashboard,
   Package,
-  TrendingUp,
+  HistoryIcon,
 } from 'lucide-react'
 
 import { useLocation } from 'react-router-dom'
@@ -24,34 +24,34 @@ const menus = [
     path: '/dashboard',
   },
   {
-    label: 'Resources',
+    label: 'Resources Management',
     icon: Boxes,
     path: '/resources',
   },
   {
-    label: 'Products',
+    label: 'Product Data Management',
     icon: Package,
     path: '/products',
   },
   {
-    label: 'Production',
+    label: 'Production Allocation',
     icon: Factory,
     path: '/production',
   },
   {
-    label: 'Forecast',
-    icon: TrendingUp,
-    path: '/forecast',
-  },
-  {
-    label: 'Reports',
+    label: 'Resource Utilization Reports',
     icon: FileBarChart,
     path: '/reports',
   },
   {
-    label: 'History',
-    icon: History,
+    label: 'Transaction History',
+    icon: ReceiptText,
     path: '/history',
+  },
+   {
+    label: 'Optimization History',
+    icon: HistoryIcon,
+    path: '/forecast',
   },
 ]
 

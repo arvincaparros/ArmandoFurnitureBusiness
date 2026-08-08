@@ -1,5 +1,4 @@
 import {
-  ActionIcon,
   Avatar,
   Burger,
   Group,
@@ -7,7 +6,6 @@ import {
 } from '@mantine/core'
 
 import {
-  Bell,
   ChevronDown,
   LogOut,
   Settings,
@@ -15,6 +13,8 @@ import {
 } from 'lucide-react'
 
 import Logo from '../../components/common/Logo'
+import ThemeSwitcher from '../../theme/ThemeSwitcher'
+import { useThemeMode } from '../../theme/ThemeContext'
 
 interface HeaderProps {
   opened: boolean
@@ -25,7 +25,7 @@ const Header = ({
   opened,
   toggle,
 }: HeaderProps) => {
-
+ const { mode } = useThemeMode()
   return (
     <Group
       h="100%"
@@ -43,13 +43,8 @@ const Header = ({
       </Group>
 
       <Group gap="sm">
-        <ActionIcon
-          variant="subtle"
-          size="lg"
-        >
-          <Bell size={18} />
-        </ActionIcon>
-
+        <ThemeSwitcher />
+        
         <Menu shadow="md" width={220}>
           <Menu.Target>
             <Group
@@ -58,7 +53,7 @@ const Header = ({
             >
               <Avatar
                 radius="xl"
-                color="blue"
+                color={mode === 'wood' ? 'wood' : 'blue'}
               >
                 A
               </Avatar>

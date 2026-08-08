@@ -16,7 +16,6 @@ const DashboardStats = () => {
             title={stat.title}
             value={stat.value}
             icon={stat.icon}
-            description={stat.description}
             color={stat.color}
           />
         </Grid.Col>

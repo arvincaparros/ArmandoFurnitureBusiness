@@ -1,4 +1,4 @@
-import { Flex, Box, Stack } from '@mantine/core'
+import { Grid, Box, Stack } from '@mantine/core'
 
 import PageHeader from '../../components/common/PageHeader'
 
@@ -12,24 +12,26 @@ const DashboardPage = () => {
     <Stack gap="xs">
       <PageHeader
         title="Dashboard"
-        subtitle="Overview of production optimization and business performance."
+        subtitle="Overview of production capacity and projections."
       />
 
       <DashboardStats />
-   
-      <Flex gap="md" align="stretch">
-        <Box flex={7}>
-            <DashboardRecommendations />
-        </Box>
 
-        <Box flex={5}>
-            <DashboardResourceUtilization />
-        </Box>
-      </Flex>
-
-      <Box mt="sm">
+       <Box mb="sm">
         <DashboardQuickActions />
       </Box>
+   
+      <Grid>
+        <Grid.Col span={{ base: 12, lg: 7 }}>
+            <DashboardRecommendations />
+        </Grid.Col>
+
+        <Grid.Col span={{ base: 12, lg: 5 }}>
+            <DashboardResourceUtilization />
+        </Grid.Col>
+        </Grid>
+
+     
     </Stack>
   )
 }

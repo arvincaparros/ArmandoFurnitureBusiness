@@ -12,10 +12,10 @@ const PageHeader = ({
   rightSection,
 }: PageHeaderProps) => {
   return (
-    <Group justify="space-between" mb="xl">
+    <Group justify="space-between" mb="sm">
       <Box>
         <Text
-          size="2rem"
+          size="1.5rem"
           fw={700}
         >
           {title}
