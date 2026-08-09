@@ -1,3 +1,4 @@
+import { ScrollArea } from '@mantine/core'
 import ChartCard from '../../../components/cards/ChartCard'
 import AppTable from '../../../components/tables/AppTable'
 
@@ -24,10 +25,13 @@ const DashboardRecommendations = () => {
       title="Production Recommendations"
       subtitle="Suggested production plan"
     >
-      <AppTable
-        columns={columns}
-        data={productionRecommendations}
-      />
+      <ScrollArea type="auto" offsetScrollbars>
+        <AppTable
+          columns={columns}
+          data={productionRecommendations}
+        />
+      </ScrollArea>
+     
     </ChartCard>
   )
 }

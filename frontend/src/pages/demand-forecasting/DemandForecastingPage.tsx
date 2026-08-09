@@ -50,7 +50,7 @@ const DemandForecastingPage = () => {
         {/* TABLE */}
         <Box className={classes.table}>
           <ChartCard
-            title="Demand Forecast"
+            title="Forecast Table"
             subtitle={`${forecastItems.length} products forecasted`}
           >
             <ForecastTable

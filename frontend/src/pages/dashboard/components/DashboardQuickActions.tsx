@@ -2,7 +2,7 @@ import {
   Box,
   Button,
   Card,
-  Flex,
+  Grid,
   Stack,
   Text,
 } from '@mantine/core'
@@ -40,45 +40,57 @@ const actions = [
 
 const DashboardQuickActions = () => {
   return (
-    <Card
-      withBorder
-      radius="md"
-      p="md"
-    >
-      <Stack gap="xs">
+    <Card withBorder radius="md" p="md">
+      <Stack gap="md">
         <Text fw={600}>
           Quick Actions
         </Text>
 
-        <Flex gap="md">
+        <Grid>
           {actions.map((action) => {
             const Icon = action.icon
 
             return (
-              <Box
+              <Grid.Col
                 key={action.title}
-                flex={1}
+                span={{
+                  base: 6,
+                  sm: 4,
+                  md: 2.4,
+                }}
               >
-                <Card
-                  withBorder
-                  radius="md"
-                  p="sm"
-                >
-                  <Button
-                    variant="subtle"
-                    fullWidth
-                    leftSection={<Icon size={18} />}
+                <Box h="100%">
+                  <Card
+                    withBorder
+                    radius="md"
+                    p="sm"
+                    h="100%"
                   >
-                    {action.title}
-                  </Button>
-                </Card>
-              </Box>
+                    <Button
+                      variant="subtle"
+                      fullWidth
+                      leftSection={
+                        <Icon size={18} />
+                      }
+                      styles={{
+                        root: {
+                          height: '100%',
+                          minHeight: 42,
+                        },
+                      }}
+                    >
+                      {action.title}
+                    </Button>
+                  </Card>
+                </Box>
+              </Grid.Col>
             )
           })}
-        </Flex>
+        </Grid>
       </Stack>
     </Card>
   )
 }
+
 
 export default DashboardQuickActions

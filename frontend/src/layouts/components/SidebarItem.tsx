@@ -10,6 +10,7 @@ interface SidebarItemProps {
   icon: LucideIcon
   to: string
   active: boolean
+  onNavigate: () => void
 }
 
 const SidebarItem = ({
@@ -17,10 +18,12 @@ const SidebarItem = ({
   icon: Icon,
   to,
   active,
+  onNavigate,
 }: SidebarItemProps) => {
   return (
     <NavLink
       to={to}
+      onClick={onNavigate}
       className={`${classes.root} ${active ? classes.active : ''}`}
     >
       <Icon size={18} />
