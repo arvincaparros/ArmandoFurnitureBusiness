@@ -1,11 +1,18 @@
-from sqlalchemy import Float
-from sqlalchemy import Integer
-from sqlalchemy import String
-from sqlalchemy.orm import Mapped
-from sqlalchemy.orm import mapped_column
+from datetime import datetime
+from decimal import Decimal
 
-from .connection import Base
+from sqlalchemy import (
+    Boolean,
+    DateTime,
+    ForeignKey,
+    Integer,
+    Numeric,
+    String,
+    UniqueConstraint,
+)
+from sqlalchemy.orm import Mapped, mapped_column, relationship
 
+from app.database.connection import Base
 
 class Product(Base):
     __tablename__ = "products"
@@ -21,23 +28,298 @@ class Product(Base):
         nullable=False,
     )
 
-    category: Mapped[str] = mapped_column(
+    selling_price: Mapped[Decimal] = mapped_column(
+        Numeric(12, 2),
+        nullable=False,
+    )
+
+    is_active: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+
+    resource_requirements: Mapped[
+        list["ProductResourceRequirement"]
+    ] = relationship(
+        back_populates="product",
+        cascade="all, delete-orphan",
+    )
+
+    production_allocations: Mapped[
+        list["ProductionAllocation"]
+    ] = relationship(
+        back_populates="product",
+        cascade="all, delete-orphan",
+    )
+
+class Resource(Base):
+    __tablename__ = "resources"
+
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+        index=True,
+    )
+
+    name: Mapped[str] = mapped_column(
         String(100),
         nullable=False,
+        unique=True,
     )
 
-    price: Mapped[float] = mapped_column(
-        Float,
+    resource_type: Mapped[str] = mapped_column(
+        String(50),
         nullable=False,
     )
 
-    production_cost: Mapped[float] = mapped_column(
-        Float,
+    unit: Mapped[str] = mapped_column(
+        String(30),
         nullable=False,
     )
 
-    stock_quantity: Mapped[int] = mapped_column(
+    is_active: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+
+    product_requirements: Mapped[
+        list["ProductResourceRequirement"]
+    ] = relationship(
+        back_populates="resource",
+        cascade="all, delete-orphan",
+    )
+
+    cycle_resources: Mapped[
+        list["CycleResource"]
+    ] = relationship(
+        back_populates="resource",
+        cascade="all, delete-orphan",
+    )
+
+class ProductResourceRequirement(Base):
+    __tablename__ = "product_resource_requirements"
+
+    id: Mapped[int] = mapped_column(
         Integer,
+        primary_key=True,
+        index=True,
+    )
+
+    product_id: Mapped[int] = mapped_column(
+        ForeignKey("products.id", ondelete="CASCADE"),
         nullable=False,
-        default=0,
+        index=True,
+    )
+
+    resource_id: Mapped[int] = mapped_column(
+        ForeignKey("resources.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    quantity_required: Mapped[Decimal] = mapped_column(
+        Numeric(12, 4),
+        nullable=False,
+    )
+
+    product: Mapped["Product"] = relationship(
+        back_populates="resource_requirements",
+    )
+
+    resource: Mapped["Resource"] = relationship(
+        back_populates="product_requirements",
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "product_id",
+            "resource_id",
+            name="uq_product_resource_requirement",
+        ),
+    )
+
+class ProductionCycle(Base):
+    __tablename__ = "production_cycles"
+
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+        index=True,
+    )
+
+    cycle_date: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+    )
+
+    start_date: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+    )
+
+    end_date: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+    )
+
+    status: Mapped[str] = mapped_column(
+        String(30),
+        nullable=False,
+        default="OPEN",
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+    )
+
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+
+    cycle_resources: Mapped[
+        list["CycleResource"]
+    ] = relationship(
+        back_populates="production_cycle",
+        cascade="all, delete-orphan",
+    )
+
+    production_allocations: Mapped[
+        list["ProductionAllocation"]
+    ] = relationship(
+        back_populates="production_cycle",
+        cascade="all, delete-orphan",
+    )
+
+class CycleResource(Base):
+    __tablename__ = "cycle_resources"
+
+    __table_args__ = (
+        UniqueConstraint(
+            "production_cycle_id",
+            "resource_id",
+            name="uq_cycle_resource",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+        index=True,
+    )
+
+    production_cycle_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "production_cycles.id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+        index=True,
+    )
+
+    resource_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "resources.id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+        index=True,
+    )
+
+    available_quantity: Mapped[Decimal] = mapped_column(
+        Numeric(12, 4),
+        nullable=False,
+    )
+
+    unit_price: Mapped[Decimal] = mapped_column(
+        Numeric(12, 4),
+        nullable=False,
+    )
+
+    production_cycle: Mapped["ProductionCycle"] = relationship(
+        back_populates="cycle_resources",
+    )
+
+    resource: Mapped["Resource"] = relationship(
+        back_populates="cycle_resources",
+    )
+
+class ProductionAllocation(Base):
+    __tablename__ = "production_allocations"
+
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+        index=True,
+    )
+
+    production_cycle_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "production_cycles.id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+        index=True,
+    )
+
+    product_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "products.id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+        index=True,
+    )
+
+    quantity: Mapped[Decimal] = mapped_column(
+        Numeric(12, 4),
+        nullable=False,
+    )
+
+    production_cycle: Mapped["ProductionCycle"] = relationship(
+        back_populates="production_allocations",
+    )
+
+    product: Mapped["Product"] = relationship(
+        back_populates="production_allocations",
+    )
+
+    __table_args__ = (
+        UniqueConstraint(
+            "production_cycle_id",
+            "product_id",
+            name="uq_production_allocation",
+        ),
     )
