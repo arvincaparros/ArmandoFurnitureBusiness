@@ -22,6 +22,7 @@ import {
   User,
   Settings,
   LogOut,
+  TrendingUp,
 } from 'lucide-react'
 
 import { useLocation } from 'react-router-dom'
@@ -59,10 +60,15 @@ const menus = [
     icon: ReceiptText,
     path: '/history',
   },
-   {
+  {
     label: 'Optimization History',
     icon: HistoryIcon,
-    path: '/forecast',
+    path: '/optimization-history',
+  },
+  {
+    label: 'Demand Forecasting',
+    icon: TrendingUp,
+    path: '/forecast'
   },
 ]
 

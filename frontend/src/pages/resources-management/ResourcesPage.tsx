@@ -145,6 +145,7 @@ const ResourcesPage = () => {
             w={260}
           />
         }
+       
       >
         <ResourceTable
           resources={sortedResources}

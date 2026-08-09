@@ -14,6 +14,7 @@ import ProductDataPage from '../pages/product-data-management/ProductDataPage'
 import ProductionPage from '../pages/production-allocation/ProductionAllocationPage'
 import ReportsPage from '../pages/resource-utilization-report/ResourceUtilizationReportPage'
 import HistoryPage from '../pages/transaction-history/TransactionHistoryPage'
+import OptimizationHistoryPage from '../pages/optimization-history/OptimizationHistoryPage'
 import ForecastPage from '../pages/forecast/ForecastPage'
 
 const AppRouter = () => {
@@ -64,6 +65,11 @@ const AppRouter = () => {
           <Route
             path="/history"
             element={<HistoryPage />}
+          />
+
+          <Route
+            path="/optimization-history"
+            element={<OptimizationHistoryPage />}
           />
 
           <Route
