@@ -15,7 +15,7 @@ import ProductionPage from '../pages/production-allocation/ProductionAllocationP
 import ReportsPage from '../pages/resource-utilization-report/ResourceUtilizationReportPage'
 import HistoryPage from '../pages/transaction-history/TransactionHistoryPage'
 import OptimizationHistoryPage from '../pages/optimization-history/OptimizationHistoryPage'
-import ForecastPage from '../pages/forecast/ForecastPage'
+import DemandForecastingPage from '../pages/demand-forecasting/DemandForecastingPage'
 
 const AppRouter = () => {
   return (
@@ -73,8 +73,8 @@ const AppRouter = () => {
           />
 
           <Route
-            path="/forecast"
-            element={<ForecastPage />}
+            path="/demand-forecasting"
+            element={<DemandForecastingPage />}
           />
         </Route>
       </Routes>

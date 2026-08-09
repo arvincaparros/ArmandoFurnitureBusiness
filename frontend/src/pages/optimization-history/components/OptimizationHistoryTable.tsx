@@ -1,3 +1,4 @@
+import { ScrollArea } from '@mantine/core'
 import AppTable, {
   type Column,
 } from '../../../components/tables/AppTable'
@@ -47,11 +48,17 @@ const OptimizationHistoryTable = ({
   ]
 
   return (
-    <AppTable
-      columns={columns}
-      data={optimizationHistory}
-      emptyMessage="No optimization history found."
-    />
+    <ScrollArea
+        type="auto"
+        offsetScrollbars
+    >
+        <AppTable
+            columns={columns}
+            data={optimizationHistory}
+            emptyMessage="No optimization history found."
+        />
+    </ScrollArea>
+    
   )
 }
 

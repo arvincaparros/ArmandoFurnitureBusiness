@@ -1,0 +1,131 @@
+.page {
+  display: flex;
+  flex-direction: column;
+  min-height: calc(100vh - 64px);
+}
+
+.content {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr);
+  grid-template-rows: auto 1fr;
+  gap: 16px;
+  flex: 1;
+  min-height: 0;
+}
+
+.table {
+  min-width: 0;
+}
+
+.chart {
+  min-width: 0;
+  min-height: 0;
+}
+
+/* Desktop chatbot */
+.chat {
+  display: none;
+  grid-column: 2;
+  grid-row: 1 / 3;
+  min-width: 0;
+  min-height: 0;
+}
+
+.chatOpen {
+  display: block;
+}
+
+.chatWrapper {
+  position: relative;
+  width: 100%;
+  height: 100%;
+}
+
+.chatCloseButton {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  z-index: 10;
+}
+
+.desktopChatButton {
+  position: fixed;
+  right: 24px;
+  bottom: 24px;
+  z-index: 1001;
+}
+
+/* Mobile chatbot */
+.mobileChat {
+  display: none;
+}
+
+.mobileChatPanel {
+  position: fixed;
+  right: 16px;
+  bottom: 80px;
+  width: min(380px, calc(100vw - 32px));
+  height: 520px;
+  z-index: 1000;
+
+  background: rgba(255, 255, 255, 0.92);
+  backdrop-filter: blur(12px);
+  -webkit-backdrop-filter: blur(12px);
+
+  border: 1px solid rgba(226, 232, 240, 0.9);
+  border-radius: 12px;
+  box-shadow: 0 8px 30px rgba(0, 0, 0, 0.15);
+
+  overflow: hidden;
+}
+
+.mobileChatBackdrop {
+  position: fixed;
+  inset: 0;
+  z-index: 999;
+
+  background: rgba(15, 23, 42, 0.18);
+
+  backdrop-filter: blur(3px);
+  -webkit-backdrop-filter: blur(3px);
+}
+
+.mobileChatButton {
+  position: fixed;
+  right: 20px;
+  bottom: 20px;
+  z-index: 1001;
+}
+
+/* Mobile */
+@media (max-width: 768px) {
+  .page {
+    min-height: auto;
+    height: auto;
+    overflow: visible;
+  }
+
+  .content {
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    min-height: auto;
+  }
+
+  .table,
+  .chart {
+    width: 100%;
+    min-width: 0;
+  }
+
+  /* Hide desktop chatbot and button */
+  .chat,
+  .desktopChatButton {
+    display: none;
+  }
+
+  /* Show mobile chatbot */
+  .mobileChat {
+    display: block;
+  }
+}

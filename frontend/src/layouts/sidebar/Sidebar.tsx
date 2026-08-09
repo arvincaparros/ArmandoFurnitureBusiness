@@ -68,7 +68,7 @@ const menus = [
   {
     label: 'Demand Forecasting',
     icon: TrendingUp,
-    path: '/forecast'
+    path: '/demand-forecasting'
   },
 ]
 
