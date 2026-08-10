@@ -223,6 +223,13 @@ class ProductionCycle(Base):
         cascade="all, delete-orphan",
     )
 
+    optimization_runs: Mapped[
+        list["OptimizationRun"]
+    ] = relationship(
+        back_populates="production_cycle",
+        cascade="all, delete-orphan",
+    )
+
 class CycleResource(Base):
     __tablename__ = "cycle_resources"
 
@@ -323,3 +330,110 @@ class ProductionAllocation(Base):
             name="uq_production_allocation",
         ),
     )
+
+class OptimizationRun(Base):
+    __tablename__ = "optimization_runs"
+
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+        index=True,
+    )
+
+    production_cycle_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "production_cycles.id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+        index=True,
+    )
+
+    started_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+    )
+
+    completed_at: Mapped[datetime | None] = mapped_column(
+        DateTime,
+        nullable=True,
+    )
+
+    duration_ms: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+    )
+
+    status: Mapped[str] = mapped_column(
+        String(30),
+        nullable=False,
+    )
+
+    objective_value: Mapped[Decimal | None] = mapped_column(
+        Numeric(12, 4),
+        nullable=True,
+    )
+
+    total_profit: Mapped[Decimal | None] = mapped_column(
+        Numeric(12, 4),
+        nullable=True,
+    )
+
+    production_cycle: Mapped["ProductionCycle"] = relationship(
+        back_populates="optimization_runs",
+    )
+
+    results: Mapped[
+        list["OptimizationResult"]
+    ] = relationship(
+        back_populates="optimization_run",
+        cascade="all, delete-orphan",
+    )
+
+class OptimizationResult(Base):
+    __tablename__ = "optimization_results"
+
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+        index=True,
+    )
+
+    optimization_run_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "optimization_runs.id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+        index=True,
+    )
+
+    product_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "products.id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+        index=True,
+    )
+
+    recommended_quantity: Mapped[Decimal] = mapped_column(
+        Numeric(12, 4),
+        nullable=False,
+    )
+
+    unit_profit: Mapped[Decimal] = mapped_column(
+        Numeric(12, 4),
+        nullable=False,
+    )
+
+    total_profit: Mapped[Decimal] = mapped_column(
+        Numeric(12, 4),
+        nullable=False,
+    )
+
+    optimization_run: Mapped["OptimizationRun"] = relationship(
+        back_populates="results",
+    )
+
+    product: Mapped["Product"] = relationship()

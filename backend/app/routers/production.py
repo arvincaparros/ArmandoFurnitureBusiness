@@ -28,11 +28,17 @@ from app.schemas.optimization import (
     OptimizationResponse,
 )
 
+from datetime import datetime
+
 from app.services.optimization import (
     get_optimization_data,
     solve_optimization,
     build_optimization_result,
     apply_optimization,
+)
+
+from app.services.optimization_history import (
+    save_optimization_history,
 )
 
 router = APIRouter(
@@ -163,6 +169,8 @@ def optimize_production(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Production cycle has no resources configured",
         )
+    
+    started_at = datetime.now()
 
     try:
         result = solve_optimization(
@@ -178,6 +186,16 @@ def optimize_production(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
         ) from exc
+
+    completed_at = datetime.now()
+
+    save_optimization_history(
+        db=db,
+        cycle_id=cycle_id,
+        started_at=started_at,
+        completed_at=completed_at,
+        result=result,
+    )
 
     return build_optimization_result(
         cycle_id,

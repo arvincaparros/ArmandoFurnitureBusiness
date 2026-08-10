@@ -14,8 +14,11 @@ from app.database.models import (
     CycleResource,
     ProductionAllocation,
     ProductionCycle,
+    OptimizationResult,
+    OptimizationRun,
+    Product,
+    Resource,
 )
-
 
 def get_test_data(db, optimization_cycle):
     return get_optimization_data(
@@ -297,6 +300,15 @@ def test_empty_production_cycle_has_no_resources(db):
         db.commit()
 
 def test_apply_optimization_api(client, optimization_cycle):
+    optimize_response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize",
+        json={
+            "objective": "MAX_PROFIT",
+        },
+    )
+
+    assert optimize_response.status_code == 200
+
     response = client.post(
         f"/api/production-cycles/{optimization_cycle.id}/optimize/apply",
     )
@@ -376,8 +388,22 @@ def test_optimize_and_apply_return_same_result(
     assert apply_data["bottlenecks"] == (
         optimize_data["bottlenecks"]
     )
-    
-def test_apply_optimization_saves_allocations(db, client, optimization_cycle, test_products):
+
+def test_apply_optimization_saves_allocations(
+    db,
+    client,
+    optimization_cycle,
+    test_products,
+):
+    optimize_response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize",
+        json={
+            "objective": "MAX_PROFIT",
+        },
+    )
+
+    assert optimize_response.status_code == 200
+
     response = client.post(
         f"/api/production-cycles/{optimization_cycle.id}/optimize/apply",
     )
@@ -387,7 +413,8 @@ def test_apply_optimization_saves_allocations(db, client, optimization_cycle, te
     allocations = (
         db.query(ProductionAllocation)
         .filter(
-            ProductionAllocation.production_cycle_id == optimization_cycle.id
+            ProductionAllocation.production_cycle_id
+            == optimization_cycle.id
         )
         .order_by(
             ProductionAllocation.product_id
@@ -405,14 +432,30 @@ def test_apply_optimization_saves_allocations(db, client, optimization_cycle, te
     assert allocations[0].product_id == products[
         "Test Chair"
     ].id
+
     assert allocations[0].quantity == Decimal("12.0000")
 
     assert allocations[1].product_id == products[
         "Test Bed Frame"
     ].id
+
     assert allocations[1].quantity == Decimal("12.0000")
 
-def test_apply_optimization_is_repeatable(db, client, optimization_cycle, test_products):
+def test_apply_optimization_is_repeatable(
+    db,
+    client,
+    optimization_cycle,
+    test_products,
+):
+    optimize_response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize",
+        json={
+            "objective": "MAX_PROFIT",
+        },
+    )
+
+    assert optimize_response.status_code == 200
+
     first_response = client.post(
         f"/api/production-cycles/{optimization_cycle.id}/optimize/apply",
     )
@@ -632,3 +675,543 @@ def test_apply_optimization_empty_production_cycle_returns_400(
         db.delete(cycle)
         db.commit()
 
+def test_optimization_history_models(
+    db,
+    optimization_cycle,
+):
+    product = (
+        db.query(Product)
+        .filter(Product.is_active.is_(True))
+        .order_by(Product.id)
+        .first()
+    )
+
+    assert product is not None
+
+    started_at = datetime.now()
+    completed_at = datetime.now()
+
+    optimization_run = OptimizationRun(
+        production_cycle_id=optimization_cycle.id,
+        started_at=started_at,
+        completed_at=completed_at,
+        duration_ms=125,
+        status="OPTIMAL",
+        objective_value=Decimal("63372.0000"),
+        total_profit=Decimal("63372.0000"),
+    )
+
+    db.add(optimization_run)
+    db.commit()
+    db.refresh(optimization_run)
+
+    optimization_result = OptimizationResult(
+        optimization_run_id=optimization_run.id,
+        product_id=product.id,
+        recommended_quantity=Decimal("12.0000"),
+        unit_profit=Decimal("5281.0000"),
+        total_profit=Decimal("63372.0000"),
+    )
+
+    db.add(optimization_result)
+    db.commit()
+    db.refresh(optimization_result)
+
+    assert optimization_run.id is not None
+    assert optimization_result.id is not None
+
+    assert optimization_result.optimization_run_id == (
+        optimization_run.id
+    )
+
+    assert optimization_result.product_id == product.id
+
+    assert optimization_run.results[0].id == (
+        optimization_result.id
+    )
+
+    assert optimization_result.product.id == product.id
+
+def test_save_optimization_history(
+    db,
+    optimization_cycle,
+):
+    from datetime import datetime
+
+    from app.services.optimization_history import (
+        save_optimization_history,
+    )
+
+    started_at = datetime(2026, 8, 10, 10, 0, 0)
+    completed_at = datetime(2026, 8, 10, 10, 0, 0, 125000)
+
+    result = {
+        "status": "Optimal",
+        "objective_value": 63372.0,
+        "allocations": [
+            {
+                "product_id": 1,
+                "product_name": "Test Chair",
+                "quantity": 12,
+                "unit_profit": Decimal("5281.0000"),
+                "total_profit": Decimal("63372.0000"),
+            },
+        ],
+    }
+
+    optimization_run = save_optimization_history(
+        db=db,
+        cycle_id=optimization_cycle.id,
+        started_at=started_at,
+        completed_at=completed_at,
+        result=result,
+    )
+
+    assert optimization_run.id is not None
+    assert optimization_run.production_cycle_id == (
+        optimization_cycle.id
+    )
+
+    assert optimization_run.status == "OPTIMAL"
+
+    assert optimization_run.duration_ms == 125
+
+    assert optimization_run.total_profit == (
+        Decimal("63372.0000")
+    )
+
+    assert optimization_run.objective_value == (
+        Decimal("63372.0000")
+    )
+
+    assert len(optimization_run.results) == 1
+
+    history_result = optimization_run.results[0]
+
+    assert history_result.product_id == 1
+    assert history_result.recommended_quantity == (
+        Decimal("12.0000")
+    )
+
+    assert history_result.unit_profit == (
+        Decimal("5281.0000")
+    )
+
+    assert history_result.total_profit == (
+        Decimal("63372.0000")
+    )
+
+def test_optimize_saves_optimization_history(
+    client,
+    db,
+    optimization_cycle,
+):
+    response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize",
+        json={
+            "objective": "MAX_PROFIT",
+        },
+    )
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    runs = (
+        db.query(OptimizationRun)
+        .filter(
+            OptimizationRun.production_cycle_id
+            == optimization_cycle.id
+        )
+        .all()
+    )
+
+    assert len(runs) == 1
+
+    optimization_run = runs[0]
+
+    assert optimization_run.status == "OPTIMAL"
+
+    assert optimization_run.production_cycle_id == (
+        optimization_cycle.id
+    )
+
+    assert optimization_run.started_at is not None
+    assert optimization_run.completed_at is not None
+    assert optimization_run.duration_ms is not None
+
+    assert optimization_run.objective_value == (
+        Decimal("63372.0000")
+    )
+
+    assert optimization_run.total_profit == (
+        Decimal("63372.0000")
+    )
+
+    assert len(optimization_run.results) == 3
+
+    result_by_product = {
+        result.product_id: result
+        for result in optimization_run.results
+    }
+
+    for allocation in data["allocations"]:
+        history_result = result_by_product[
+            allocation["product_id"]
+        ]
+
+        assert history_result.recommended_quantity == (
+            Decimal(str(allocation["quantity"]))
+        )
+
+        assert history_result.unit_profit == (
+            Decimal(str(allocation["unit_profit"]))
+        )
+
+        assert history_result.total_profit == (
+            Decimal(str(allocation["total_profit"]))
+        )
+
+def test_get_optimization_history(
+    client,
+    optimization_cycle,
+):
+    response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize",
+        json={
+            "objective": "MAX_PROFIT",
+        },
+    )
+
+    assert response.status_code == 200
+
+    response = client.get(
+        "/api/optimization/history"
+    )
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert len(data) == 1
+
+    history = data[0]
+
+    assert history["production_cycle_id"] == (
+        optimization_cycle.id
+    )
+
+    assert history["status"] == "OPTIMAL"
+
+    assert history["objective_value"] == "63372.0000"
+
+    assert history["total_profit"] == "63372.0000"
+
+    assert len(history["results"]) == 3
+
+def test_get_optimization_history_by_cycle(
+    client,
+    optimization_cycle,
+):
+    response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize",
+        json={
+            "objective": "MAX_PROFIT",
+        },
+    )
+
+    assert response.status_code == 200
+
+    response = client.get(
+        "/api/optimization/history",
+        params={
+            "cycle_id": optimization_cycle.id,
+        },
+    )
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert len(data) == 1
+
+    assert data[0]["production_cycle_id"] == (
+        optimization_cycle.id
+    )
+
+def test_get_optimization_history_detail(
+    client,
+    optimization_cycle,
+):
+    response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize",
+        json={
+            "objective": "MAX_PROFIT",
+        },
+    )
+
+    assert response.status_code == 200
+
+    response = client.get(
+        "/api/optimization/history"
+    )
+
+    assert response.status_code == 200
+
+    history = response.json()[0]
+
+    run_id = history["id"]
+
+    response = client.get(
+        f"/api/optimization/history/{run_id}"
+    )
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert data["id"] == run_id
+    assert data["production_cycle_id"] == (
+        optimization_cycle.id
+    )
+
+    assert data["status"] == "OPTIMAL"
+    assert len(data["results"]) == 3
+
+def test_get_optimization_history_detail_not_found(
+    client,
+):
+    response = client.get(
+        "/api/optimization/history/999999"
+    )
+
+    assert response.status_code == 404
+
+    assert response.json()["detail"] == (
+        "Optimization run not found"
+    )
+
+def test_apply_optimization_without_history_returns_400(
+    client,
+    optimization_cycle,
+):
+    response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize/apply",
+    )
+
+    assert response.status_code == 400
+
+    assert response.json()["detail"] == (
+        "No optimization result found for production cycle."
+    )
+
+def test_multiple_optimization_runs_are_preserved(
+    db,
+    client,
+    optimization_cycle,
+):
+    first_response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize",
+        json={
+            "objective": "MAX_PROFIT",
+        },
+    )
+
+    assert first_response.status_code == 200
+
+    second_response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize",
+        json={
+            "objective": "MAX_PROFIT",
+        },
+    )
+
+    assert second_response.status_code == 200
+
+    runs = (
+        db.query(OptimizationRun)
+        .filter(
+            OptimizationRun.production_cycle_id
+            == optimization_cycle.id
+        )
+        .order_by(OptimizationRun.id)
+        .all()
+    )
+
+    assert len(runs) == 2
+
+    assert runs[0].id < runs[1].id
+
+    assert runs[0].status == "OPTIMAL"
+    assert runs[1].status == "OPTIMAL"
+
+    assert len(runs[0].results) == 3
+    assert len(runs[1].results) == 3
+
+def test_apply_optimization_does_not_create_new_history(
+    db,
+    client,
+    optimization_cycle,
+):
+    optimize_response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize",
+        json={
+            "objective": "MAX_PROFIT",
+        },
+    )
+
+    assert optimize_response.status_code == 200
+
+    runs_before = (
+        db.query(OptimizationRun)
+        .filter(
+            OptimizationRun.production_cycle_id
+            == optimization_cycle.id
+        )
+        .count()
+    )
+
+    assert runs_before == 1
+
+    apply_response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize/apply",
+    )
+
+    assert apply_response.status_code == 200
+
+    runs_after = (
+        db.query(OptimizationRun)
+        .filter(
+            OptimizationRun.production_cycle_id
+            == optimization_cycle.id
+        )
+        .count()
+    )
+
+    assert runs_after == 1
+
+def test_apply_optimization_uses_latest_history(
+    db,
+    client,
+    optimization_cycle,
+):
+    first_response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize",
+        json={
+            "objective": "MAX_PROFIT",
+        },
+    )
+
+    assert first_response.status_code == 200
+
+    second_response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize",
+        json={
+            "objective": "MAX_PROFIT",
+        },
+    )
+
+    assert second_response.status_code == 200
+
+    runs = (
+        db.query(OptimizationRun)
+        .filter(
+            OptimizationRun.production_cycle_id
+            == optimization_cycle.id
+        )
+        .order_by(OptimizationRun.id)
+        .all()
+    )
+
+    assert len(runs) == 2
+
+    latest_run = runs[-1]
+
+    assert len(latest_run.results) > 0
+
+    result_to_modify = latest_run.results[0]
+
+    product_id = result_to_modify.product_id
+
+    result_to_modify.recommended_quantity = Decimal(
+        "10.0000"
+    )
+
+    db.commit()
+
+    response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize/apply",
+    )
+
+    assert response.status_code == 200
+
+    allocations = (
+        db.query(ProductionAllocation)
+        .filter(
+            ProductionAllocation.production_cycle_id
+            == optimization_cycle.id
+        )
+        .all()
+    )
+
+    applied_allocation = next(
+        allocation
+        for allocation in allocations
+        if allocation.product_id == product_id
+    )
+
+    assert applied_allocation.quantity == Decimal(
+        "10.0000"
+    )
+
+def test_older_optimization_history_is_preserved(
+    db,
+    client,
+    optimization_cycle,
+):
+    first_response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize",
+        json={
+            "objective": "MAX_PROFIT",
+        },
+    )
+
+    assert first_response.status_code == 200
+
+    first_run = (
+        db.query(OptimizationRun)
+        .filter(
+            OptimizationRun.production_cycle_id
+            == optimization_cycle.id
+        )
+        .order_by(OptimizationRun.id.desc())
+        .first()
+    )
+
+    first_run_id = first_run.id
+
+    first_profit = first_run.total_profit
+
+    second_response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize",
+        json={
+            "objective": "MAX_PROFIT",
+        },
+    )
+
+    assert second_response.status_code == 200
+
+    db.expire_all()
+
+    old_run = (
+        db.query(OptimizationRun)
+        .filter(
+            OptimizationRun.id == first_run_id
+        )
+        .first()
+    )
+
+    assert old_run is not None
+    assert old_run.total_profit == first_profit
+    assert old_run.status == "OPTIMAL"
+    assert len(old_run.results) == 3

@@ -10,12 +10,6 @@ from decimal import Decimal
 
 from app.database.models import (
     CycleResource,
-    ProductionCycle,
-    Resource,
-)
-
-from app.database.models import (
-    CycleResource,
     Product,
     ProductResourceRequirement,
     ProductionCycle,

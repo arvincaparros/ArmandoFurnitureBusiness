@@ -11,8 +11,12 @@ from app.database.models import (
     ProductResourceRequirement,
     ProductionAllocation,
     Resource,
+    OptimizationResult,
+    OptimizationRun,
 )
-
+from app.services.optimization_history import (
+    get_latest_optimization_history_run,
+)
 
 def get_optimization_data(
     db: Session,
@@ -517,19 +521,49 @@ def apply_optimization(
             "Production cycle has no resources configured"
         )
 
-    result = solve_optimization(
-        cycle_id,
-        data["products"],
-        data["cycle_resources"],
-        data["requirements"],
+    optimization_run = (
+        get_latest_optimization_history_run(
+            db,
+            cycle_id,
+        )
     )
 
-    if result["status"] != "Optimal":
+    if optimization_run is None:
+        raise ValueError(
+            "No optimization result found for production cycle."
+        )
+
+    if optimization_run.status != "OPTIMAL":
         raise ValueError(
             "Only an optimal optimization result can be applied."
         )
 
-    allocations = result["allocations"]
+    allocations = []
+
+    for result in optimization_run.results:
+        product = next(
+            (
+                product
+                for product in data["products"]
+                if product.id == result.product_id
+            ),
+            None,
+        )
+
+        if product is None:
+            continue
+
+        allocations.append(
+            {
+                "product_id": product.id,
+                "product_name": product.name,
+                "quantity": int(
+                    result.recommended_quantity
+                ),
+                "unit_profit": result.unit_profit,
+                "total_profit": result.total_profit,
+            }
+        )
 
     db.query(ProductionAllocation).filter(
         ProductionAllocation.production_cycle_id == cycle_id
@@ -563,5 +597,24 @@ def apply_optimization(
         data["cycle_resources"],
         data["requirements"],
         allocations,
-        result["status"],
+        optimization_run.status,
     )
+
+def get_latest_optimization_history_run(
+    db: Session,
+    cycle_id: int,
+) -> OptimizationRun | None:
+    statement = (
+        select(OptimizationRun)
+        .where(
+            OptimizationRun.production_cycle_id
+            == cycle_id
+        )
+        .order_by(
+            OptimizationRun.started_at.desc(),
+            OptimizationRun.id.desc(),
+        )
+        .limit(1)
+    )
+
+    return db.scalar(statement)
