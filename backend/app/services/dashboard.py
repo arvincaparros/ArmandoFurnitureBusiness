@@ -7,8 +7,9 @@ from app.database.models import (
     ProductionAllocation,
     ProductionCycle,
     Resource,
+    SalesTransaction,
+    ForecastRun,
 )
-
 
 def get_dashboard_summary(db: Session) -> dict:
     total_products = db.scalar(
@@ -35,6 +36,24 @@ def get_dashboard_summary(db: Session) -> dict:
         select(func.count(OptimizationRun.id))
     ) or 0
 
+    total_sales = db.scalar(
+        select(
+            func.coalesce(
+                func.sum(SalesTransaction.total_sales),
+                0,
+            )
+        )
+    ) or 0
+
+    total_sales_profit = db.scalar(
+        select(
+            func.coalesce(
+                func.sum(SalesTransaction.total_profit),
+                0,
+            )
+        )
+    ) or 0
+
     latest_optimization_profit = db.scalar(
         select(OptimizationRun.total_profit)
         .where(
@@ -47,6 +66,23 @@ def get_dashboard_summary(db: Session) -> dict:
         .limit(1)
     )
 
+    latest_forecast = db.scalar(
+        select(ForecastRun)
+        .order_by(
+            ForecastRun.created_at.desc(),
+            ForecastRun.id.desc(),
+        )
+        .limit(1)
+    )
+
+    latest_forecast_total_quantity = None
+
+    if latest_forecast is not None:
+        latest_forecast_total_quantity = sum(
+            result.forecast_quantity
+            for result in latest_forecast.results
+        )
+
     return {
         "total_products": total_products,
         "total_resources": total_resources,
@@ -55,5 +91,20 @@ def get_dashboard_summary(db: Session) -> dict:
         "total_optimization_runs": total_optimization_runs,
         "latest_optimization_profit": (
             latest_optimization_profit
+        ),
+        "total_sales": total_sales,
+        "total_sales_profit": total_sales_profit,
+        "latest_forecast_period": (
+            latest_forecast.forecast_period
+            if latest_forecast
+            else None
+        ),
+        "latest_forecast_created_at": (
+            latest_forecast.created_at
+            if latest_forecast
+            else None
+        ),
+        "latest_forecast_total_quantity": (
+            latest_forecast_total_quantity
         ),
     }

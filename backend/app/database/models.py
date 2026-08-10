@@ -73,6 +73,13 @@ class Product(Base):
         cascade="all, delete-orphan",
     )
 
+    forecast_results: Mapped[
+        list["ForecastResult"]
+    ] = relationship(
+        back_populates="product",
+        cascade="all, delete-orphan",
+    )
+
 class Resource(Base):
     __tablename__ = "resources"
 
@@ -501,4 +508,81 @@ class SalesTransaction(Base):
 
     product: Mapped["Product"] = relationship(
         back_populates="sales_transactions",
+    )
+
+class ForecastRun(Base):
+    __tablename__ = "forecast_runs"
+
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+        index=True,
+    )
+
+    forecast_period: Mapped[str] = mapped_column(
+        String(30),
+        nullable=False,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+    )
+
+    results: Mapped[
+        list["ForecastResult"]
+    ] = relationship(
+        back_populates="forecast_run",
+        cascade="all, delete-orphan",
+    )
+
+class ForecastResult(Base):
+    __tablename__ = "forecast_results"
+
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+        index=True,
+    )
+
+    forecast_run_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "forecast_runs.id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+        index=True,
+    )
+
+    product_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "products.id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+        index=True,
+    )
+
+    historical_quantity: Mapped[Decimal] = mapped_column(
+        Numeric(12, 4),
+        nullable=False,
+    )
+
+    forecast_quantity: Mapped[Decimal] = mapped_column(
+        Numeric(12, 4),
+        nullable=False,
+    )
+
+    trend: Mapped[str] = mapped_column(
+        String(30),
+        nullable=False,
+    )
+
+    forecast_run: Mapped["ForecastRun"] = relationship(
+        back_populates="results",
+    )
+
+    product: Mapped["Product"] = relationship(
+        back_populates="forecast_results",
     )

@@ -4,6 +4,8 @@ from decimal import Decimal
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
+from app.services.forecast_history import save_forecast_history
+
 from app.database.models import (
     Product,
     SalesTransaction,
@@ -71,9 +73,19 @@ def calculate_forecast(
         else:
             trend = "STABLE"
 
+        change = latest_quantity - previous_quantity
+
+        if trend == "STABLE":
+            forecast_quantity = latest_quantity
+        else:
+            forecast_quantity = latest_quantity + change
+
+            if forecast_quantity < Decimal("0"):
+                forecast_quantity = Decimal("0")
+
         forecasts[product_id] = {
             "historical_quantity": latest_quantity,
-            "forecast_quantity": latest_quantity,
+            "forecast_quantity": forecast_quantity,
             "trend": trend,
         }
 
@@ -127,3 +139,15 @@ def get_forecast(
         "forecast_period": "NEXT_CYCLE",
         "products": forecast_products,
     }
+
+def generate_forecast(
+    db: Session,
+) -> dict:
+    forecast = get_forecast(db)
+
+    save_forecast_history(
+        db,
+        forecast,
+    )
+
+    return forecast
