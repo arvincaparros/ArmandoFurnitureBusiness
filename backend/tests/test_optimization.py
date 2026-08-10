@@ -326,6 +326,57 @@ def test_apply_optimization_api(client, optimization_cycle):
     assert chair["quantity"] == 12
     assert bed_frame["quantity"] == 12
 
+def test_optimize_and_apply_return_same_result(
+    client,
+    optimization_cycle,
+):
+    optimize_response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize",
+        json={
+            "objective": "MAX_PROFIT",
+        },
+    )
+
+    assert optimize_response.status_code == 200
+
+    optimize_data = optimize_response.json()
+
+    apply_response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize/apply",
+    )
+
+    assert apply_response.status_code == 200
+
+    apply_data = apply_response.json()
+
+    assert apply_data["cycle_id"] == optimize_data["cycle_id"]
+    assert apply_data["status"] == optimize_data["status"]
+    assert apply_data["objective"] == optimize_data["objective"]
+
+    assert apply_data["total_revenue"] == (
+        optimize_data["total_revenue"]
+    )
+
+    assert apply_data["total_cost"] == (
+        optimize_data["total_cost"]
+    )
+
+    assert apply_data["total_profit"] == (
+        optimize_data["total_profit"]
+    )
+
+    assert apply_data["allocations"] == (
+        optimize_data["allocations"]
+    )
+
+    assert apply_data["resource_usage"] == (
+        optimize_data["resource_usage"]
+    )
+
+    assert apply_data["bottlenecks"] == (
+        optimize_data["bottlenecks"]
+    )
+    
 def test_apply_optimization_saves_allocations(db, client, optimization_cycle, test_products):
     response = client.post(
         f"/api/production-cycles/{optimization_cycle.id}/optimize/apply",
