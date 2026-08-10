@@ -235,32 +235,6 @@ def add_profit_objective(
 
     problem += profit_expression
 
-def add_profit_objective(
-    problem: pulp.LpProblem,
-    variables: dict[int, pulp.LpVariable],
-    products,
-    requirements,
-    cycle_resources,
-) -> None:
-    """
-    Set the optimization objective to maximize
-    total production profit.
-    """
-
-    profit_expression = pulp.lpSum(
-        variables[product.id]
-        * float(
-            calculate_unit_profit(
-                product,
-                requirements,
-                cycle_resources,
-            )
-        )
-        for product in products
-    )
-
-    problem += profit_expression
-
 def solve_optimization(
     cycle_id: int,
     products,
@@ -441,63 +415,6 @@ def calculate_optimized_resource_usage(
         for allocation in allocations
     }
 
-    usage = []
-
-    for cycle_resource in cycle_resources:
-        resource_id = cycle_resource.resource_id
-
-        required_quantity = Decimal("0")
-
-        for requirement, resource in requirements:
-            if requirement.resource_id != resource_id:
-                continue
-
-            product_quantity = allocation_quantities.get(
-                requirement.product_id,
-                0,
-            )
-
-            required_quantity += (
-                requirement.quantity_required
-                * Decimal(str(product_quantity))
-            )
-
-        available_quantity = (
-            cycle_resource.available_quantity
-        )
-
-        remaining_quantity = (
-            available_quantity - required_quantity
-        )
-
-        usage.append(
-            {
-                "resource_id": resource_id,
-                "resource_name": resource.name,
-                "unit": resource.unit,
-                "required_quantity": required_quantity,
-                "available_quantity": available_quantity,
-                "remaining_quantity": remaining_quantity,
-            }
-        )
-
-    return usage
-
-def calculate_optimized_resource_usage(
-    allocations: list[dict],
-    cycle_resources,
-    requirements,
-) -> list[dict]:
-    """
-    Calculate resource usage based on the optimized
-    production quantities.
-    """
-
-    allocation_quantities = {
-        allocation["product_id"]: allocation["quantity"]
-        for allocation in allocations
-    }
-
     resource_names = {
         resource.id: resource.name
         for _, resource in requirements
@@ -594,6 +511,11 @@ def apply_optimization(
         db,
         cycle_id,
     )
+
+    if not data["cycle_resources"]:
+        raise ValueError(
+            "Production cycle has no resources configured"
+        )
 
     result = solve_optimization(
         cycle_id,

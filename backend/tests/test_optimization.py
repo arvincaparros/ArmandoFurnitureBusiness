@@ -547,5 +547,37 @@ def test_optimize_does_not_modify_allocations(client, db, optimization_cycle):
 
     assert after_values == before_values
 
-   
+def test_apply_optimization_empty_production_cycle_returns_400(
+    client,
+    db,
+):
+    cycle = ProductionCycle(
+        cycle_date=datetime(2026, 8, 9),
+        start_date=datetime(2026, 8, 9),
+        end_date=datetime(2026, 8, 9),
+        status="PLANNED",
+    )
+
+    db.add(cycle)
+    db.commit()
+    db.refresh(cycle)
+
+    cycle_id = cycle.id
+
+    try:
+        response = client.post(
+            f"/api/production-cycles/{cycle_id}/optimize/apply",
+        )
+
+        assert response.status_code == 400
+
+        data = response.json()
+
+        assert data["detail"] == (
+            "Production cycle has no resources configured"
+        )
+
+    finally:
+        db.delete(cycle)
+        db.commit()
 
