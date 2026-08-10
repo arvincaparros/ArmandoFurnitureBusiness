@@ -11,14 +11,12 @@ from app.services.optimization import (
 )
 
 from app.database.models import (
+    CycleResource,
     ProductionAllocation,
     ProductionCycle,
 )
 
-from app.database.models import (
-    CycleResource,
-    ProductionAllocation,
-)
+
 def get_test_data(db, optimization_cycle):
     return get_optimization_data(
         db,
@@ -26,7 +24,11 @@ def get_test_data(db, optimization_cycle):
     )
 
 
-def test_optimization_returns_optimal_solution(db, optimization_cycle):
+def test_optimization_returns_optimal_solution(
+    db,
+    optimization_cycle,
+    test_products,
+):
     data = get_test_data(
         db,
         optimization_cycle,
@@ -41,29 +43,41 @@ def test_optimization_returns_optimal_solution(db, optimization_cycle):
 
     assert result["status"] == "Optimal"
 
-    assert result["allocations"] == [
-        {
-            "product_id": 1,
-            "product_name": "Dining Table",
-            "quantity": 0,
-            "unit_profit": Decimal("3089.0000"),
-            "total_profit": Decimal("0.0000"),
-        },
-        {
-            "product_id": 2,
-            "product_name": "Chair",
-            "quantity": 12,
-            "unit_profit": Decimal("949.0000"),
-            "total_profit": Decimal("11388.0000"),
-        },
-        {
-            "product_id": 3,
-            "product_name": "Bed Frame",
-            "quantity": 12,
-            "unit_profit": Decimal("4332.0000"),
-            "total_profit": Decimal("51984.0000"),
-        },
-    ]
+    allocations = {
+        item["product_name"]: item
+        for item in result["allocations"]
+    }
+
+    dining_table = allocations["Test Dining Table"]
+    chair = allocations["Test Chair"]
+    bed_frame = allocations["Test Bed Frame"]
+
+    assert dining_table["product_id"] == next(
+        product.id
+        for product in test_products
+        if product.name == "Test Dining Table"
+    )
+    assert dining_table["quantity"] == 0
+    assert dining_table["unit_profit"] == Decimal("3089.0000")
+    assert dining_table["total_profit"] == Decimal("0.0000")
+
+    assert chair["product_id"] == next(
+        product.id
+        for product in test_products
+        if product.name == "Test Chair"
+    )
+    assert chair["quantity"] == 12
+    assert chair["unit_profit"] == Decimal("949.0000")
+    assert chair["total_profit"] == Decimal("11388.0000")
+
+    assert bed_frame["product_id"] == next(
+        product.id
+        for product in test_products
+        if product.name == "Test Bed Frame"
+    )
+    assert bed_frame["quantity"] == 12
+    assert bed_frame["unit_profit"] == Decimal("4332.0000")
+    assert bed_frame["total_profit"] == Decimal("51984.0000")
 
 
 def test_optimization_profit(db, optimization_cycle):
@@ -93,7 +107,7 @@ def test_optimization_profit(db, optimization_cycle):
     assert final["total_profit"] == Decimal("63372.00000000")
 
 
-def test_optimized_resource_usage(db, optimization_cycle):
+def test_optimized_resource_usage(db, optimization_cycle, test_resources):
     data = get_test_data(
         db,
         optimization_cycle,
@@ -112,10 +126,16 @@ def test_optimized_resource_usage(db, optimization_cycle):
         data["requirements"],
     )
 
+    labor_resource = next(
+        resource
+        for resource in test_resources
+        if resource.name == "Test Labor"
+    )
+
     labor = next(
         item
         for item in usage
-        if item["resource_id"] == 4
+        if item["resource_id"] == labor_resource.id
     )
 
     assert labor["required_quantity"] == Decimal("576.0000")
@@ -123,7 +143,7 @@ def test_optimized_resource_usage(db, optimization_cycle):
     assert labor["remaining_quantity"] == Decimal("0.0000")
 
 
-def test_optimization_bottleneck(db, optimization_cycle):
+def test_optimization_bottleneck(db, optimization_cycle, test_resources):
     data = get_test_data(
         db,
         optimization_cycle,
@@ -150,8 +170,14 @@ def test_optimization_bottleneck(db, optimization_cycle):
 
     bottleneck = bottlenecks[0]
 
-    assert bottleneck["resource_id"] == 4
-    assert bottleneck["resource_name"] == "Labor"
+    labor_resource = next(
+        resource
+        for resource in test_resources
+        if resource.name == "Test Labor"
+    )
+
+    assert bottleneck["resource_id"] == labor_resource.id
+    assert bottleneck["resource_name"] == "Test Labor"
     assert bottleneck["is_binding"] is True
     assert bottleneck["remaining_quantity"] == Decimal("0.0000")
 
@@ -179,13 +205,13 @@ def test_optimize_production_api(client, optimization_cycle):
     chair = next(
         item
         for item in allocations
-        if item["product_id"] == 2
+        if item["product_name"] == "Test Chair"
     )
 
     bed_frame = next(
         item
         for item in allocations
-        if item["product_id"] == 3
+        if item["product_name"] == "Test Bed Frame"
     )
 
     assert chair["quantity"] == 12
@@ -244,58 +270,31 @@ def test_zero_resources_returns_zero_production(
         assert allocation["quantity"] == 0
         assert allocation["total_profit"] == Decimal("0.0000")
 
-def test_empty_production_cycle_is_unbounded(db):
-    cycle_id = None
+def test_empty_production_cycle_has_no_resources(db):
+    cycle = ProductionCycle(
+        cycle_date=datetime(2026, 8, 9),
+        start_date=datetime(2026, 8, 9),
+        end_date=datetime(2026, 8, 9),
+        status="PLANNED",
+    )
+
+    db.add(cycle)
+    db.commit()
+    db.refresh(cycle)
 
     try:
-        cycle = ProductionCycle(
-            cycle_date=datetime(2026, 8, 9),
-            start_date=datetime(2026, 8, 9),
-            end_date=datetime(2026, 8, 9),
-            status="PLANNED",
-        )
-
-        db.add(cycle)
-        db.commit()
-        db.refresh(cycle)
-
-        cycle_id = cycle.id
-
         data = get_optimization_data(
             db,
-            cycle_id,
+            cycle.id,
         )
 
-        try:
-            solve_optimization(
-                cycle_id,
-                data["products"],
-                data["cycle_resources"],
-                data["requirements"],
-            )
-
-            assert False, "Expected optimization to be unbounded"
-
-        except ValueError as exc:
-            assert str(exc) == (
-                "Production optimization is unbounded."
-            )
+        assert data["cycle_resources"] == []
+        assert data["products"] == []
+        assert data["requirements"] == []
 
     finally:
-        if cycle_id is not None:
-            db.query(ProductionAllocation).filter(
-                ProductionAllocation.production_cycle_id == cycle_id
-            ).delete(
-                synchronize_session=False
-            )
-
-            db.query(ProductionCycle).filter(
-                ProductionCycle.id == cycle_id
-            ).delete(
-                synchronize_session=False
-            )
-
-            db.commit()
+        db.delete(cycle)
+        db.commit()
 
 def test_apply_optimization_api(client, optimization_cycle):
     response = client.post(
@@ -315,19 +314,19 @@ def test_apply_optimization_api(client, optimization_cycle):
     chair = next(
         item
         for item in allocations
-        if item["product_id"] == 2
+        if item["product_name"] == "Test Chair"
     )
 
     bed_frame = next(
         item
         for item in allocations
-        if item["product_id"] == 3
+        if item["product_name"] == "Test Bed Frame"
     )
 
     assert chair["quantity"] == 12
     assert bed_frame["quantity"] == 12
 
-def test_apply_optimization_saves_allocations(db, client, optimization_cycle):
+def test_apply_optimization_saves_allocations(db, client, optimization_cycle, test_products):
     response = client.post(
         f"/api/production-cycles/{optimization_cycle.id}/optimize/apply",
     )
@@ -345,15 +344,24 @@ def test_apply_optimization_saves_allocations(db, client, optimization_cycle):
         .all()
     )
 
+    products = {
+        product.name: product
+        for product in test_products
+    }
+
     assert len(allocations) == 2
 
-    assert allocations[0].product_id == 2
+    assert allocations[0].product_id == products[
+        "Test Chair"
+    ].id
     assert allocations[0].quantity == Decimal("12.0000")
 
-    assert allocations[1].product_id == 3
+    assert allocations[1].product_id == products[
+        "Test Bed Frame"
+    ].id
     assert allocations[1].quantity == Decimal("12.0000")
 
-def test_apply_optimization_is_repeatable(db, client, optimization_cycle):
+def test_apply_optimization_is_repeatable(db, client, optimization_cycle, test_products):
     first_response = client.post(
         f"/api/production-cycles/{optimization_cycle.id}/optimize/apply",
     )
@@ -378,12 +386,21 @@ def test_apply_optimization_is_repeatable(db, client, optimization_cycle):
         .all()
     )
 
+    products = {
+        product.name: product
+        for product in test_products
+    }
+
     assert len(allocations) == 2
 
-    assert allocations[0].product_id == 2
+    assert allocations[0].product_id == products[
+        "Test Chair"
+    ].id
     assert allocations[0].quantity == Decimal("12.0000")
 
-    assert allocations[1].product_id == 3
+    assert allocations[1].product_id == products[
+        "Test Bed Frame"
+    ].id
     assert allocations[1].quantity == Decimal("12.0000")
 
 
@@ -459,7 +476,7 @@ def test_optimize_empty_production_cycle_returns_400(client, db):
         data = response.json()
 
         assert data["detail"] == (
-            "Production optimization is unbounded."
+            "Production cycle has no resources configured"
         )
 
     finally:

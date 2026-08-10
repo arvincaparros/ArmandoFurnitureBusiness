@@ -33,29 +33,64 @@ def get_optimization_data(
         cycle_resources_statement
     ).all()
 
-    products_statement = select(
-        Product
-    ).where(
-        Product.is_active.is_(True)
-    ).order_by(
-        Product.id
-    )
+    resource_ids = [
+        cycle_resource.resource_id
+        for cycle_resource in cycle_resources
+    ]
 
-    products = db.scalars(
-        products_statement
-    ).all()
+    if not resource_ids:
+        return {
+            "cycle_resources": [],
+            "products": [],
+            "requirements": [],
+        }
 
-    requirements_statement = select(
-        ProductResourceRequirement,
-        Resource,
-    ).join(
-        Resource,
-        Resource.id
-        == ProductResourceRequirement.resource_id,
+    requirements_statement = (
+        select(
+            ProductResourceRequirement,
+            Resource,
+        )
+        .join(
+            Resource,
+            Resource.id
+            == ProductResourceRequirement.resource_id,
+        )
+        .where(
+            ProductResourceRequirement.resource_id.in_(
+                resource_ids
+            )
+        )
     )
 
     requirements = db.execute(
         requirements_statement
+    ).all()
+
+    product_ids = list(
+        {
+            requirement.product_id
+            for requirement, _resource in requirements
+        }
+    )
+
+    if not product_ids:
+        return {
+            "cycle_resources": cycle_resources,
+            "products": [],
+            "requirements": requirements,
+        }
+
+    products_statement = (
+        select(Product)
+        .where(
+            Product.id.in_(product_ids),
+            Product.is_active.is_(True),
+        )
+        .order_by(Product.id)
+    )
+
+    products = db.scalars(
+        products_statement
     ).all()
 
     return {

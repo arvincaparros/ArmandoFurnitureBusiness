@@ -158,6 +158,12 @@ def optimize_production(
         cycle_id,
     )
 
+    if not data["cycle_resources"]:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail="Production cycle has no resources configured",
+        )
+
     try:
         result = solve_optimization(
             cycle_id,
