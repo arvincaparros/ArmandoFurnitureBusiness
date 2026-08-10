@@ -66,6 +66,13 @@ class Product(Base):
         cascade="all, delete-orphan",
     )
 
+    sales_transactions: Mapped[
+        list["SalesTransaction"]
+    ] = relationship(
+        back_populates="product",
+        cascade="all, delete-orphan",
+    )
+
 class Resource(Base):
     __tablename__ = "resources"
 
@@ -437,3 +444,61 @@ class OptimizationResult(Base):
     )
 
     product: Mapped["Product"] = relationship()
+
+class SalesTransaction(Base):
+    __tablename__ = "sales_transactions"
+
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+        index=True,
+    )
+
+    product_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "products.id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+        index=True,
+    )
+
+    transaction_date: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+    )
+
+    quantity: Mapped[Decimal] = mapped_column(
+        Numeric(12, 4),
+        nullable=False,
+    )
+
+    unit_price: Mapped[Decimal] = mapped_column(
+        Numeric(12, 2),
+        nullable=False,
+    )
+
+    total_sales: Mapped[Decimal] = mapped_column(
+        Numeric(12, 2),
+        nullable=False,
+    )
+
+    unit_profit: Mapped[Decimal] = mapped_column(
+        Numeric(12, 4),
+        nullable=False,
+    )
+
+    total_profit: Mapped[Decimal] = mapped_column(
+        Numeric(12, 4),
+        nullable=False,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+    )
+
+    product: Mapped["Product"] = relationship(
+        back_populates="sales_transactions",
+    )

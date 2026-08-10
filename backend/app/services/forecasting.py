@@ -6,8 +6,7 @@ from sqlalchemy.orm import Session
 
 from app.database.models import (
     Product,
-    ProductionAllocation,
-    ProductionCycle,
+    SalesTransaction,
 )
 
 
@@ -16,21 +15,15 @@ def get_historical_demand(
 ) -> dict[int, list[Decimal]]:
     statement = (
         select(
-            ProductionCycle.id,
-            ProductionAllocation.product_id,
-            ProductionAllocation.quantity,
-        )
-        .join(
-            ProductionAllocation,
-            ProductionAllocation.production_cycle_id
-            == ProductionCycle.id,
+            SalesTransaction.product_id,
+            SalesTransaction.quantity,
         )
         .where(
-            ProductionAllocation.quantity > 0,
+            SalesTransaction.quantity > 0,
         )
         .order_by(
-            ProductionCycle.cycle_date,
-            ProductionCycle.id,
+            SalesTransaction.transaction_date,
+            SalesTransaction.id,
         )
     )
 

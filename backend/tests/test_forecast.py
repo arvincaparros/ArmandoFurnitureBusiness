@@ -1,6 +1,8 @@
+
+from datetime import datetime
 from decimal import Decimal
 
-from app.database.models import ProductionAllocation
+from app.database.models import SalesTransaction
 
 
 def test_forecast_returns_active_products(
@@ -26,26 +28,34 @@ def test_forecast_returns_active_products(
     assert "Test Bed Frame" in products
 
 
-def test_forecast_uses_historical_production(
+def test_forecast_uses_historical_sales(
     client,
     db,
     optimization_cycle,
     test_products,
 ):
-    allocations = [
-        ProductionAllocation(
-            production_cycle_id=optimization_cycle.id,
+    transactions = [
+        SalesTransaction(
             product_id=test_products[1].id,
+            transaction_date=datetime(2026, 8, 9, 10, 0),
             quantity=Decimal("12.0000"),
+            unit_price=Decimal("3500.00"),
+            total_sales=Decimal("42000.00"),
+            unit_profit=Decimal("949.0000"),
+            total_profit=Decimal("11388.0000"),
         ),
-        ProductionAllocation(
-            production_cycle_id=optimization_cycle.id,
+        SalesTransaction(
             product_id=test_products[2].id,
+            transaction_date=datetime(2026, 8, 9, 11, 0),
             quantity=Decimal("12.0000"),
+            unit_price=Decimal("15000.00"),
+            total_sales=Decimal("180000.00"),
+            unit_profit=Decimal("5000.0000"),
+            total_profit=Decimal("60000.0000"),
         ),
     ]
 
-    db.add_all(allocations)
+    db.add_all(transactions)
     db.commit()
 
     try:
@@ -84,8 +94,8 @@ def test_forecast_uses_historical_production(
         assert bed_frame["trend"] == "STABLE"
 
     finally:
-        for allocation in allocations:
-            db.delete(allocation)
+        for transaction in transactions:
+            db.delete(transaction)
 
         db.commit()
 

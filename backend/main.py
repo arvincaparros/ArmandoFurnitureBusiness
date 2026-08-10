@@ -12,6 +12,7 @@ from app.routers.allocations import router as allocations_router
 from app.routers.optimization import router as optimization_router
 from app.routers.dashboard import router as dashboard_router
 from app.routers.forecast import router as forecast_router
+from app.routers.transactions import router as transactions_router
 
 app = FastAPI(
     title="Furniture Optimization API",
@@ -28,6 +29,7 @@ app.include_router(allocations_router)
 app.include_router(optimization_router)
 app.include_router(dashboard_router)
 app.include_router(forecast_router)
+app.include_router(transactions_router)
 
 @app.get("/")
 def root():
