@@ -41,6 +41,8 @@ from app.services.optimization_history import (
     save_optimization_history,
 )
 
+from app.services.forecasting import get_forecast
+
 router = APIRouter(
     prefix="/api/production-cycles",
     tags=["Production Cycles"],
@@ -169,6 +171,14 @@ def optimize_production(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail="Production cycle has no resources configured",
         )
+
+    forecast_data = get_forecast(db)
+
+    forecast = {
+        item["product_id"]: item["forecast_quantity"]
+        for item in forecast_data["products"]
+        if item["forecast_quantity"] > 0
+    }
     
     started_at = datetime.now()
 
@@ -179,6 +189,7 @@ def optimize_production(
             data["cycle_resources"],
             data["requirements"],
             optimization_data.objective.value,
+            forecast=forecast,
         )
 
     except ValueError as exc:

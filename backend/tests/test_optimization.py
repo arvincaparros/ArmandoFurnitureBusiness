@@ -20,6 +20,8 @@ from app.database.models import (
     Resource,
 )
 
+from app.services.forecasting import get_forecast
+
 def get_test_data(db, optimization_cycle):
     return get_optimization_data(
         db,
@@ -290,6 +292,14 @@ def test_empty_production_cycle_has_no_resources(db):
             db,
             cycle.id,
         )
+
+        forecast_data = get_forecast(db)
+
+        forecast = {
+            item["product_id"]: item["forecast_quantity"]
+            for item in forecast_data["products"]
+            if item["forecast_quantity"] > 0
+        }
 
         assert data["cycle_resources"] == []
         assert data["products"] == []
@@ -1215,3 +1225,84 @@ def test_older_optimization_history_is_preserved(
     assert old_run.total_profit == first_profit
     assert old_run.status == "OPTIMAL"
     assert len(old_run.results) == 3
+
+def test_optimization_respects_forecast_limit(
+    db,
+    optimization_cycle,
+    test_products,
+):
+    data = get_test_data(
+        db,
+        optimization_cycle,
+    )
+
+    forecast = {
+        test_products[1].id: Decimal("5.0000"),
+        test_products[2].id: Decimal("5.0000"),
+    }
+
+    result = solve_optimization(
+        optimization_cycle.id,
+        data["products"],
+        data["cycle_resources"],
+        data["requirements"],
+        forecast=forecast,
+    )
+
+    assert result["status"] == "Optimal"
+
+    allocations = {
+        item["product_id"]: item["quantity"]
+        for item in result["allocations"]
+    }
+
+    assert allocations[test_products[1].id] <= 5
+    assert allocations[test_products[2].id] <= 5
+
+def test_optimize_production_respects_forecast(
+    client,
+    db,
+    optimization_cycle,
+    test_products,
+):
+    historical_allocations = [
+        ProductionAllocation(
+            production_cycle_id=optimization_cycle.id,
+            product_id=test_products[1].id,
+            quantity=Decimal("5.0000"),
+        ),
+        ProductionAllocation(
+            production_cycle_id=optimization_cycle.id,
+            product_id=test_products[2].id,
+            quantity=Decimal("5.0000"),
+        ),
+    ]
+
+    db.add_all(historical_allocations)
+    db.commit()
+
+    try:
+        response = client.post(
+            f"/api/production-cycles/{optimization_cycle.id}/optimize",
+            json={
+                "objective": "MAX_PROFIT",
+            },
+        )
+
+        assert response.status_code == 200
+
+        data = response.json()
+
+        allocations = {
+            item["product_id"]: item["quantity"]
+            for item in data["allocations"]
+        }
+
+        assert allocations[test_products[1].id] <= 5
+        assert allocations[test_products[2].id] <= 5
+
+    finally:
+        for allocation in historical_allocations:
+            db.delete(allocation)
+
+        db.commit()

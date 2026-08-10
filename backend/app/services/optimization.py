@@ -245,6 +245,7 @@ def solve_optimization(
     cycle_resources,
     requirements,
     objective="MAX_PROFIT",
+    forecast: dict[int, Decimal] | None = None,
 ) -> dict:
     """
     Build and solve the integer linear programming model.
@@ -266,7 +267,15 @@ def solve_optimization(
         requirements,
     )
 
-    # Step 3: Add profit objective
+    # Step 3: Add forecast constraints
+    if forecast is not None:
+        add_forecast_constraints(
+            problem,
+            variables,
+            forecast,
+        )
+
+    # Step 4: Add profit objective
     add_profit_objective(
         problem,
         variables,
@@ -618,3 +627,23 @@ def get_latest_optimization_history_run(
     )
 
     return db.scalar(statement)
+
+def add_forecast_constraints(
+    problem: pulp.LpProblem,
+    variables: dict[int, pulp.LpVariable],
+    forecast: dict[int, Decimal],
+) -> None:
+    """
+    Limit production quantities to forecast demand.
+    """
+
+    for product_id, forecast_quantity in forecast.items():
+        variable = variables.get(product_id)
+
+        if variable is None:
+            continue
+
+        problem += (
+            variable <= float(forecast_quantity),
+            f"forecast_{product_id}_limit",
+        )
