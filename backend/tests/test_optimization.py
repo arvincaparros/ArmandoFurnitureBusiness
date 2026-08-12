@@ -1267,22 +1267,28 @@ def test_optimize_production_respects_forecast(
 ):
     historical_transactions = [
         SalesTransaction(
+            transaction_number="TRX-OPT-001",
             product_id=test_products[1].id,
             transaction_date=datetime(2026, 8, 9, 10, 0),
+            quantity_produced=Decimal("5.0000"),
             quantity=Decimal("5.0000"),
             unit_price=Decimal("3500.00"),
             total_sales=Decimal("17500.00"),
+            production_cost=Decimal("12755.0000"),
             unit_profit=Decimal("949.0000"),
             total_profit=Decimal("4745.0000"),
         ),
         SalesTransaction(
+            transaction_number="TRX-OPT-002",
             product_id=test_products[2].id,
-            transaction_date=datetime(2026, 8, 9, 11, 0),
+            transaction_date=datetime(2026, 8, 9, 10, 0),
+            quantity_produced=Decimal("5.0000"),
             quantity=Decimal("5.0000"),
-            unit_price=Decimal("15000.00"),
-            total_sales=Decimal("75000.00"),
-            unit_profit=Decimal("5000.0000"),
-            total_profit=Decimal("25000.0000"),
+            unit_price=Decimal("3500.00"),
+            total_sales=Decimal("17500.00"),
+            production_cost=Decimal("12755.0000"),
+            unit_profit=Decimal("949.0000"),
+            total_profit=Decimal("4745.0000"),
         ),
     ]
 

@@ -31,9 +31,80 @@ def db():
     finally:
         session.close()
 
+@pytest.fixture
+def cleanup_test_data(db):
+    test_resource_names = [
+        "Test Wood",
+        "Test Epoxy",
+        "Test Nails",
+        "Test Labor",
+    ]
+
+    test_product_names = [
+        "Test Dining Table",
+        "Test Chair",
+        "Test Bed Frame",
+    ]
+
+    # Remove dependent cycle resources first
+    db.query(CycleResource).filter(
+        CycleResource.resource_id.in_(
+            db.query(Resource.id).filter(
+                Resource.name.in_(test_resource_names)
+            )
+        )
+    ).delete(
+        synchronize_session=False
+    )
+
+    # Remove product-resource requirements
+    db.query(ProductResourceRequirement).filter(
+        ProductResourceRequirement.resource_id.in_(
+            db.query(Resource.id).filter(
+                Resource.name.in_(test_resource_names)
+            )
+        )
+    ).delete(
+        synchronize_session=False
+    )
+
+    db.query(ProductResourceRequirement).filter(
+        ProductResourceRequirement.product_id.in_(
+            db.query(Product.id).filter(
+                Product.name.in_(test_product_names)
+            )
+        )
+    ).delete(
+        synchronize_session=False
+    )
+
+    # Remove test production cycles
+    db.query(ProductionCycle).filter(
+        ProductionCycle.cycle_date == datetime(2026, 8, 9)
+    ).delete(
+        synchronize_session=False
+    )
+
+    # Remove test products
+    db.query(Product).filter(
+        Product.name.in_(test_product_names)
+    ).delete(
+        synchronize_session=False
+    )
+
+    # Remove test resources
+    db.query(Resource).filter(
+        Resource.name.in_(test_resource_names)
+    ).delete(
+        synchronize_session=False
+    )
+
+    db.commit()
+
+    yield
 
 @pytest.fixture
-def test_resources(db):
+def test_resources(db, cleanup_test_data):
     resources = [
         Resource(
             name="Test Wood",
@@ -77,7 +148,7 @@ def test_resources(db):
         db.commit()
 
 @pytest.fixture
-def test_products(db):
+def test_products(db, cleanup_test_data):
     products = [
         Product(
             name="Test Dining Table",

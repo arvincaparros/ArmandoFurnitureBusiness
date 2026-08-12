@@ -1,3 +1,4 @@
+from uuid import uuid4
 from datetime import datetime
 from decimal import Decimal
 
@@ -285,7 +286,7 @@ class CycleResource(Base):
     )
 
     unit_price: Mapped[Decimal] = mapped_column(
-        Numeric(12, 4),
+        Numeric(12, 2),
         nullable=False,
     )
 
@@ -461,6 +462,14 @@ class SalesTransaction(Base):
         index=True,
     )
 
+    transaction_number: Mapped[str] = mapped_column(
+        String(30),
+        nullable=False,
+        unique=True,
+        index=True,
+        default=lambda: f"TRX-{uuid4().hex[:12].upper()}",
+    )
+
     product_id: Mapped[int] = mapped_column(
         ForeignKey(
             "products.id",
@@ -475,6 +484,13 @@ class SalesTransaction(Base):
         nullable=False,
     )
 
+    # Quantity produced during the production process
+    quantity_produced: Mapped[Decimal] = mapped_column(
+        Numeric(12, 4),
+        nullable=False,
+    )
+
+    # Quantity sold
     quantity: Mapped[Decimal] = mapped_column(
         Numeric(12, 4),
         nullable=False,
@@ -486,6 +502,12 @@ class SalesTransaction(Base):
     )
 
     total_sales: Mapped[Decimal] = mapped_column(
+        Numeric(12, 2),
+        nullable=False,
+    )
+
+    # Total production cost associated with this transaction
+    production_cost: Mapped[Decimal] = mapped_column(
         Numeric(12, 2),
         nullable=False,
     )
@@ -502,13 +524,11 @@ class SalesTransaction(Base):
 
     created_at: Mapped[datetime] = mapped_column(
         DateTime,
-        nullable=False,
         default=datetime.utcnow,
+        nullable=False,
     )
 
-    product: Mapped["Product"] = relationship(
-        back_populates="sales_transactions",
-    )
+    product: Mapped["Product"] = relationship()
 
 class ForecastRun(Base):
     __tablename__ = "forecast_runs"

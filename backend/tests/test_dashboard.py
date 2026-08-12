@@ -90,6 +90,9 @@ def test_dashboard_summary_sales_totals(
 ):
     transactions = [
         SalesTransaction(
+            transaction_number="TRX-TEST-001",
+            quantity_produced=Decimal("2.0000"),
+            production_cost=Decimal("2551.0000"),
             product_id=test_products[0].id,
             transaction_date=datetime(2026, 8, 10, 10, 0),
             quantity=Decimal("2.0000"),
@@ -99,6 +102,9 @@ def test_dashboard_summary_sales_totals(
             total_profit=Decimal("1898.0000"),
         ),
         SalesTransaction(
+            transaction_number="TRX-TEST-002",
+            quantity_produced=Decimal("2.0000"),
+            production_cost=Decimal("2551.0000"),
             product_id=test_products[1].id,
             transaction_date=datetime(2026, 8, 10, 11, 0),
             quantity=Decimal("3.0000"),

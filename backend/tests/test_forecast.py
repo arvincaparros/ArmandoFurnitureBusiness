@@ -42,20 +42,26 @@ def test_forecast_uses_historical_sales(
 ):
     transactions = [
         SalesTransaction(
+            transaction_number="TRX-FORECAST-001",
             product_id=test_products[1].id,
             transaction_date=datetime(2026, 8, 9, 10, 0),
+            quantity_produced=Decimal("12.0000"),
             quantity=Decimal("12.0000"),
             unit_price=Decimal("3500.00"),
             total_sales=Decimal("42000.00"),
+            production_cost=Decimal("30612.0000"),
             unit_profit=Decimal("949.0000"),
             total_profit=Decimal("11388.0000"),
         ),
         SalesTransaction(
+            transaction_number="TRX-FORECAST-002",
             product_id=test_products[2].id,
             transaction_date=datetime(2026, 8, 9, 11, 0),
+            quantity_produced=Decimal("12.0000"),
             quantity=Decimal("12.0000"),
             unit_price=Decimal("15000.00"),
             total_sales=Decimal("180000.00"),
+            production_cost=Decimal("120000.0000"),
             unit_profit=Decimal("5000.0000"),
             total_profit=Decimal("60000.0000"),
         ),
@@ -142,11 +148,14 @@ def test_generate_forecast_saves_history(
 ):
     transactions = [
         SalesTransaction(
+            transaction_number="TRX-FORECAST-003",
             product_id=test_products[1].id,
             transaction_date=datetime(2026, 8, 9, 10, 0),
+            quantity_produced=Decimal("12.0000"),
             quantity=Decimal("12.0000"),
             unit_price=Decimal("3500.00"),
             total_sales=Decimal("42000.00"),
+            production_cost=Decimal("30612.0000"),
             unit_profit=Decimal("949.0000"),
             total_profit=Decimal("11388.0000"),
         ),
