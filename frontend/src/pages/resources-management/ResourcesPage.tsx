@@ -12,6 +12,10 @@ import ResourceToolbar from './components/ResourceToolbar'
 import DeleteResourceModal from './components/DeleteResourceModal'
 
 import type { Resource } from './types'
+import type {
+  ResourceCreateRequest,
+  ResourceUpdateRequest,
+} from './api/resourceTypes'
 import useResources from './hooks/useResources'
 
 import { notify } from '../../utils/notify'
@@ -21,20 +25,24 @@ const ResourcesPage = () => {
 
   const [selectedResource, setSelectedResource] =
   useState<Resource | null>(null)
-  
+
   const [deleteOpened, setDeleteOpened] = useState(false)
 
   const [search, setSearch] = useState('')
 
-  const [sortBy, setSortBy] = useState<keyof Resource>('resourceType')
+  const [sortBy, setSortBy] = useState<keyof Resource>('name')
 
   const [reverse, setReverse] = useState(false)
 
   const {
     resources,
-    addResource,
+    isLoading,
+    isError,
+    hasCycle,
+    createResource,
     updateResource,
     deleteResource,
+    savePricing,
   } = useResources()
 
   const handleSave = () => {
@@ -42,7 +50,7 @@ const ResourcesPage = () => {
   }
 
   const filteredResources = resources.filter((resource) =>
-    resource.resourceType
+    resource.name
       .toLowerCase()
       .includes(search.toLowerCase()),
   )
@@ -51,6 +59,12 @@ const ResourcesPage = () => {
     (a, b) => {
       const aValue = a[sortBy]
       const bValue = b[sortBy]
+
+      // availableQuantity/unitPrice can be null (not yet configured
+      // for the current cycle) - same null-guard already used by
+      // Product Data Management's sort for its own null cost columns.
+      if (aValue === null || bValue === null)
+        return 0
 
       if (aValue < bValue)
         return reverse ? 1 : -1
@@ -62,16 +76,38 @@ const ResourcesPage = () => {
     },
   )
 
-  const handleSaveResource = (resource: Resource) => {
+  const handleSaveResource = async (
+    payload: ResourceCreateRequest | ResourceUpdateRequest,
+    pricing: { available_quantity: number; unit_price: number } | null,
+  ) => {
+    let resourceId: number
+
     if (selectedResource) {
-      updateResource(resource)
+      await updateResource({
+        id: selectedResource.id,
+        data: payload,
+      })
 
-      notify.updated(resource.resourceType)
+      resourceId = selectedResource.id
 
+      notify.updated(payload.name ?? selectedResource.name)
     } else {
-      addResource(resource)
+      const created = await createResource(
+        payload as ResourceCreateRequest,
+      )
 
-      notify.added(resource.resourceType)
+      resourceId = created.id
+
+      notify.added(payload.name ?? '')
+    }
+
+    // Availability/price are a second write against CycleResource
+    // (see useResources.ts) - only attempted when the modal actually
+    // collected them (a production cycle exists), so creating a
+    // resource with no cycle yet still succeeds for its global
+    // fields.
+    if (pricing) {
+      await savePricing({ resourceId, data: pricing })
     }
 
     setSelectedResource(null)
@@ -97,12 +133,12 @@ const ResourcesPage = () => {
     setOpened(true)
   }
 
-  const handleConfirmDelete = () => {
+  const handleConfirmDelete = async () => {
     if (!selectedResource) return
 
-    deleteResource(selectedResource.id)
+    await deleteResource(selectedResource.id)
 
-    notify.deleted(selectedResource.resourceType)
+    notify.deleted(selectedResource.name)
 
     setDeleteOpened(false)
     setSelectedResource(null)
@@ -145,12 +181,14 @@ const ResourcesPage = () => {
             w={260}
           />
         }
-       
+
       >
         <ResourceTable
           resources={sortedResources}
           onEdit={handleEditResource}
           onDelete={handleDeleteResource}
+          isLoading={isLoading}
+          isError={isError}
           sortBy={sortBy}
           reverse={reverse}
           onSort={handleSort}
@@ -160,6 +198,7 @@ const ResourcesPage = () => {
       <AddResourceModal
         opened={opened}
         resource={selectedResource}
+        hasCycle={hasCycle}
         onClose={() => {
           setSelectedResource(null)
           setOpened(false)

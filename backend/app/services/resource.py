@@ -1,16 +1,22 @@
 from sqlalchemy import select
+from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
 from app.database.models import Resource
 from app.schemas.resource import ResourceCreate, ResourceUpdate
 
 
-def get_resources(db: Session) -> list[Resource]:
-    statement = (
-        select(Resource)
-        .where(Resource.is_active.is_(True))
-        .order_by(Resource.id)
-    )
+DUPLICATE_NAME_ERROR = "A resource with this name already exists."
+
+
+def get_resources(
+    db: Session,
+    include_inactive: bool = False,
+) -> list[Resource]:
+    statement = select(Resource).order_by(Resource.id)
+
+    if not include_inactive:
+        statement = statement.where(Resource.is_active.is_(True))
 
     return list(db.scalars(statement).all())
 
@@ -44,6 +50,10 @@ def create_resource(
 
         return resource
 
+    except IntegrityError as exc:
+        db.rollback()
+        raise ValueError(DUPLICATE_NAME_ERROR) from exc
+
     except Exception:
         db.rollback()
         raise
@@ -66,6 +76,10 @@ def update_resource(
         db.refresh(resource)
 
         return resource
+
+    except IntegrityError as exc:
+        db.rollback()
+        raise ValueError(DUPLICATE_NAME_ERROR) from exc
 
     except Exception:
         db.rollback()

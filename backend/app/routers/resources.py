@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.database.connection import get_db
@@ -7,6 +7,7 @@ from app.schemas.resource import (
     ResourceResponse,
     ResourceUpdate,
 )
+from app.services.auth import get_current_user
 from app.services.resource import (
     create_resource,
     delete_resource,
@@ -19,6 +20,7 @@ from app.services.resource import (
 router = APIRouter(
     prefix="/api/resources",
     tags=["Resources"],
+    dependencies=[Depends(get_current_user)],
 )
 
 
@@ -28,9 +30,13 @@ router = APIRouter(
     summary="List active resources",
 )
 def list_resources(
+    include_inactive: bool = Query(
+        default=False,
+        description="Include inactive resources in the results",
+    ),
     db: Session = Depends(get_db),
 ):
-    return get_resources(db)
+    return get_resources(db, include_inactive)
 
 
 @router.get(
@@ -66,10 +72,17 @@ def create_new_resource(
     resource_data: ResourceCreate,
     db: Session = Depends(get_db),
 ):
-    return create_resource(
-        db,
-        resource_data,
-    )
+    try:
+        return create_resource(
+            db,
+            resource_data,
+        )
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
 
 
 @router.patch(
@@ -93,11 +106,18 @@ def update_existing_resource(
             detail="Resource not found",
         )
 
-    return update_resource(
-        db,
-        resource,
-        resource_data,
-    )
+    try:
+        return update_resource(
+            db,
+            resource,
+            resource_data,
+        )
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
 
 
 @router.delete(

@@ -599,10 +599,53 @@ class ForecastResult(Base):
         nullable=False,
     )
 
+    confidence_level: Mapped[Decimal | None] = mapped_column(
+        Numeric(5, 2),
+        nullable=True,
+    )
+
+    forecast_status: Mapped[str | None] = mapped_column(
+        String(20),
+        nullable=True,
+    )
+
     forecast_run: Mapped["ForecastRun"] = relationship(
         back_populates="results",
     )
 
     product: Mapped["Product"] = relationship(
         back_populates="forecast_results",
+    )
+
+class User(Base):
+    __tablename__ = "users"
+
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+        index=True,
+    )
+
+    username: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+
+    password_hash: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+    )
+
+    is_active: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
     )

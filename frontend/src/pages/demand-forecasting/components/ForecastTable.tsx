@@ -1,8 +1,13 @@
-import { CheckCircle2 } from 'lucide-react'
+import {
+  AlertTriangle,
+  CheckCircle2,
+  Minus,
+} from 'lucide-react'
 
 import {
   Box,
   ScrollArea,
+  Tooltip,
 } from '@mantine/core'
 
 import AppTable, {
@@ -13,10 +18,40 @@ import type { ForecastItem } from '../types'
 
 interface ForecastTableProps {
   forecastItems: ForecastItem[]
+  isLoading: boolean
+  isError: boolean
+}
+
+// Approved mapping (Demand Forecasting Phase D): READY = success/green
+// check, LOW_CONFIDENCE = warning/amber (forecast exists, confidence is
+// limited - not a failure), NO_DATA = neutral/dash (insufficient
+// qualifying history). Mirrors app/services/forecasting.py::
+// determine_forecast_status exactly - no other status values exist.
+const statusIndicator: Record<
+  ForecastItem['status'],
+  { icon: typeof CheckCircle2; color: string; label: string }
+> = {
+  READY: {
+    icon: CheckCircle2,
+    color: 'green',
+    label: 'Ready',
+  },
+  LOW_CONFIDENCE: {
+    icon: AlertTriangle,
+    color: 'orange',
+    label: 'Low confidence',
+  },
+  NO_DATA: {
+    icon: Minus,
+    color: 'gray',
+    label: 'No data',
+  },
 }
 
 const ForecastTable = ({
   forecastItems,
+  isLoading,
+  isError,
 }: ForecastTableProps) => {
   const columns: Column<ForecastItem>[] = [
     {
@@ -45,18 +80,34 @@ const ForecastTable = ({
       accessor: 'status',
       title: 'Forecast Status',
       textAlign: 'center',
-      render: (row) =>
-        row.status === 'success' ? (
-          <CheckCircle2
-            size={18}
-            color="green"
-            strokeWidth={2.5}
-          />
-        ) : (
-          row.status
-        ),
+      render: (row) => {
+        const indicator = statusIndicator[row.status]
+        const Icon = indicator.icon
+
+        return (
+          <Tooltip label={indicator.label}>
+            <Icon
+              size={18}
+              color={
+                indicator.color === 'gray'
+                  ? '#9ca3af'
+                  : indicator.color === 'orange'
+                    ? '#d97706'
+                    : '#16a34a'
+              }
+              strokeWidth={2.5}
+            />
+          </Tooltip>
+        )
+      },
     },
   ]
+
+  const emptyMessage = isLoading
+    ? 'Loading forecast...'
+    : isError
+      ? 'Unable to load forecast.'
+      : 'No forecast data available.'
 
   return (
     <Box
@@ -76,13 +127,14 @@ const ForecastTable = ({
       >
         <Box
           style={{
-            width: 'max-content',
+            width: '100%',
             minWidth: 900,
           }}
         >
           <AppTable
             columns={columns}
-            data={forecastItems}
+            data={isLoading ? [] : forecastItems}
+            emptyMessage={emptyMessage}
           />
         </Box>
       </ScrollArea>

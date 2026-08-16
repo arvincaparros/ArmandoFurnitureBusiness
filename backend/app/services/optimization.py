@@ -17,6 +17,9 @@ from app.database.models import (
 from app.services.optimization_history import (
     get_latest_optimization_history_run,
 )
+from app.services.production_calculation import (
+    BOTTLENECK_REMAINING_THRESHOLD,
+)
 
 def get_optimization_data(
     db: Session,
@@ -498,7 +501,7 @@ def identify_optimization_bottlenecks(
     for resource in resource_usage:
         remaining_quantity = resource["remaining_quantity"]
 
-        if remaining_quantity <= Decimal("0"):
+        if remaining_quantity <= BOTTLENECK_REMAINING_THRESHOLD:
             bottlenecks.append(
                 {
                     "resource_id": resource["resource_id"],

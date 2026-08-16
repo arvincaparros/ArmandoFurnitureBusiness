@@ -1,22 +1,35 @@
 import { useEffect, useState } from 'react'
 
 import {
+  Alert,
   Button,
-  Divider,
   Group,
   Modal,
   NumberInput,
   SimpleGrid,
   Stack,
+  Text,
   TextInput,
 } from '@mantine/core'
 
+import { AlertCircle } from 'lucide-react'
+
+import { getApiErrorMessage } from '../../../api/apiError'
+
+import ProductResourceRequirementsSection from './ProductResourceRequirementsSection'
+
 import type { Product } from '../types'
+import type {
+  ProductCreateRequest,
+  ProductUpdateRequest,
+} from '../api/productTypes'
 
 interface AddProductModalProps {
   opened: boolean
   onClose: () => void
-  onSave: (product: Product) => void
+  onSave: (
+    data: ProductCreateRequest | ProductUpdateRequest,
+  ) => Promise<void>
   product?: Product | null
 }
 
@@ -26,122 +39,50 @@ const AddProductModal = ({
   onSave,
   product,
 }: AddProductModalProps) => {
-  const [productName, setProductName] =
-    useState('')
+  const [productName, setProductName] = useState('')
+  const [sellingPrice, setSellingPrice] = useState(0)
 
-  const [wood, setWood] = useState(0)
-  const [epoxy, setEpoxy] = useState(0)
-  const [nails, setNails] = useState(0)
-  const [glue, setGlue] = useState(0)
-  const [sandpaper, setSandpaper] =
-    useState(0)
-  const [doorknob, setDoorknob] =
-    useState(0)
-
-  const [laborHours, setLaborHours] =
-    useState(0)
-
-  const [sawHours, setSawHours] =
-    useState(0)
-
-  const [
-    thicknessPlanerHours,
-    setThicknessPlanerHours,
-  ] = useState(0)
-
-  const [
-    handPlanerHours,
-    setHandPlanerHours,
-  ] = useState(0)
-
-  const [sellingPrice, setSellingPrice] =
-    useState(0)
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
 
   useEffect(() => {
     if (product) {
       setProductName(product.productName)
-
-      setWood(product.wood)
-      setEpoxy(product.epoxy)
-      setNails(product.nails)
-      setGlue(product.glue)
-      setSandpaper(product.sandpaper)
-      setDoorknob(product.doorknob)
-
-      setLaborHours(product.laborHours)
-
-      setSawHours(product.sawHours)
-      setThicknessPlanerHours(
-        product.thicknessPlanerHours,
-      )
-      setHandPlanerHours(
-        product.handPlanerHours,
-      )
-
       setSellingPrice(product.sellingPrice)
     } else {
       setProductName('')
-
-      setWood(0)
-      setEpoxy(0)
-      setNails(0)
-      setGlue(0)
-      setSandpaper(0)
-      setDoorknob(0)
-
-      setLaborHours(0)
-
-      setSawHours(0)
-      setThicknessPlanerHours(0)
-      setHandPlanerHours(0)
-
       setSellingPrice(0)
     }
+
+    setError(null)
   }, [product, opened])
 
   const isValid =
-    productName.trim() !== '' &&
-    sellingPrice > 0
+    productName.trim() !== '' && sellingPrice > 0
 
-  const handleSave = () => {
-    const materialCost = 0
-    const laborCost = 0
-    const machineCost = 0
+  const handleSave = async () => {
+    if (!isValid || isSubmitting) {
+      return
+    }
 
-    const totalCost =
-        materialCost + laborCost + machineCost
+    setIsSubmitting(true)
+    setError(null)
 
-    const profit =
-        sellingPrice - totalCost
-
-    onSave({
-      id: product?.id ?? Date.now(),
-  
-      productName,
-  
-      wood,
-      epoxy,
-      nails,
-      glue,
-      sandpaper,
-      doorknob,
-  
-      laborHours,
-  
-      sawHours,
-      thicknessPlanerHours,
-      handPlanerHours,
-  
-      sellingPrice,
-  
-      materialCost,
-      laborCost,
-      machineCost,
-      totalCost,
-      profit,
-    })
-
-    onClose()
+    try {
+      await onSave({
+        name: productName,
+        selling_price: sellingPrice,
+      })
+    } catch (submitError) {
+      setError(
+        getApiErrorMessage(
+          submitError,
+          'Unable to save product. Please try again.',
+        ),
+      )
+    } finally {
+      setIsSubmitting(false)
+    }
   }
 
   return (
@@ -166,6 +107,7 @@ const AddProductModal = ({
             label="Product Name"
             placeholder="e.g. Dining Table"
             value={productName}
+            maxLength={150}
             onChange={(e) =>
                 setProductName(e.currentTarget.value)
             }
@@ -183,107 +125,25 @@ const AddProductModal = ({
             />
         </SimpleGrid>
 
-        <Divider
-            my="xs"
-            label="Resource Usage"
-            labelPosition="center"
-        />
+        {error && (
+          <Alert
+            color="red"
+            icon={<AlertCircle size={18} />}
+          >
+            {error}
+          </Alert>
+        )}
 
-        <SimpleGrid cols={2}>
-            <NumberInput
-                radius="md"
-                label="Wood"
-                value={wood}
-                onChange={(v) => setWood(Number(v))}
-            />
-
-            <NumberInput
-                radius="md"
-                label="Epoxy"
-                value={epoxy}
-                onChange={(v) => setEpoxy(Number(v))}
-            />
-
-            <NumberInput
-                radius="md"
-                label="Nails"
-                value={nails}
-                onChange={(v) => setNails(Number(v))}
-            />
-
-            <NumberInput
-                radius="md"
-                label="Glue"
-                value={glue}
-                onChange={(v) => setGlue(Number(v))}
-            />
-
-            <NumberInput
-                radius="md"
-                label="Sandpaper"
-                value={sandpaper}
-                onChange={(v) =>
-                    setSandpaper(Number(v))
-                }
-            />
-
-            <NumberInput
-                radius="md"
-                label="Doorknob"
-                value={doorknob}
-                onChange={(v) =>
-                    setDoorknob(Number(v))
-                }
-            />
-        </SimpleGrid>
-
-        <Divider
-            my="xs"
-            label="Machine & Labor"
-            labelPosition="center"
-        />
-
-        <SimpleGrid cols={2}>
-            <NumberInput
-                radius="md"
-                label="Saw Hours"
-                value={sawHours}
-                onChange={(v) =>
-                    setSawHours(Number(v))
-                }
-            />
-
-            <NumberInput
-                radius="md"
-                label="Labor Hours"
-                value={laborHours}
-                onChange={(v) =>
-                    setLaborHours(Number(v))
-                }
-            />
-
-            <NumberInput
-                radius="md"
-                label="Thickness Planer"
-                value={thicknessPlanerHours}
-                onChange={(v) =>
-                    setThicknessPlanerHours(
-                    Number(v),
-                    )
-                }
-            />
-
-            <NumberInput
-                radius="md"
-                label="Hand Planer"
-                value={handPlanerHours}
-                onChange={(v) =>
-                    setHandPlanerHours(
-                    Number(v),
-                    )
-                }
-            />
-        </SimpleGrid>
+        {product ? (
+          <ProductResourceRequirementsSection
+            productId={product.id}
+          />
+        ) : (
+          <Text size="xs" c="dimmed" ta="center" mt="xs">
+            Save the product first to add resource
+            requirements.
+          </Text>
+        )}
 
         <Group
             justify="flex-end"
@@ -292,6 +152,7 @@ const AddProductModal = ({
             <Button
                 variant="default"
                 onClick={onClose}
+                disabled={isSubmitting}
             >
                 Cancel
             </Button>
@@ -299,6 +160,7 @@ const AddProductModal = ({
             <Button
                 onClick={handleSave}
                 disabled={!isValid}
+                loading={isSubmitting}
             >
                 {product
                     ? 'Save Changes'

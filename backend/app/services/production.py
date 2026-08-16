@@ -30,6 +30,31 @@ def get_production_cycle(
     return db.scalars(statement).first()
 
 
+def get_latest_production_cycle(
+    db: Session,
+) -> ProductionCycle | None:
+    """
+    Canonical "latest production cycle" resolution for the whole
+    system - see backend/docs/ for the audit that established this
+    rule. created_at is the primary sort key (not id alone) so this
+    stays correct even if cycles are ever created or backfilled out
+    of id order; id DESC breaks ties. status is intentionally not
+    considered here - "latest created" is not yet defined as
+    "current" (that is a separate, not-yet-made decision).
+    """
+
+    statement = (
+        select(ProductionCycle)
+        .order_by(
+            ProductionCycle.created_at.desc(),
+            ProductionCycle.id.desc(),
+        )
+        .limit(1)
+    )
+
+    return db.scalar(statement)
+
+
 def validate_cycle_dates(
     start_date,
     end_date,

@@ -14,10 +14,12 @@ from app.services.allocation import (
     get_allocations,
     update_allocation,
 )
+from app.services.auth import get_current_user
 
 router = APIRouter(
     prefix="/api/production-cycles/{cycle_id}/allocations",
     tags=["Production Allocations"],
+    dependencies=[Depends(get_current_user)],
 )
 
 

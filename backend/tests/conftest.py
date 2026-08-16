@@ -14,11 +14,83 @@ from app.database.models import (
     ProductResourceRequirement,
     ProductionCycle,
     Resource,
+    User,
 )
+
+from app.services.auth import hash_password
+
+
+AUTH_TEST_USERNAME = "conftest_auth_user"
+AUTH_TEST_PASSWORD = "ConftestAuthPassword9!"
+
+
+@pytest.fixture(scope="session")
+def _shared_auth_test_user():
+    """
+    Session-scoped so login/hashing happens once for the whole test
+    run, not once per test - business tests don't care about the
+    identity of the authenticated caller, only that one exists.
+    """
+
+    session = SessionLocal()
+
+    session.query(User).filter(
+        User.username == AUTH_TEST_USERNAME
+    ).delete()
+    session.commit()
+
+    user = User(
+        username=AUTH_TEST_USERNAME,
+        password_hash=hash_password(AUTH_TEST_PASSWORD),
+        is_active=True,
+    )
+
+    session.add(user)
+    session.commit()
+    session.refresh(user)
+
+    yield user
+
+    session.query(User).filter(
+        User.username == AUTH_TEST_USERNAME
+    ).delete()
+    session.commit()
+    session.close()
+
+
+@pytest.fixture(scope="session")
+def auth_token(_shared_auth_test_user):
+    login_response = TestClient(app).post(
+        "/api/auth/login",
+        json={
+            "username": AUTH_TEST_USERNAME,
+            "password": AUTH_TEST_PASSWORD,
+        },
+    )
+
+    return login_response.json()["access_token"]
 
 
 @pytest.fixture
-def client():
+def client(auth_token):
+    """
+    Pre-authenticated by default so the existing (pre-auth) business
+    test suite keeps working without every call site changing.
+    Tests that need to exercise unauthenticated behavior should use
+    the `unauthenticated_client` fixture instead - a per-call
+    `headers={"Authorization": ...}` override still works normally
+    for tests that need a *different* token (e.g. an invalid or
+    expired one), since per-call headers replace this default.
+    """
+
+    test_client = TestClient(app)
+    test_client.headers["Authorization"] = f"Bearer {auth_token}"
+
+    return test_client
+
+
+@pytest.fixture
+def unauthenticated_client():
     return TestClient(app)
 
 

@@ -1,7 +1,7 @@
 from datetime import datetime
 from enum import Enum
 
-from pydantic import BaseModel, ConfigDict, Field
+from pydantic import BaseModel, ConfigDict, Field, computed_field
 
 from decimal import Decimal
 
@@ -87,3 +87,8 @@ class CycleResourceResponse(BaseModel):
     model_config = ConfigDict(
         from_attributes=True,
     )
+
+    @computed_field
+    @property
+    def total_value(self) -> Decimal:
+        return self.available_quantity * self.unit_price

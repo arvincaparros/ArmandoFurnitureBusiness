@@ -1,11 +1,16 @@
 from fastapi import APIRouter, Depends
 from sqlalchemy.orm import Session
 
+from google.genai.errors import APIError
+
 from app.database.connection import get_db
 
 from app.schemas.forecast import (
+    ForecastChatRequest,
+    ForecastChatResponse,
     ForecastHistoryRun,
     ForecastResponse,
+    ForecastTimeSeriesResponse,
 )
 
 from app.services.forecast_history import (
@@ -19,13 +24,22 @@ from app.services.forecast_history import (
 from app.services.forecasting import (
     generate_forecast,
     get_forecast,
+    get_forecast_timeseries,
 )
+
+from app.services.forecast_chat import (
+    ChatConfigurationError,
+    generate_chat_reply,
+)
+
+from app.services.auth import get_current_user
 
 from fastapi import APIRouter, Depends, HTTPException
 
 router = APIRouter(
     prefix="/api/forecast",
     tags=["Forecast"],
+    dependencies=[Depends(get_current_user)],
 )
 
 
@@ -48,6 +62,25 @@ def generate(
     db: Session = Depends(get_db),
 ):
     return generate_forecast(db)
+
+@router.get(
+    "/timeseries",
+    response_model=ForecastTimeSeriesResponse,
+    summary="Get monthly historical and forecast series for charting",
+)
+def timeseries(
+    product_id: int | None = None,
+    db: Session = Depends(get_db),
+):
+    result = get_forecast_timeseries(db, product_id)
+
+    if product_id is not None and not result["products"]:
+        raise HTTPException(
+            status_code=404,
+            detail="Product not found",
+        )
+
+    return result
 
 @router.get(
     "/history",
@@ -79,6 +112,33 @@ def latest_history(
         )
 
     return build_forecast_history_response(run)
+
+
+@router.post(
+    "/chat",
+    response_model=ForecastChatResponse,
+    summary="Ask the demand forecasting assistant a question",
+)
+def chat(
+    data: ForecastChatRequest,
+    db: Session = Depends(get_db),
+):
+    try:
+        reply = generate_chat_reply(db, data.message)
+
+    except ChatConfigurationError as exc:
+        raise HTTPException(
+            status_code=503,
+            detail="The forecasting assistant is not available right now.",
+        ) from exc
+
+    except APIError as exc:
+        raise HTTPException(
+            status_code=502,
+            detail="The forecasting assistant is temporarily unavailable. Please try again.",
+        ) from exc
+
+    return {"reply": reply}
 
 
 @router.get(

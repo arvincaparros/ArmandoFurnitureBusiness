@@ -13,6 +13,7 @@ from app.schemas.feasibility import (
 from app.services.production import (
     create_production_cycle,
     delete_production_cycle,
+    get_latest_production_cycle,
     get_production_cycle,
     get_production_cycles,
     update_production_cycle,
@@ -43,9 +44,12 @@ from app.services.optimization_history import (
 
 from app.services.forecasting import get_forecast
 
+from app.services.auth import get_current_user
+
 router = APIRouter(
     prefix="/api/production-cycles",
     tags=["Production Cycles"],
+    dependencies=[Depends(get_current_user)],
 )
 
 @router.get(
@@ -57,6 +61,30 @@ def list_production_cycles(
     db: Session = Depends(get_db),
 ):
     return get_production_cycles(db)
+
+
+# Registered before GET /{cycle_id} on purpose - Starlette/FastAPI
+# matches routes in registration order, and /{cycle_id}'s int path
+# param would otherwise greedily match the literal "latest" first
+# and fail as an invalid integer (422) instead of reaching this
+# route.
+@router.get(
+    "/latest",
+    response_model=ProductionCycleResponse,
+    summary="Get the latest production cycle",
+)
+def get_latest_production_cycle_endpoint(
+    db: Session = Depends(get_db),
+):
+    cycle = get_latest_production_cycle(db)
+
+    if cycle is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="No production cycle found",
+        )
+
+    return cycle
 
 @router.post(
     "",

@@ -3,19 +3,19 @@ import {
   Text,
 } from '@mantine/core'
 
+import type { UtilizationStatus } from '../utilizationStatus'
+import { UTILIZATION_STATUS_META } from '../utilizationStatus'
+
 interface UtilizationProgressProps {
   value: number
+  status: UtilizationStatus
 }
 
 const UtilizationProgress = ({
   value,
+  status,
 }: UtilizationProgressProps) => {
-  const color =
-    value >= 90
-      ? 'red'
-      : value >= 70
-        ? 'yellow'
-        : 'green'
+  const color = UTILIZATION_STATUS_META[status].color
 
   return (
     <>

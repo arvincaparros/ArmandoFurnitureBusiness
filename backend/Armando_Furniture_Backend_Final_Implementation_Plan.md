@@ -354,7 +354,7 @@ and:
 
 ```text
 Resource
-Total Consumed
+Total Consumedcd
 Total Remaining
 Overall Utilization %
 ```

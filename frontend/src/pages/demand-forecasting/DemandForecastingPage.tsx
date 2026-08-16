@@ -1,7 +1,7 @@
 import { useState } from 'react'
 
-import { ActionIcon, Box } from '@mantine/core'
-import { Bot, X } from 'lucide-react'
+import { ActionIcon, Alert, Box, Group, Select, Text } from '@mantine/core'
+import { AlertCircle, Bot, X } from 'lucide-react'
 
 import PageHeader from '../../components/common/PageHeader'
 import ChartCard from '../../components/cards/ChartCard'
@@ -12,6 +12,9 @@ import ForecastChart from './components/ForecastChart'
 import ForecastChatbot from './components/ForecastChatbot'
 
 import useForecast from './hooks/useForecast'
+import useForecastChat from './hooks/useForecastChat'
+
+import { getApiErrorMessage } from '../../api/apiError'
 
 import classes from './DemandForecastingPage.module.css'
 
@@ -21,27 +24,59 @@ const DemandForecastingPage = () => {
 
   const {
     forecastItems,
-    forecastChartData,
-    chatMessages,
+    isLoading,
+    isError,
     runForecast,
+    isGenerating,
+    generateError,
+
+    products,
+    selectedProductId,
+    setSelectedProductId,
+    chartData,
+    isChartLoading,
+    isChartError,
   } = useForecast()
 
-  const handleRunOptimization = () => {
-    runForecast()
+  const {
+    messages: chatMessages,
+    sendMessage,
+    isSending: isChatSending,
+    sendError: chatSendError,
+  } = useForecastChat()
+
+  const handleRunForecast = () => {
+    void runForecast()
   }
 
   return (
-    <Box className={classes.page}>
+    <Box
+      className={`${classes.page} ${
+        chatOpened ? classes.pageSidebarOpen : ''
+      }`}
+    >
       <PageHeader
         title="Demand Forecasting (AI Chatbot)"
         subtitle="AI Assisted demand predictions from historical and sales record"
       />
 
       <ForecastToolbar
-        onRunOptimization={
-          handleRunOptimization
-        }
+        onRunForecast={handleRunForecast}
+        loading={isGenerating}
       />
+
+      {generateError && (
+        <Alert
+          color="red"
+          icon={<AlertCircle size={18} />}
+          mb="md"
+        >
+          {getApiErrorMessage(
+            generateError,
+            'Unable to generate a forecast. Please try again.',
+          )}
+        </Alert>
+      )}
 
       <Box
         mt="md"
@@ -55,6 +90,8 @@ const DemandForecastingPage = () => {
           >
             <ForecastTable
               forecastItems={forecastItems}
+              isLoading={isLoading}
+              isError={isError}
             />
           </ChartCard>
         </Box>
@@ -79,6 +116,9 @@ const DemandForecastingPage = () => {
 
               <ForecastChatbot
                 messages={chatMessages}
+                onSend={sendMessage}
+                isSending={isChatSending}
+                sendError={chatSendError}
               />
             </Box>
           )}
@@ -109,6 +149,9 @@ const DemandForecastingPage = () => {
             <Box className={classes.mobileChatPanel}>
               <ForecastChatbot
                 messages={chatMessages}
+                onSend={sendMessage}
+                isSending={isChatSending}
+                sendError={chatSendError}
               />
             </Box>
           )}
@@ -139,9 +182,37 @@ const DemandForecastingPage = () => {
           <ChartCard
             title="Demand Forecast Graph"
             subtitle="Historical and forecasted demand"
+            rightSection={
+              <Group gap="xs" wrap="nowrap">
+                <Text size="sm" c="dimmed">
+                  Product:
+                </Text>
+
+                <Select
+                  placeholder="Select a product"
+                  data={products}
+                  value={
+                    selectedProductId !== null
+                      ? String(selectedProductId)
+                      : null
+                  }
+                  onChange={(value) =>
+                    setSelectedProductId(
+                      value ? Number(value) : null,
+                    )
+                  }
+                  disabled={products.length === 0}
+                  w={200}
+                  searchable
+                />
+              </Group>
+            }
           >
             <ForecastChart
-              data={forecastChartData}
+              data={chartData}
+              isLoading={isChartLoading}
+              isError={isChartError}
+              hasProducts={products.length > 0}
             />
           </ChartCard>
         </Box>

@@ -1,8 +1,19 @@
 import { useEffect, useState } from 'react'
 
-import { Stack, Text } from '@mantine/core'
+import { Avatar, Center, Stack, Text, Tooltip } from '@mantine/core'
 
-const SidebarFooter = () => {
+import { useAuth } from '../../auth/AuthContext'
+import { useThemeMode } from '../../theme/ThemeContext'
+import { getUserInitials } from '../../utils/userInitials'
+
+interface SidebarFooterProps {
+  collapsed: boolean
+}
+
+const SidebarFooter = ({ collapsed }: SidebarFooterProps) => {
+  const { user } = useAuth()
+  const { mode } = useThemeMode()
+
   const [currentDate, setCurrentDate] =
     useState(new Date())
 
@@ -33,10 +44,31 @@ const SidebarFooter = () => {
       },
     )
 
+  const username = user?.username ?? 'Guest'
+
+  if (collapsed) {
+    return (
+      <Center>
+        <Tooltip
+          label={`${username} - ${formattedDate}, ${formattedTime}`}
+          position="right"
+          withArrow
+        >
+          <Avatar
+            radius="xl"
+            color={mode === 'wood' ? 'wood' : 'blue'}
+          >
+            {getUserInitials(user?.username)}
+          </Avatar>
+        </Tooltip>
+      </Center>
+    )
+  }
+
   return (
     <Stack gap={2}>
       <Text size="sm" fw={600}>
-        User: Arvin Caparros
+        User: {username}
       </Text>
 
       <Text size="xs" c="dimmed">

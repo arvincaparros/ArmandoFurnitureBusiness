@@ -12,7 +12,7 @@ export const forecastItems: ForecastItem[] = [
     predictedDemand: 315,
     forecastPeriod: 'Jul 2026',
     confidenceLevel: 91.2,
-    status: 'success',
+    status: 'READY',
   },
   {
     id: 2,
@@ -21,7 +21,7 @@ export const forecastItems: ForecastItem[] = [
     predictedDemand: 128,
     forecastPeriod: 'Jul 2026',
     confidenceLevel: 89.5,
-    status: 'success',
+    status: 'READY',
   },
   {
     id: 3,
@@ -30,7 +30,7 @@ export const forecastItems: ForecastItem[] = [
     predictedDemand: 83,
     forecastPeriod: 'Jul 2026',
     confidenceLevel: 90.1,
-    status: 'success',
+    status: 'READY',
   },
   {
     id: 4,
@@ -39,7 +39,7 @@ export const forecastItems: ForecastItem[] = [
     predictedDemand: 352,
     forecastPeriod: 'Aug 2026',
     confidenceLevel: 92.0,
-    status: 'success',
+    status: 'READY',
   },
 ]
 

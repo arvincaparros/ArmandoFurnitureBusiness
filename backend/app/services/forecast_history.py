@@ -33,6 +33,12 @@ def save_forecast_history(
                 "forecast_quantity"
             ],
             trend=product["trend"],
+            confidence_level=product.get(
+                "confidence_level"
+            ),
+            forecast_status=product.get(
+                "forecast_status"
+            ),
         )
         for product in forecast["products"]
     ]
@@ -100,6 +106,8 @@ def build_forecast_history_response(
                 "historical_quantity": result.historical_quantity,
                 "forecast_quantity": result.forecast_quantity,
                 "trend": result.trend,
+                "confidence_level": result.confidence_level,
+                "forecast_status": result.forecast_status,
             }
             for result in run.results
         ],

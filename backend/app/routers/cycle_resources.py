@@ -7,6 +7,7 @@ from app.schemas.production import (
     CycleResourceResponse,
     CycleResourceUpdate,
 )
+from app.services.auth import get_current_user
 from app.services.cycle_resource import (
     create_cycle_resource,
     delete_cycle_resource,
@@ -19,6 +20,7 @@ from app.services.cycle_resource import (
 router = APIRouter(
     prefix="/api/production-cycles/{cycle_id}/resources",
     tags=["Cycle Resources"],
+    dependencies=[Depends(get_current_user)],
 )
 
 

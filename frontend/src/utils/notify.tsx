@@ -52,4 +52,24 @@ export const notify = {
       icon: <Download size={18} />,
     })
   },
+
+  applied() {
+    notifications.show({
+      color: 'green',
+      title: 'Plan Applied',
+      message:
+        'The optimal plan has been committed as the production allocation for this cycle.',
+      icon: <CheckCircle2 size={18} />,
+    })
+  },
+
+  generated() {
+    notifications.show({
+      color: 'green',
+      title: 'Optimization Generated',
+      message:
+        'A new optimization run was generated and added to the history.',
+      icon: <CheckCircle2 size={18} />,
+    })
+  },
 }

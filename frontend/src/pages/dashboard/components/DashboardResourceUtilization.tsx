@@ -1,6 +1,8 @@
 import {
   Card,
+  Center,
   Group,
+  Loader,
   Menu,
   Text,
 } from '@mantine/core'
@@ -8,25 +10,43 @@ import {
 import { MoreHorizontal } from 'lucide-react'
 
 import {
-  PieChart,
-  Pie,
+  Bar,
+  BarChart,
+  CartesianGrid,
   Cell,
   ResponsiveContainer,
   Tooltip,
-  Legend,
+  XAxis,
+  YAxis,
 } from 'recharts'
 
-import { resourceUtilization } from '../mock/dashboardData'
+import type { DashboardResourceUtilizationBar } from '../api/dashboardAdapter'
 
-const COLORS = [
-  '#2563EB',
-  '#16A34A',
-  '#EA580C',
-  '#0891B2',
-  '#A855F7',
-]
+// Matches the severity convention already used by the Resource
+// Utilization Report module (red >=90%, amber >=70%, else green).
+function barColor(value: number): string {
+  if (value >= 90) {
+    return '#DC2626'
+  }
 
-const DashboardResourceUtilization = () => {
+  if (value >= 70) {
+    return '#D97706'
+  }
+
+  return '#16A34A'
+}
+
+interface DashboardResourceUtilizationProps {
+  data: DashboardResourceUtilizationBar[]
+  isLoading: boolean
+  isError: boolean
+}
+
+const DashboardResourceUtilization = ({
+  data,
+  isLoading,
+  isError,
+}: DashboardResourceUtilizationProps) => {
   return (
     <Card
       shadow="sm"
@@ -62,31 +82,64 @@ const DashboardResourceUtilization = () => {
         </Menu>
       </Group>
 
-      <ResponsiveContainer
-        width="100%"
-        height={320}
-      >
-        <PieChart>
-          <Pie
-            data={resourceUtilization}
-            dataKey="value"
-            nameKey="name"
-            innerRadius={70}
-            outerRadius={100}
+      {isLoading ? (
+        <Center h={320}>
+          <Loader />
+        </Center>
+      ) : isError ? (
+        <Center h={320}>
+          <Text c="dimmed">
+            Unable to load resource utilization.
+          </Text>
+        </Center>
+      ) : data.length === 0 ? (
+        <Center h={320}>
+          <Text c="dimmed">
+            No production cycle has been run yet.
+          </Text>
+        </Center>
+      ) : (
+        <ResponsiveContainer
+          width="100%"
+          height={320}
+        >
+          <BarChart
+            data={data}
+            layout="vertical"
+            margin={{ left: 12, right: 24 }}
           >
-            {resourceUtilization.map((_, index) => (
-              <Cell
-                key={index}
-                fill={COLORS[index % COLORS.length]}
-              />
-            ))}
-          </Pie>
+            <CartesianGrid
+              strokeDasharray="3 3"
+              horizontal={false}
+            />
 
-          <Tooltip />
+            <XAxis
+              type="number"
+              domain={[0, 100]}
+              unit="%"
+            />
 
-          <Legend />
-        </PieChart>
-      </ResponsiveContainer>
+            <YAxis
+              type="category"
+              dataKey="name"
+              width={90}
+            />
+
+            <Tooltip
+              formatter={(value) => `${value}%`}
+            />
+
+            <Bar dataKey="value" radius={4}>
+              {data.map((entry, index) => (
+                <Cell
+                  key={index}
+                  fill={barColor(entry.value)}
+                />
+              ))}
+            </Bar>
+          </BarChart>
+        </ResponsiveContainer>
+      )}
     </Card>
   )
 }

@@ -11,6 +11,20 @@ from app.database.models import (
 )
 
 
+# Shared by resource_utilization.py and optimization.py so both
+# services express the same true-bottleneck condition and the newer
+# utilization-status tiers (resource_utilization.py) come from one
+# named place instead of scattered magic numbers. The true bottleneck
+# rule stays remaining_quantity <= 0 (BOTTLENECK_REMAINING_THRESHOLD)
+# in both services - unchanged - the three *_UTILIZATION_THRESHOLD
+# constants only add a status classification on top of the already-
+# computed utilization_rate, they don't replace that rule.
+BOTTLENECK_REMAINING_THRESHOLD = Decimal("0")
+HIGH_UTILIZATION_THRESHOLD = Decimal("80")
+AT_RISK_UTILIZATION_THRESHOLD = Decimal("90")
+BOTTLENECK_UTILIZATION_THRESHOLD = Decimal("100")
+
+
 def calculate_resource_consumption(
     db: Session,
     cycle_id: int,

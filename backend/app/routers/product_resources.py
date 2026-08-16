@@ -7,6 +7,7 @@ from app.schemas.product import (
     ProductResourceRequirementResponse,
     ProductResourceRequirementUpdate,
 )
+from app.services.auth import get_current_user
 from app.services.product_resource_requirement import (
     create_product_resource_requirement,
     delete_product_resource_requirement,
@@ -19,6 +20,7 @@ from app.services.product_resource_requirement import (
 router = APIRouter(
     prefix="/api/products/{product_id}/resources",
     tags=["Product Resources"],
+    dependencies=[Depends(get_current_user)],
 )
 
 

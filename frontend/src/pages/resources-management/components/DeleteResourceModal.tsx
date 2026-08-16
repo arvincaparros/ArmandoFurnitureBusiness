@@ -1,3 +1,5 @@
+import { useState } from 'react'
+
 import {
   Alert,
   Badge,
@@ -14,13 +16,15 @@ import {
   Package,
 } from 'lucide-react'
 
+import { getApiErrorMessage } from '../../../api/apiError'
+
 import type { Resource } from '../types'
 
 interface DeleteResourceModalProps {
   opened: boolean
   resource: Resource | null
   onClose: () => void
-  onConfirm: () => void
+  onConfirm: () => Promise<void>
 }
 
 const DeleteResourceModal = ({
@@ -29,6 +33,27 @@ const DeleteResourceModal = ({
   onClose,
   onConfirm,
 }: DeleteResourceModalProps) => {
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+
+  const handleConfirm = async () => {
+    setIsSubmitting(true)
+    setError(null)
+
+    try {
+      await onConfirm()
+    } catch (deleteError) {
+      setError(
+        getApiErrorMessage(
+          deleteError,
+          'Unable to delete resource. Please try again.',
+        ),
+      )
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
   return (
     <Modal
       opened={opened}
@@ -56,25 +81,35 @@ const DeleteResourceModal = ({
 
                 <Stack gap={2}>
                 <Text fw={600}>
-                    {resource?.resourceType}
+                    {resource?.name}
                 </Text>
 
                 <Text size="sm" c="dimmed">
-                    Qty: {resource?.availableQuantity} {resource?.unit}
+                    {resource?.resourceType} • {resource?.unit}
                 </Text>
                 </Stack>
             </Group>
 
-            <Badge color="green" variant="light">
-                ₱{resource?.unitPrice.toFixed(2)}
+            <Badge color="gray" variant="light">
+                {resource?.isActive ? 'Active' : 'Inactive'}
             </Badge>
             </Group>
         </Card>
+
+        {error && (
+          <Alert
+            color="red"
+            icon={<AlertTriangle size={18} />}
+          >
+            {error}
+          </Alert>
+        )}
 
         <Group justify="flex-end">
             <Button
                 variant="default"
                 onClick={onClose}
+                disabled={isSubmitting}
             >
                 Cancel
             </Button>
@@ -82,7 +117,8 @@ const DeleteResourceModal = ({
             <Button
                 color="red"
                 leftSection={<AlertTriangle size={16} />}
-                onClick={onConfirm}
+                onClick={handleConfirm}
+                loading={isSubmitting}
             >
                 Delete Resource
             </Button>

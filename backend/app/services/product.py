@@ -5,12 +5,14 @@ from app.database.models import Product
 from app.schemas.product import ProductCreate, ProductUpdate
 
 
-def get_products(db: Session) -> list[Product]:
-    statement = (
-        select(Product)
-        .where(Product.is_active.is_(True))
-        .order_by(Product.id)
-    )
+def get_products(
+    db: Session,
+    include_inactive: bool = False,
+) -> list[Product]:
+    statement = select(Product).order_by(Product.id)
+
+    if not include_inactive:
+        statement = statement.where(Product.is_active.is_(True))
 
     return list(
         db.scalars(statement).all()

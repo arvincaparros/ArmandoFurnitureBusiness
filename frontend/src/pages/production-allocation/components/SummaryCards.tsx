@@ -8,7 +8,7 @@ import {
 import type { OptimizationSummary } from '../types'
 
 interface SummaryCardsProps {
-  summary: OptimizationSummary
+  summary: OptimizationSummary | null
 }
 
 const SummaryCards = ({
@@ -17,15 +17,15 @@ const SummaryCards = ({
   const cards = [
     {
       title: 'Total Revenue',
-      value: summary.totalRevenue,
+      value: summary?.totalRevenue,
     },
     {
       title: 'Total Cost',
-      value: summary.totalCost,
+      value: summary?.totalCost,
     },
     {
       title: 'Total Profit',
-      value: summary.totalProfit,
+      value: summary?.totalProfit,
     },
   ]
 
@@ -48,8 +48,9 @@ const SummaryCards = ({
           </Text>
 
           <Title order={3} mt="xs">
-            ₱
-            {card.value.toLocaleString()}
+            {card.value === undefined
+              ? '—'
+              : `₱${card.value.toLocaleString()}`}
           </Title>
         </Card>
       ))}

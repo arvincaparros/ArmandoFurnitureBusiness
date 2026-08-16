@@ -1,8 +1,10 @@
 import {
+  ActionIcon,
   Box,
   Divider,
   Stack,
   Text,
+  Tooltip,
 } from '@mantine/core'
 
 import { useMediaQuery } from '@mantine/hooks'
@@ -17,6 +19,8 @@ import {
   LayoutDashboard,
   Package,
   HistoryIcon,
+  PanelLeftClose,
+  PanelLeftOpen,
   TrendingUp,
 } from 'lucide-react'
 
@@ -24,6 +28,7 @@ import { useLocation } from 'react-router-dom'
 
 import SidebarItem from '../components/SidebarItem'
 import SidebarFooter from './SidebarFooter'
+import { useSidebarCollapsed } from '../SidebarContext'
 
 const menus = [
   {
@@ -81,6 +86,16 @@ const Sidebar = ({
     '(max-width: 48em)',
   )
 
+  const {
+    effectiveCollapsed,
+    isDesktop,
+    toggleCollapsed,
+  } = useSidebarCollapsed()
+
+  const toggleLabel = effectiveCollapsed
+    ? 'Expand sidebar'
+    : 'Collapse sidebar'
+
   return (
     <Box h="100%" p="md">
       <Stack
@@ -89,6 +104,36 @@ const Sidebar = ({
       >
         {/* TOP */}
         <Stack gap="xs">
+          {/* Desktop only - the mobile drawer always renders fully
+              expanded, so a collapse toggle has nothing to do there. */}
+          {isDesktop && (
+            <Tooltip
+              label={toggleLabel}
+              position="right"
+              withArrow
+            >
+              <ActionIcon
+                variant="subtle"
+                color="gray"
+                size="lg"
+                aria-label={toggleLabel}
+                onClick={toggleCollapsed}
+                style={{
+                  alignSelf: effectiveCollapsed
+                    ? 'center'
+                    : 'flex-end',
+                }}
+                mb={4}
+              >
+                {effectiveCollapsed ? (
+                  <PanelLeftOpen size={18} />
+                ) : (
+                  <PanelLeftClose size={18} />
+                )}
+              </ActionIcon>
+            </Tooltip>
+          )}
+
           {menus.map((item) => (
             <SidebarItem
               key={item.path}
@@ -98,6 +143,7 @@ const Sidebar = ({
               active={
                 location.pathname === item.path
               }
+              collapsed={effectiveCollapsed}
               onNavigate={onNavigate}
             />
           ))}
@@ -121,7 +167,7 @@ const Sidebar = ({
             </>
           )}
 
-          <SidebarFooter />
+          <SidebarFooter collapsed={effectiveCollapsed} />
         </Stack>
       </Stack>
     </Box>

@@ -7,6 +7,9 @@ import {
 
 import { AppLayout } from '../layouts'
 
+import GuestRoute from '../auth/GuestRoute'
+import ProtectedRoute from '../auth/ProtectedRoute'
+
 import LoginPage from '../pages/auth/LoginPage'
 import DashboardPage from '../pages/dashboard/DashboardPage'
 import ResourcesPage from '../pages/resources-management/ResourcesPage'
@@ -21,61 +24,65 @@ const AppRouter = () => {
   return (
     <BrowserRouter>
       <Routes>
-        <Route
-          path="/login"
-          element={<LoginPage />}
-        />
-
-        <Route element={<AppLayout />}>
+        <Route element={<GuestRoute />}>
           <Route
-            path="/"
-            element={
-              <Navigate
-                to="/dashboard"
-                replace
-              />
-            }
+            path="/login"
+            element={<LoginPage />}
           />
+        </Route>
 
-          <Route
-            path="/dashboard"
-            element={<DashboardPage />}
-          />
+        <Route element={<ProtectedRoute />}>
+          <Route element={<AppLayout />}>
+            <Route
+              path="/"
+              element={
+                <Navigate
+                  to="/dashboard"
+                  replace
+                />
+              }
+            />
 
-          <Route
-            path="/resources"
-            element={<ResourcesPage />}
-          />
+            <Route
+              path="/dashboard"
+              element={<DashboardPage />}
+            />
 
-          <Route
-            path="/products"
-            element={<ProductDataPage />}
-          />
+            <Route
+              path="/resources"
+              element={<ResourcesPage />}
+            />
 
-          <Route
-            path="/production"
-            element={<ProductionPage />}
-          />
+            <Route
+              path="/products"
+              element={<ProductDataPage />}
+            />
 
-          <Route
-            path="/reports"
-            element={<ReportsPage />}
-          />
+            <Route
+              path="/production"
+              element={<ProductionPage />}
+            />
 
-          <Route
-            path="/history"
-            element={<HistoryPage />}
-          />
+            <Route
+              path="/reports"
+              element={<ReportsPage />}
+            />
 
-          <Route
-            path="/optimization-history"
-            element={<OptimizationHistoryPage />}
-          />
+            <Route
+              path="/history"
+              element={<HistoryPage />}
+            />
 
-          <Route
-            path="/demand-forecasting"
-            element={<DemandForecastingPage />}
-          />
+            <Route
+              path="/optimization-history"
+              element={<OptimizationHistoryPage />}
+            />
+
+            <Route
+              path="/demand-forecasting"
+              element={<DemandForecastingPage />}
+            />
+          </Route>
         </Route>
       </Routes>
     </BrowserRouter>

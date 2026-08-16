@@ -2,19 +2,23 @@ import { Button, Group } from '@mantine/core'
 import { Sparkles } from 'lucide-react'
 
 interface ForecastToolbarProps {
-  onRunOptimization: () => void
+  onRunForecast: () => void
+  loading: boolean
 }
 
 const ForecastToolbar = ({
-  onRunOptimization,
+  onRunForecast,
+  loading,
 }: ForecastToolbarProps) => {
   return (
     <Group justify="flex-end" mb="xs">
       <Button
         leftSection={<Sparkles size={18} />}
-        onClick={onRunOptimization}
+        onClick={onRunForecast}
+        loading={loading}
+        disabled={loading}
       >
-        Run Demand Optimization
+        Run Demand Forecast
       </Button>
     </Group>
   )

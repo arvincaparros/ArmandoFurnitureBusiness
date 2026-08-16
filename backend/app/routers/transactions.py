@@ -7,6 +7,7 @@ from app.schemas.transaction import (
     SalesTransactionResponse,
     SalesTransactionUpdate,
 )
+from app.services.auth import get_current_user
 from app.services.transaction import (
     create_transaction,
     delete_transaction,
@@ -19,6 +20,7 @@ from app.services.transaction import (
 router = APIRouter(
     prefix="/api/transactions",
     tags=["Sales Transactions"],
+    dependencies=[Depends(get_current_user)],
 )
 
 

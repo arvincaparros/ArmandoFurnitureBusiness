@@ -1,0 +1,49 @@
+/* Mantine's <Table> hardcodes border-collapse: collapse (styles/
+   Table.css - not overridable via any prop). Mantine's own CSS for
+   its sticky-header feature carries a comment acknowledging that
+   "border-collapse: collapse drops borders on position: sticky
+   cells" - in practice this same collapse mode also makes browsers
+   paint a sticky BODY cell's background/box-shadow past its own cell
+   boundary, bleeding left over the previous columns' content (here:
+   Machine/Total/Profit visually disappearing under Actions). Scoping
+   this table to border-collapse: separate fixes the paint bug -
+   border-spacing: 0 keeps rows seamless since this table has no
+   per-cell column borders (withColumnBorder isn't used) to double up. */
+.stickyActionsScrollArea :global(table) {
+  border-collapse: separate;
+  border-spacing: 0;
+}
+
+/* Actions is always the last column (see ProductTable.tsx's columns
+   array), so :last-child scoping needs no per-column marker/prop on
+   AppTable itself - AppTable stays fully generic/untouched, and no
+   other table using it is affected since this class is only applied
+   here. Sticks it to the right edge of this table's own horizontal
+   ScrollArea (the nearest scrolling ancestor), so it stays visible
+   while the dynamic resource columns scroll underneath it. */
+.stickyActionsScrollArea :global(table) thead th:last-child,
+.stickyActionsScrollArea :global(table) tbody td:last-child {
+  position: sticky;
+  right: 0;
+  z-index: 2;
+
+  /* Fixed width (not just a hint on Table.Th, which is all
+     Column.width reaches - AppTable never applies width to Table.Td)
+     so the column's rendered footprint is identical whether the cell
+     is in its normal in-flow position or stuck - eliminates any
+     width mismatch as a second possible source of overlap. */
+  width: 90px;
+  min-width: 90px;
+  max-width: 90px;
+
+  /* Solid, theme-reactive background so scrolled-under columns don't
+     show through - this opts the Actions column out of the striped
+     row background, which is expected/necessary for a fixed column. */
+  background: var(--mantine-color-body);
+
+  box-shadow: -4px 0 6px -4px rgba(0, 0, 0, 0.25);
+}
+
+.stickyActionsScrollArea :global(table) thead th:last-child {
+  z-index: 3;
+}

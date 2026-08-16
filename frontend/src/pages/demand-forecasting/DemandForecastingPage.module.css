@@ -2,11 +2,20 @@
   display: flex;
   flex-direction: column;
   min-height: calc(100vh - 64px);
+  transition: padding-right 0.2s ease;
+}
+
+/* Desktop only (the mobile override below resets this to 0) - reserves
+   the sidebar's own width on the right so AppShell.Main's content
+   never renders underneath the fixed-position sidebar. Kept in sync
+   with .chatOpen's width below. */
+.pageSidebarOpen {
+  padding-right: 360px;
 }
 
 .content {
   display: grid;
-  grid-template-columns: minmax(0, 2fr) minmax(280px, 1fr);
+  grid-template-columns: minmax(0, 1fr);
   grid-template-rows: auto 1fr;
   gap: 16px;
   flex: 1;
@@ -22,17 +31,34 @@
   min-height: 0;
 }
 
-/* Desktop chatbot */
+/* Desktop AI Assistant sidebar - a true application-level sidebar,
+   NOT a column inside .content's grid. Positioned relative to the
+   viewport (top/right/bottom), not to the Forecast Table/Chart, so
+   its vertical top aligns with the bottom of AppShell's own header
+   rather than with the forecast content.
+   --app-shell-header-height is the real CSS custom property Mantine's
+   AppShell sets from the `header={{ height: 64 }}` prop configured in
+   layouts/AppLayout.tsx (confirmed in node_modules/@mantine/core/
+   styles/AppShell.css) - read here instead of a second hardcoded 64,
+   with 64px only as a fallback if that variable is ever unset. */
 .chat {
   display: none;
-  grid-column: 2;
-  grid-row: 1 / 3;
-  min-width: 0;
-  min-height: 0;
 }
 
 .chatOpen {
-  display: block;
+  display: flex;
+  flex-direction: column;
+
+  position: fixed;
+  top: var(--app-shell-header-height, 64px);
+  right: 0;
+  bottom: 0;
+  width: 360px;
+  z-index: 190;
+
+  background: #FFFFFF;
+  border-left: 1px solid #E2E8F0;
+  box-shadow: -6px 0 20px rgba(15, 23, 42, 0.06);
 }
 
 .chatWrapper {
@@ -105,6 +131,15 @@
     overflow: visible;
   }
 
+  /* The desktop sidebar never renders on mobile (.chat/.chatOpen are
+     both display:none below via the .chat, .desktopChatButton rule),
+     so the width it would otherwise reserve must not be reserved
+     here either - the mobile chat panel is a floating overlay, not a
+     layout participant. */
+  .pageSidebarOpen {
+    padding-right: 0;
+  }
+
   .content {
     display: flex;
     flex-direction: column;
@@ -120,6 +155,7 @@
 
   /* Hide desktop chatbot and button */
   .chat,
+  .chatOpen,
   .desktopChatButton {
     display: none;
   }

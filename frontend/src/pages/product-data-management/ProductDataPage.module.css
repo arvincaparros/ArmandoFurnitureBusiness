@@ -1,0 +1,78 @@
+/* Prevents this page from growing taller than the viewport and
+   forcing the whole document to scroll - the Products table (with
+   its dynamic resource columns and potentially many rows) becomes
+   the only scrolling region instead. Height is derived from
+   AppShell's own --app-shell-header-height/--app-shell-padding
+   custom properties (real, inherited CSS custom properties set by
+   Mantine from the header={{height:64}}/padding="lg" props in
+   layouts/AppLayout.tsx - confirmed via @mantine/core's AppShell
+   source, same convention already used in demand-forecasting's own
+   page module CSS), with px fallbacks only as a safety net, never
+   the primary source. AppShell.Main/global overflow rules are not
+   touched - this only bounds this page's own content. */
+.page {
+  display: flex;
+  flex-direction: column;
+  height: calc(
+    100dvh - var(--app-shell-header-height, 64px) -
+      var(--app-shell-padding, 20px) - var(--app-shell-padding, 20px)
+  );
+  min-height: 0;
+  overflow: hidden;
+}
+
+/* Local equivalent of components/cards/ChartCard's visual chrome
+   (Card/Group/Text), not that shared component itself - ChartCard is
+   also used by 7 other pages that all rely on its current
+   content-sized (non-flex) behavior, so changing it to divide its
+   header/content as flex items - what this page specifically needs -
+   would risk their layouts. This card's own children are flex-
+   divided instead: header fixed, table area flexible/scrollable. */
+.productsCard {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.cardHeader {
+  flex-shrink: 0;
+}
+
+/* Hands ProductTable's ScrollArea a definite, shrinkable height to
+   fill (see ProductTable.tsx's style={{ height: '100%' }}) - without
+   min-height: 0 here, a flex child would refuse to shrink below its
+   content's natural height, which is exactly what let the table push
+   the page taller than the viewport before this fix. */
+.tableArea {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+}
+
+/* Mobile keeps relying on normal page scrolling, unchanged from
+   before this fix - only desktop gets the viewport-bounded,
+   table-scrolls-internally treatment. Same breakpoint already used
+   by demand-forecasting's own page module CSS. */
+@media (max-width: 768px) {
+  .page {
+    display: block;
+    height: auto;
+    min-height: auto;
+    overflow: visible;
+  }
+
+  .productsCard {
+    display: block;
+    flex: none;
+    min-height: auto;
+    overflow: visible;
+  }
+
+  .tableArea {
+    display: block;
+    flex: none;
+  }
+}

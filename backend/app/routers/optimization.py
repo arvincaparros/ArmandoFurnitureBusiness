@@ -5,6 +5,7 @@ from app.database.connection import get_db
 from app.schemas.optimization_history import (
     OptimizationHistoryResponse,
 )
+from app.services.auth import get_current_user
 from app.services.optimization_history import (
     get_optimization_history,
     get_optimization_history_run,
@@ -14,6 +15,7 @@ from app.services.optimization_history import (
 router = APIRouter(
     prefix="/api/optimization",
     tags=["Optimization"],
+    dependencies=[Depends(get_current_user)],
 )
 
 

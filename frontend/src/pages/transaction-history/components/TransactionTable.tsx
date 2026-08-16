@@ -5,8 +5,14 @@ import AppTable, {
 
 import type { Transaction } from '../types'
 
+import TransactionRowActions from './TransactionRowActions'
+
 interface TransactionTableProps {
   transactions: Transaction[]
+  onEdit: (transaction: Transaction) => void
+  onDelete: (transaction: Transaction) => void
+  isLoading: boolean
+  isError: boolean
   sortBy: keyof Transaction | string
   reverse: boolean
   onSort: (
@@ -16,6 +22,10 @@ interface TransactionTableProps {
 
 const TransactionTable = ({
   transactions,
+  onEdit,
+  onDelete,
+  isLoading,
+  isError,
   sortBy,
   reverse,
   onSort,
@@ -83,7 +93,25 @@ const TransactionTable = ({
         </span>
       ),
     },
+    {
+      accessor: 'actions',
+      title: 'Actions',
+      textAlign: 'center',
+      render: (row) => (
+        <TransactionRowActions
+          transaction={row}
+          onEdit={onEdit}
+          onDelete={onDelete}
+        />
+      ),
+    },
   ]
+
+  const emptyMessage = isLoading
+    ? 'Loading transactions...'
+    : isError
+      ? 'Unable to load transactions.'
+      : 'No transactions found.'
 
   return (
     <ScrollArea
@@ -92,14 +120,14 @@ const TransactionTable = ({
     >
         <AppTable
             columns={columns}
-            data={transactions}
+            data={isLoading ? [] : transactions}
             sortBy={sortBy}
             reverse={reverse}
             onSort={onSort}
-            emptyMessage="No transactions found."
+            emptyMessage={emptyMessage}
         />
     </ScrollArea>
-    
+
   )
 }
 

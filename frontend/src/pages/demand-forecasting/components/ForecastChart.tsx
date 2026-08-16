@@ -1,14 +1,59 @@
+import { Center, Loader, Text } from '@mantine/core'
 import { LineChart } from '@mantine/charts'
 
 import type { ForecastChartData } from '../types'
 
 interface ForecastChartProps {
   data: ForecastChartData[]
+  isLoading: boolean
+  isError: boolean
+  hasProducts: boolean
 }
 
 const ForecastChart = ({
   data,
+  isLoading,
+  isError,
+  hasProducts,
 }: ForecastChartProps) => {
+  if (isLoading) {
+    return (
+      <Center h={280}>
+        <Loader />
+      </Center>
+    )
+  }
+
+  if (isError) {
+    return (
+      <Center h={280}>
+        <Text c="dimmed">
+          Unable to load forecast timeseries.
+        </Text>
+      </Center>
+    )
+  }
+
+  if (!hasProducts) {
+    return (
+      <Center h={280}>
+        <Text c="dimmed">
+          No products available.
+        </Text>
+      </Center>
+    )
+  }
+
+  if (data.length === 0) {
+    return (
+      <Center h={280}>
+        <Text c="dimmed">
+          No forecast timeseries available for this product.
+        </Text>
+      </Center>
+    )
+  }
+
   return (
     <LineChart
       h={280}
@@ -29,9 +74,6 @@ const ForecastChart = ({
       withLegend
       withTooltip
       withDots
-      yAxisProps={{
-        domain: [0, 360],
-      }}
       valueFormatter={(value) =>
         `${value} units`
       }

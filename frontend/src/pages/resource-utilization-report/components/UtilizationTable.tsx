@@ -5,21 +5,21 @@ import AppTable, {
 import UtilizationProgress from './UtilizationProgress'
 
 import type { UtilizationResource } from '../types'
-import { Progress, ScrollArea } from '@mantine/core'
+import { Badge, ScrollArea } from '@mantine/core'
+
+import { UTILIZATION_STATUS_META } from '../utilizationStatus'
 
 interface UtilizationTableProps {
   resources: UtilizationResource[]
+  isLoading: boolean
+  isError: boolean
 }
 
 const UtilizationTable = ({
   resources,
+  isLoading,
+  isError,
 }: UtilizationTableProps) => {
-    const getColor = (value: number) => {
-        if (value >= 90) return 'red'
-        if (value >= 75) return 'yellow'
-        return 'green'
-    }
-
     const columns: Column<UtilizationResource>[] =
     [
       {
@@ -28,38 +28,47 @@ const UtilizationTable = ({
       },
       {
         accessor: 'totalConsumed',
-        title: 'Total Consumed',
+        title: 'Consumed',
+        render: (row) =>
+          `${row.totalConsumed} ${row.unit}`,
       },
       {
         accessor: 'totalRemaining',
-        title: 'Total Remaining',
+        title: 'Remaining',
+        render: (row) =>
+          `${row.totalRemaining} ${row.unit}`,
       },
       {
         accessor: 'utilizationPercent',
-        title: 'Overall Utilization %',
+        title: 'Utilization',
         render: (row) => (
           <UtilizationProgress
-            value={
-              row.utilizationPercent
-            }
+            value={row.utilizationPercent}
+            status={row.status}
           />
         ),
       },
       {
-        accessor: 'utilizationVisual',
-        title: 'Utilization Visual',
+        accessor: 'status',
+        title: 'Status',
         textAlign: 'center',
         render: (row) => (
-            <Progress
-                value={row.utilizationPercent}
-                color={getColor(row.utilizationPercent)}
-                radius="xl"
-                size="sm"
-                w={110}
-            />
+          <Badge
+            color={UTILIZATION_STATUS_META[row.status].color}
+            variant="light"
+            size="sm"
+          >
+            {UTILIZATION_STATUS_META[row.status].label}
+          </Badge>
         ),
       },
     ]
+
+  const emptyMessage = isLoading
+    ? 'Loading...'
+    : isError
+      ? 'Unable to load resource utilization.'
+      : 'No utilization data for this production cycle.'
 
   return (
     <ScrollArea
@@ -68,8 +77,8 @@ const UtilizationTable = ({
     >
         <AppTable
         columns={columns}
-        data={resources}
-        emptyMessage="No utilization data."
+        data={isLoading ? [] : resources}
+        emptyMessage={emptyMessage}
         />
     </ScrollArea>
   )

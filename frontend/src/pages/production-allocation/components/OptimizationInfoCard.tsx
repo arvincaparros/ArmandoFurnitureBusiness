@@ -8,7 +8,7 @@ import {
 import type { OptimizationSummary } from '../types'
 
 interface OptimizationInfoCardProps {
-  summary: OptimizationSummary
+  summary: OptimizationSummary | null
 }
 
 const OptimizationInfoCard = ({
@@ -27,17 +27,17 @@ const OptimizationInfoCard = ({
       <Stack gap="sm">
         <Group justify="space-between">
           <Text c="dimmed">Start</Text>
-          <Text>{summary.startTime}</Text>
+          <Text>{summary?.startTime ?? '—'}</Text>
         </Group>
 
         <Group justify="space-between">
           <Text c="dimmed">End</Text>
-          <Text>{summary.endTime}</Text>
+          <Text>{summary?.endTime ?? '—'}</Text>
         </Group>
 
         <Group justify="space-between">
           <Text c="dimmed">Duration</Text>
-          <Text>{summary.duration}</Text>
+          <Text>{summary?.duration ?? '—'}</Text>
         </Group>
       </Stack>
     </Card>

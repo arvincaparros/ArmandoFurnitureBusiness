@@ -10,6 +10,8 @@ from app.database.models import (
     SalesTransaction,
     ForecastRun,
 )
+from app.services.optimization_history import get_latest_optimal_run
+from app.services.production import get_latest_production_cycle
 
 def get_dashboard_summary(db: Session) -> dict:
     total_products = db.scalar(
@@ -54,17 +56,26 @@ def get_dashboard_summary(db: Session) -> dict:
         )
     ) or 0
 
-    latest_optimization_profit = db.scalar(
-        select(OptimizationRun.total_profit)
-        .where(
-            OptimizationRun.status == "OPTIMAL"
+    # Scoped to the canonical latest production cycle (same
+    # created_at DESC, id DESC rule as GET /api/production-cycles/latest)
+    # so this can never surface a different cycle's profit than what
+    # Expected Revenue is showing on the dashboard - see the Dashboard
+    # Expected Profit Cycle-Scoping report. No fallback to an older
+    # cycle's run: no OPTIMAL run in the latest cycle means None, same
+    # contract as before.
+    latest_cycle = get_latest_production_cycle(db)
+
+    latest_optimization_profit = None
+
+    if latest_cycle is not None:
+        latest_optimal_run = get_latest_optimal_run(
+            db, latest_cycle.id
         )
-        .order_by(
-            OptimizationRun.started_at.desc(),
-            OptimizationRun.id.desc(),
-        )
-        .limit(1)
-    )
+
+        if latest_optimal_run is not None:
+            latest_optimization_profit = (
+                latest_optimal_run.total_profit
+            )
 
     latest_forecast = db.scalar(
         select(ForecastRun)

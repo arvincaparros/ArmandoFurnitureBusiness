@@ -112,3 +112,33 @@ def get_latest_optimization_history_run(
     )
 
     return db.scalar(statement)
+
+
+def get_latest_optimal_run(
+    db: Session,
+    cycle_id: int,
+) -> OptimizationRun | None:
+    """
+    Latest OPTIMAL run for one cycle - the same "newest OPTIMAL run"
+    selection the frontend performs over
+    /api/optimization/history?cycle_id=... (findLatestOptimalRun),
+    reused here so the dashboard summary's latest_optimization_profit
+    always refers to the same run as the dashboard's Expected Revenue,
+    never a different cycle's or a non-OPTIMAL run.
+    """
+
+    statement = (
+        select(OptimizationRun)
+        .where(
+            OptimizationRun.production_cycle_id
+            == cycle_id,
+            OptimizationRun.status == "OPTIMAL",
+        )
+        .order_by(
+            OptimizationRun.started_at.desc(),
+            OptimizationRun.id.desc(),
+        )
+        .limit(1)
+    )
+
+    return db.scalar(statement)

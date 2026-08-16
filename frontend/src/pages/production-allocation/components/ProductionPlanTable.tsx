@@ -12,10 +12,16 @@ import type { ProductionPlan } from '../types'
 
 interface ProductionPlanTableProps {
   plans: ProductionPlan[]
+  isLoading: boolean
+  isError: boolean
+  emptyMessage?: string
 }
 
 const ProductionPlanTable = ({
   plans,
+  isLoading,
+  isError,
+  emptyMessage: emptyMessageOverride,
 }: ProductionPlanTableProps) => {
   const columns: Column<ProductionPlan>[] = [
     {
@@ -34,12 +40,19 @@ const ProductionPlanTable = ({
     0,
   )
 
+  const emptyMessage = isLoading
+    ? 'Loading...'
+    : isError
+      ? 'Unable to load the production plan.'
+      : (emptyMessageOverride ??
+        'No production plan generated yet. Click "Generate Optimal Production Plan" above.')
+
   return (
     <>
       <AppTable
         columns={columns}
-        data={plans}
-        emptyMessage="No production plan generated."
+        data={isLoading ? [] : plans}
+        emptyMessage={emptyMessage}
       />
 
       <Divider my="md" />

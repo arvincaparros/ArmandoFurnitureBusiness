@@ -4,18 +4,9 @@ export const productData: Product[] = [
   {
     id: 1,
     productName: 'Dining Table (4 seat)',
+    isActive: true,
 
-    wood: 40,
-    epoxy: 2,
-    nails: 50,
-    glue: 1,
-    sandpaper: 3,
-    doorknob: 0,
-
-    laborHours: 20,
-    sawHours: 1,
-    thicknessPlanerHours: 0.5,
-    handPlanerHours: 1,
+    resourceQuantities: {},
 
     sellingPrice: 18000,
 
@@ -28,18 +19,9 @@ export const productData: Product[] = [
   {
     id: 2,
     productName: 'High Chair',
+    isActive: true,
 
-    wood: 10,
-    epoxy: 0,
-    nails: 20,
-    glue: 1,
-    sandpaper: 2,
-    doorknob: 0,
-
-    laborHours: 8,
-    sawHours: 0.5,
-    thicknessPlanerHours: 0.25,
-    handPlanerHours: 0.25,
+    resourceQuantities: {},
 
     sellingPrice: 6500,
 

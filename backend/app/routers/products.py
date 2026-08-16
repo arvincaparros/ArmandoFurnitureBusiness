@@ -1,4 +1,4 @@
-from fastapi import APIRouter, Depends, HTTPException, status
+from fastapi import APIRouter, Depends, HTTPException, Query, status
 from sqlalchemy.orm import Session
 
 from app.database.connection import get_db
@@ -7,6 +7,7 @@ from app.schemas.product import (
     ProductResponse,
     ProductUpdate,
 )
+from app.services.auth import get_current_user
 from app.services.product import (
     create_product,
     delete_product,
@@ -19,6 +20,7 @@ from app.services.product import (
 router = APIRouter(
     prefix="/api/products",
     tags=["Products"],
+    dependencies=[Depends(get_current_user)],
 )
 
 
@@ -27,9 +29,13 @@ router = APIRouter(
     response_model=list[ProductResponse],
 )
 def list_products(
+    include_inactive: bool = Query(
+        default=False,
+        description="Include inactive products in the results",
+    ),
     db: Session = Depends(get_db),
 ):
-    return get_products(db)
+    return get_products(db, include_inactive)
 
 
 @router.get(

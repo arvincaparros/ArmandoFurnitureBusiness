@@ -28,3 +28,9 @@
 .active:hover {
   background: var(--sidebar-hover);
 }
+
+.collapsed {
+  justify-content: center;
+  padding: 10px;
+  gap: 0;
+}

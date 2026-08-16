@@ -17,6 +17,8 @@ import {
   useThemeMode,
 } from '../theme/ThemeContext'
 
+import { AuthProvider } from '../auth/AuthContext'
+
 const queryClient = new QueryClient({
   defaultOptions: {
     queries: {
@@ -56,7 +58,9 @@ const Providers = ({
     <QueryClientProvider client={queryClient}>
       <ThemeProvider>
         <AppThemeProvider>
-          {children}
+          <AuthProvider>
+            {children}
+          </AuthProvider>
         </AppThemeProvider>
       </ThemeProvider>
     </QueryClientProvider>

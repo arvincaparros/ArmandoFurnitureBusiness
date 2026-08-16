@@ -3,6 +3,8 @@ import type { Transaction } from '../types'
 export const transactionData: Transaction[] = [
   {
     id: 1,
+    productId: 1,
+    unitPrice: 0,
     transactionNumber: 'TRX-1001',
     date: '2026-06-06',
     furnitureProduct: 'Dining Table (6-seater)',
@@ -14,6 +16,8 @@ export const transactionData: Transaction[] = [
   },
   {
     id: 2,
+    productId: 2,
+    unitPrice: 0,
     transactionNumber: 'TRX-1002',
     date: '2026-06-06',
     furnitureProduct: 'Carved Chair',
@@ -25,6 +29,8 @@ export const transactionData: Transaction[] = [
   },
   {
     id: 3,
+    productId: 3,
+    unitPrice: 0,
     transactionNumber: 'TRX-1003',
     date: '2026-06-06',
     furnitureProduct: 'Dining Table (6-seater)',
@@ -36,6 +42,8 @@ export const transactionData: Transaction[] = [
   },
   {
     id: 4,
+    productId: 4,
+    unitPrice: 0,
     transactionNumber: 'TRX-1004',
     date: '2026-06-06',
     furnitureProduct: 'Dining Table (8-seat)',
@@ -47,6 +55,8 @@ export const transactionData: Transaction[] = [
   },
   {
     id: 5,
+    productId: 5,
+    unitPrice: 0,
     transactionNumber: 'TRX-1005',
     date: '2026-06-06',
     furnitureProduct: 'Ordinary Table',
@@ -58,6 +68,8 @@ export const transactionData: Transaction[] = [
   },
   {
     id: 6,
+    productId: 6,
+    unitPrice: 0,
     transactionNumber: 'TRX-1006',
     date: '2026-06-06',
     furnitureProduct: 'High Chair',
@@ -69,6 +81,8 @@ export const transactionData: Transaction[] = [
   },
   {
     id: 7,
+    productId: 7,
+    unitPrice: 0,
     transactionNumber: 'TRX-1007',
     date: '2026-06-06',
     furnitureProduct: 'High Chair',
@@ -80,6 +94,8 @@ export const transactionData: Transaction[] = [
   },
   {
     id: 8,
+    productId: 8,
+    unitPrice: 0,
     transactionNumber: 'TRX-1008',
     date: '2026-06-06',
     furnitureProduct: 'Door (60x210)',
@@ -91,6 +107,8 @@ export const transactionData: Transaction[] = [
   },
   {
     id: 9,
+    productId: 9,
+    unitPrice: 0,
     transactionNumber: 'TRX-1009',
     date: '2026-06-06',
     furnitureProduct: 'Bed Frame',
@@ -102,6 +120,8 @@ export const transactionData: Transaction[] = [
   },
   {
     id: 10,
+    productId: 10,
+    unitPrice: 0,
     transactionNumber: 'TRX-1010',
     date: '2026-06-06',
     furnitureProduct: 'Door (80x210)',
@@ -113,6 +133,8 @@ export const transactionData: Transaction[] = [
   },
   {
     id: 11,
+    productId: 11,
+    unitPrice: 0,
     transactionNumber: 'TRX-1011',
     date: '2026-06-06',
     furnitureProduct: 'Door (80x210)',
@@ -124,6 +146,8 @@ export const transactionData: Transaction[] = [
   },
   {
     id: 12,
+    productId: 12,
+    unitPrice: 0,
     transactionNumber: 'TRX-1012',
     date: '2026-06-06',
     furnitureProduct: 'Door (90x210)',

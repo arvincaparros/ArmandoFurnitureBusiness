@@ -11,16 +11,27 @@ import TransactionTable from './components/TransactionTable'
 
 import useTransactions from './hooks/useTransactions'
 import AddTransactionModal from './components/AddTransactionModal'
+import DeleteTransactionModal from './components/DeleteTransactionModal'
 
 import { notify } from '../../utils/notify'
 import { exportCsv } from '../../utils/exportCsv'
 import { exportExcel } from '../../utils/exportExcel'
 import type { Transaction } from './types'
+import type {
+  SalesTransactionCreateRequest,
+  SalesTransactionUpdateRequest,
+} from './api/transactionTypes'
 
 const TransactionHistoryPage = () => {
   const [search, setSearch] = useState('')
   const [opened, setOpened] = useState(false)
-  
+
+  const [selectedTransaction, setSelectedTransaction] =
+    useState<Transaction | null>(null)
+
+  const [deleteOpened, setDeleteOpened] =
+    useState(false)
+
   const [sortBy, setSortBy] =
     useState<keyof Transaction | string>(
       'transactionNumber',
@@ -31,7 +42,12 @@ const TransactionHistoryPage = () => {
 
   const {
     transactions,
-    addTransaction,
+    isLoading,
+    isError,
+    products,
+    createTransaction,
+    updateTransaction,
+    deleteTransaction,
   } = useTransactions()
 
   const filteredTransactions =
@@ -65,14 +81,61 @@ const TransactionHistoryPage = () => {
     return 0
   })
 
-  const handleAddTransaction = (
+  const handleSaveTransaction = async (
+    data:
+      | SalesTransactionCreateRequest
+      | SalesTransactionUpdateRequest,
+  ) => {
+    if (selectedTransaction) {
+      await updateTransaction({
+        id: selectedTransaction.id,
+        data: data as SalesTransactionUpdateRequest,
+      })
+
+      notify.updated('Transaction')
+    } else {
+      await createTransaction(
+        data as SalesTransactionCreateRequest,
+      )
+
+      notify.added('Transaction')
+    }
+
+    setSelectedTransaction(null)
+    setOpened(false)
+  }
+
+  const handleOpenAdd = () => {
+    setSelectedTransaction(null)
+    setOpened(true)
+  }
+
+  const handleEditTransaction = (
     transaction: Transaction,
   ) => {
-    addTransaction(transaction)
+    setSelectedTransaction(transaction)
+    setOpened(true)
+  }
 
-    notify.added('Transaction')
+  const handleDeleteTransaction = (
+    transaction: Transaction,
+  ) => {
+    setSelectedTransaction(transaction)
+    setDeleteOpened(true)
+  }
 
-    setOpened(false)
+  const handleConfirmDelete = async () => {
+    if (!selectedTransaction) return
+
+    await deleteTransaction({
+      id: selectedTransaction.id,
+      productId: selectedTransaction.productId,
+    })
+
+    notify.deleted('Transaction')
+
+    setDeleteOpened(false)
+    setSelectedTransaction(null)
   }
 
   const handleSort = (
@@ -137,7 +200,7 @@ const TransactionHistoryPage = () => {
       />
 
       <TransactionToolbar
-        onAdd={() => setOpened(true)}
+        onAdd={handleOpenAdd}
         onExportCsv={handleExportCsv}
         onExportExcel={handleExportExcel}
       />
@@ -169,6 +232,10 @@ const TransactionHistoryPage = () => {
           transactions={
             sortedTransactions
           }
+          onEdit={handleEditTransaction}
+          onDelete={handleDeleteTransaction}
+          isLoading={isLoading}
+          isError={isError}
           sortBy={sortBy}
           reverse={reverse}
           onSort={handleSort}
@@ -176,8 +243,23 @@ const TransactionHistoryPage = () => {
 
         <AddTransactionModal
           opened={opened}
-          onClose={() => setOpened(false)}
-          onSave={handleAddTransaction}
+          products={products}
+          transaction={selectedTransaction}
+          onClose={() => {
+            setSelectedTransaction(null)
+            setOpened(false)
+          }}
+          onSave={handleSaveTransaction}
+        />
+
+        <DeleteTransactionModal
+          opened={deleteOpened}
+          transaction={selectedTransaction}
+          onClose={() => {
+            setDeleteOpened(false)
+            setSelectedTransaction(null)
+          }}
+          onConfirm={handleConfirmDelete}
         />
       </ChartCard>
     </>
