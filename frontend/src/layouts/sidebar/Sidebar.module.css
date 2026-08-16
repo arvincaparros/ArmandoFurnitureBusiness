@@ -1,0 +1,26 @@
+/* Mirrors ../components/SidebarItem.module.css's .root exactly
+   (color/hover/radius) so the collapse toggle reads as part of the
+   same nav item family, just sized as a compact icon button instead
+   of a full-width row. 40px matches SidebarItem's own rendered
+   height (10px vertical padding + an 18px icon/20px label line). */
+.collapseToggle {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+
+  width: 40px;
+  height: 40px;
+  flex-shrink: 0;
+
+  border-radius: 10px;
+
+  color: var(--sidebar-text);
+
+  transition: 0.2s;
+
+  cursor: pointer;
+}
+
+.collapseToggle:hover {
+  background: var(--sidebar-hover);
+}

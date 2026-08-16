@@ -26,6 +26,15 @@ import type {
   SalesTransactionUpdateRequest,
 } from '../api/transactionTypes'
 
+// Same Decimal-as-JSON-string convention as transactionAdapter.ts's
+// parseDecimal - duplicated locally rather than imported, matching
+// this codebase's per-module convention.
+function parseDecimal(value: string): number {
+  const parsed = Number(value)
+
+  return Number.isFinite(parsed) ? parsed : 0
+}
+
 interface AddTransactionModalProps {
   opened: boolean
   products: ProductSummary[]
@@ -41,12 +50,14 @@ interface AddTransactionModalProps {
 // transaction_number is server-generated (see transactionTypes.ts) -
 // there is no input for it here, unlike the old mock form. Sales
 // Amount is likewise not collected directly: the backend computes
-// total_sales as quantity * unit_price
-// (app/services/transaction.py::calculate_transaction_values), so
-// Unit Price is the real input and the Transaction Summary card below
-// is a read-only client preview of what the backend will compute -
-// the table always displays the authoritative value from the API
-// response, not this preview.
+// total_sales as quantity (sold) * unit_price, and the stored/
+// returned production_cost as quantity_produced * "Production Cost /
+// Unit" (app/services/transaction.py::calculate_transaction_values) -
+// so Unit Price and Production Cost / Unit are the real per-unit
+// inputs, and the Transaction Summary card below is a read-only
+// client preview of what the backend will compute - the table always
+// displays the authoritative value from the API response, not this
+// preview.
 //
 // Edit mode (transaction prop set): the Product select is locked -
 // SalesTransactionUpdateRequest has no product_id field at all, the
@@ -100,8 +111,18 @@ const AddTransactionModal = ({
       )
       setQuantitySold(transaction.quantitySold)
       setUnitPrice(transaction.unitPrice)
+      // transaction.productionCost is the stored TOTAL (Quantity
+      // Produced x per-unit rate - see app/schemas/transaction.py's
+      // SalesTransactionResponse.production_cost). This field is
+      // per-unit, so it's reconstructed the same way the backend
+      // reconstructs it when a PATCH omits production_cost
+      // (app/services/transaction.py::update_transaction) - dividing
+      // back by the quantity that produced it, not the raw total.
       setProductionCost(
-        transaction.productionCost,
+        transaction.quantityProduced > 0
+          ? transaction.productionCost /
+              transaction.quantityProduced
+          : 0,
       )
     } else {
       setProductId(null)
@@ -117,8 +138,15 @@ const AddTransactionModal = ({
     setError(null)
   }, [transaction, opened])
 
+  // Sales revenue is earned on units SOLD; production cost is
+  // incurred on units PRODUCED - these use different quantities on
+  // purpose (matches app/services/transaction.py::
+  // calculate_transaction_values exactly).
   const estimatedSales = quantitySold * unitPrice
-  const estimatedProfit = estimatedSales - productionCost
+  const estimatedProductionCost =
+    quantityProduced * productionCost
+  const estimatedProfit =
+    estimatedSales - estimatedProductionCost
 
   const isValid =
     productId !== null &&
@@ -219,11 +247,31 @@ const AddTransactionModal = ({
                 ? String(productId)
                 : null
             }
-            onChange={(value) =>
-              setProductId(
-                value ? Number(value) : null,
+            onChange={(value) => {
+              const nextProductId = value
+                ? Number(value)
+                : null
+
+              setProductId(nextProductId)
+
+              // Auto-fill Unit Price from the product's existing
+              // Selling Price (Product Data Management's own
+              // selling_price, reused as-is - never hardcoded).
+              // Stays editable afterward, same as every other field
+              // here - only the product itself is locked, and only
+              // in edit mode.
+              const selectedProduct = products.find(
+                (product) => product.id === nextProductId,
               )
-            }
+
+              setUnitPrice(
+                selectedProduct
+                  ? parseDecimal(
+                      selectedProduct.selling_price,
+                    )
+                  : 0,
+              )
+            }}
             searchable
             disabled={isEditMode}
             rightSection={
@@ -277,7 +325,7 @@ const AddTransactionModal = ({
 
           <NumberInput
             radius="md"
-            label="Production Cost"
+            label="Production Cost / Unit"
             prefix="₱ "
             value={productionCost}
             onChange={(value) =>
@@ -308,6 +356,16 @@ const AddTransactionModal = ({
 
               <Text size="sm" fw={600}>
                 ₱{estimatedSales.toLocaleString()}
+              </Text>
+            </Group>
+
+            <Group justify="space-between">
+              <Text size="sm" c="dimmed">
+                Estimated Production Cost
+              </Text>
+
+              <Text size="sm" fw={600}>
+                ₱{estimatedProductionCost.toLocaleString()}
               </Text>
             </Group>
 

@@ -36,12 +36,26 @@ def get_transaction(
 
 
 def calculate_transaction_values(
+    quantity_produced: Decimal,
     quantity: Decimal,
     unit_price: Decimal,
-    production_cost: Decimal,
+    production_cost_per_unit: Decimal,
 ) -> dict:
+    # unit_price/production_cost_per_unit are both per-unit inputs.
+    # Sales revenue is earned on units SOLD; production cost is
+    # incurred on units PRODUCED - these are deliberately different
+    # quantities (see the per-unit production cost requirement).
+    # production_cost here is the computed TOTAL, mirroring total_sales
+    # - the SalesTransaction.production_cost column already documents
+    # itself as "Total production cost associated with this
+    # transaction", so this was always its intended meaning; only the
+    # multiplication by quantity_produced was previously missing.
     total_sales = (
         quantity * unit_price
+    ).quantize(Decimal("0.01"))
+
+    production_cost = (
+        quantity_produced * production_cost_per_unit
     ).quantize(Decimal("0.01"))
 
     total_profit = (
@@ -49,11 +63,14 @@ def calculate_transaction_values(
     ).quantize(Decimal("0.0000"))
 
     unit_profit = (
-        total_profit / quantity
-    ).quantize(Decimal("0.0000"))
+        (total_profit / quantity).quantize(Decimal("0.0000"))
+        if quantity != 0
+        else Decimal("0.0000")
+    )
 
     return {
         "total_sales": total_sales,
+        "production_cost": production_cost,
         "unit_profit": unit_profit,
         "total_profit": total_profit,
     }
@@ -85,6 +102,7 @@ def create_transaction(
         )
 
     values = calculate_transaction_values(
+        transaction_data.quantity_produced,
         transaction_data.quantity,
         transaction_data.unit_price,
         transaction_data.production_cost,
@@ -98,7 +116,7 @@ def create_transaction(
         quantity=transaction_data.quantity,
         unit_price=transaction_data.unit_price,
         total_sales=values["total_sales"],
-        production_cost=transaction_data.production_cost,
+        production_cost=values["production_cost"],
         unit_profit=values["unit_profit"],
         total_profit=values["total_profit"],
     )
@@ -124,6 +142,11 @@ def update_transaction(
         exclude_unset=True
     )
 
+    quantity_produced = update_data.get(
+        "quantity_produced",
+        transaction.quantity_produced,
+    )
+
     quantity = update_data.get(
         "quantity",
         transaction.quantity,
@@ -134,21 +157,33 @@ def update_transaction(
         transaction.unit_price,
     )
 
-    production_cost = update_data.get(
-        "production_cost",
-        transaction.production_cost,
-    )
+    # transaction.production_cost is the stored TOTAL (see
+    # calculate_transaction_values). If this request doesn't send a
+    # new production_cost, reconstruct the per-unit rate that produced
+    # the currently-stored total using the quantity_produced that was
+    # in effect when it was last saved - not the raw stored total
+    # itself, which would otherwise be multiplied again below and
+    # silently inflate the cost.
+    if "production_cost" in update_data:
+        production_cost_per_unit = update_data["production_cost"]
+    else:
+        production_cost_per_unit = (
+            transaction.production_cost
+            / transaction.quantity_produced
+        )
 
     values = calculate_transaction_values(
+        quantity_produced,
         quantity,
         unit_price,
-        production_cost,
+        production_cost_per_unit,
     )
 
     for field, value in update_data.items():
         setattr(transaction, field, value)
 
     transaction.total_sales = values["total_sales"]
+    transaction.production_cost = values["production_cost"]
     transaction.unit_profit = values["unit_profit"]
     transaction.total_profit = values["total_profit"]
 

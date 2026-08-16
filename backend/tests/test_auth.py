@@ -5,24 +5,32 @@ import pytest
 
 from sqlalchemy.exc import IntegrityError
 
-from app.database.models import User
+from app.database.models import PasswordResetToken, User
 
 from app.services.auth import (
     JWT_ALGORITHM,
     JWT_SECRET_KEY,
     create_access_token,
+    create_password_reset_token,
     hash_password,
     verify_password,
 )
 
 
 TEST_USERNAME = "test_auth_user"
+TEST_EMAIL = "test_auth_user@example.com"
 TEST_PASSWORD = "CorrectHorseBattery9!"
 
 INACTIVE_USERNAME = "test_auth_inactive_user"
+INACTIVE_EMAIL = "test_auth_inactive_user@example.com"
 INACTIVE_PASSWORD = "AlsoAValidPassword9!"
 
 DUPLICATE_USERNAME = "test_auth_duplicate_user"
+DUPLICATE_EMAIL = "test_auth_duplicate_user@example.com"
+
+REGISTER_USERNAME = "test_auth_register_user"
+REGISTER_EMAIL = "test_auth_register_user@example.com"
+REGISTER_PASSWORD = "RegisterPassword9!"
 
 
 @pytest.fixture
@@ -31,6 +39,7 @@ def cleanup_test_users(db):
         TEST_USERNAME,
         INACTIVE_USERNAME,
         DUPLICATE_USERNAME,
+        REGISTER_USERNAME,
     ]
 
     db.query(User).filter(
@@ -58,6 +67,7 @@ def cleanup_test_users(db):
 def test_user(db, cleanup_test_users):
     user = User(
         username=TEST_USERNAME,
+        email=TEST_EMAIL,
         password_hash=hash_password(TEST_PASSWORD),
         is_active=True,
     )
@@ -73,6 +83,7 @@ def test_user(db, cleanup_test_users):
 def inactive_test_user(db, cleanup_test_users):
     user = User(
         username=INACTIVE_USERNAME,
+        email=INACTIVE_EMAIL,
         password_hash=hash_password(INACTIVE_PASSWORD),
         is_active=False,
     )
@@ -279,6 +290,7 @@ def test_me_response_does_not_expose_password_hash(
     assert set(response.json().keys()) == {
         "id",
         "username",
+        "email",
         "is_active",
         "created_at",
     }
@@ -388,6 +400,7 @@ def test_duplicate_username_rejected_by_unique_constraint(
 ):
     first = User(
         username=DUPLICATE_USERNAME,
+        email=DUPLICATE_EMAIL,
         password_hash=hash_password("SomePassword9!"),
         is_active=True,
     )
@@ -397,6 +410,7 @@ def test_duplicate_username_rejected_by_unique_constraint(
 
     duplicate = User(
         username=DUPLICATE_USERNAME,
+        email="a-different-email@example.com",
         password_hash=hash_password("AnotherPassword9!"),
         is_active=True,
     )
@@ -447,3 +461,517 @@ def test_create_access_token_contains_expected_claims(test_user):
     assert payload["username"] == test_user.username
     assert "exp" in payload
     assert "iat" in payload
+
+
+# ---------------------------------------------------------------
+# Registration
+# ---------------------------------------------------------------
+
+def test_register_success(client, cleanup_test_users, db):
+    response = client.post(
+        "/api/auth/register",
+        json={
+            "username": REGISTER_USERNAME,
+            "email": REGISTER_EMAIL,
+            "password": REGISTER_PASSWORD,
+            "confirm_password": REGISTER_PASSWORD,
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.json() == {
+        "detail": "Account created successfully. Please log in."
+    }
+
+    created = (
+        db.query(User)
+        .filter(User.username == REGISTER_USERNAME)
+        .first()
+    )
+
+    assert created is not None
+    assert created.email == REGISTER_EMAIL
+
+
+def test_register_does_not_auto_login(client, cleanup_test_users):
+    """Registration returns a plain message, never an access_token."""
+
+    response = client.post(
+        "/api/auth/register",
+        json={
+            "username": REGISTER_USERNAME,
+            "email": REGISTER_EMAIL,
+            "password": REGISTER_PASSWORD,
+            "confirm_password": REGISTER_PASSWORD,
+        },
+    )
+
+    assert response.status_code == 201
+    assert "access_token" not in response.json()
+
+
+def test_register_password_is_hashed(client, cleanup_test_users, db):
+    client.post(
+        "/api/auth/register",
+        json={
+            "username": REGISTER_USERNAME,
+            "email": REGISTER_EMAIL,
+            "password": REGISTER_PASSWORD,
+            "confirm_password": REGISTER_PASSWORD,
+        },
+    )
+
+    created = (
+        db.query(User)
+        .filter(User.username == REGISTER_USERNAME)
+        .first()
+    )
+
+    assert created.password_hash != REGISTER_PASSWORD
+    assert verify_password(
+        REGISTER_PASSWORD, created.password_hash
+    ) is True
+
+
+def test_register_duplicate_username_rejected(
+    client, test_user, cleanup_test_users,
+):
+    response = client.post(
+        "/api/auth/register",
+        json={
+            "username": TEST_USERNAME,
+            "email": "someone-else@example.com",
+            "password": REGISTER_PASSWORD,
+            "confirm_password": REGISTER_PASSWORD,
+        },
+    )
+
+    assert response.status_code == 409
+    assert "username" in response.json()["detail"].lower()
+
+
+def test_register_duplicate_email_rejected(
+    client, test_user, cleanup_test_users,
+):
+    response = client.post(
+        "/api/auth/register",
+        json={
+            "username": REGISTER_USERNAME,
+            "email": TEST_EMAIL,
+            "password": REGISTER_PASSWORD,
+            "confirm_password": REGISTER_PASSWORD,
+        },
+    )
+
+    assert response.status_code == 409
+    assert "email" in response.json()["detail"].lower()
+
+
+def test_register_invalid_email_rejected(client, cleanup_test_users):
+    response = client.post(
+        "/api/auth/register",
+        json={
+            "username": REGISTER_USERNAME,
+            "email": "not-an-email",
+            "password": REGISTER_PASSWORD,
+            "confirm_password": REGISTER_PASSWORD,
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_register_password_mismatch_rejected(client, cleanup_test_users):
+    response = client.post(
+        "/api/auth/register",
+        json={
+            "username": REGISTER_USERNAME,
+            "email": REGISTER_EMAIL,
+            "password": REGISTER_PASSWORD,
+            "confirm_password": "SomethingElse9!",
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_register_short_password_rejected(client, cleanup_test_users):
+    response = client.post(
+        "/api/auth/register",
+        json={
+            "username": REGISTER_USERNAME,
+            "email": REGISTER_EMAIL,
+            "password": "short1",
+            "confirm_password": "short1",
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_register_response_never_exposes_password(
+    client, cleanup_test_users,
+):
+    response = client.post(
+        "/api/auth/register",
+        json={
+            "username": REGISTER_USERNAME,
+            "email": REGISTER_EMAIL,
+            "password": REGISTER_PASSWORD,
+            "confirm_password": REGISTER_PASSWORD,
+        },
+    )
+
+    body = response.json()
+
+    assert "password" not in body
+    assert "password_hash" not in body
+
+
+# ---------------------------------------------------------------
+# Change password
+# ---------------------------------------------------------------
+
+def _login(client, username, password):
+    response = client.post(
+        "/api/auth/login",
+        json={"username": username, "password": password},
+    )
+
+    return response.json()["access_token"]
+
+
+def test_change_password_requires_authentication(
+    unauthenticated_client,
+):
+    response = unauthenticated_client.post(
+        "/api/auth/change-password",
+        json={
+            "current_password": "whatever",
+            "new_password": "NewPassword9!",
+            "confirm_password": "NewPassword9!",
+        },
+    )
+
+    assert response.status_code == 401
+
+
+def test_change_password_success(client, test_user, db):
+    token = _login(client, TEST_USERNAME, TEST_PASSWORD)
+
+    response = client.post(
+        "/api/auth/change-password",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "current_password": TEST_PASSWORD,
+            "new_password": "BrandNewPassword9!",
+            "confirm_password": "BrandNewPassword9!",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "detail": "Password changed successfully."
+    }
+
+    db.refresh(test_user)
+
+    # New password hash is actually persisted...
+    assert verify_password(
+        "BrandNewPassword9!", test_user.password_hash
+    ) is True
+
+    # ...and the old password no longer works.
+    assert verify_password(
+        TEST_PASSWORD, test_user.password_hash
+    ) is False
+
+
+def test_change_password_new_password_actually_logs_in(
+    client, test_user,
+):
+    token = _login(client, TEST_USERNAME, TEST_PASSWORD)
+
+    client.post(
+        "/api/auth/change-password",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "current_password": TEST_PASSWORD,
+            "new_password": "BrandNewPassword9!",
+            "confirm_password": "BrandNewPassword9!",
+        },
+    )
+
+    old_password_login = client.post(
+        "/api/auth/login",
+        json={
+            "username": TEST_USERNAME,
+            "password": TEST_PASSWORD,
+        },
+    )
+
+    assert old_password_login.status_code == 401
+
+    new_password_login = client.post(
+        "/api/auth/login",
+        json={
+            "username": TEST_USERNAME,
+            "password": "BrandNewPassword9!",
+        },
+    )
+
+    assert new_password_login.status_code == 200
+
+
+def test_change_password_wrong_current_password_rejected(
+    client, test_user,
+):
+    token = _login(client, TEST_USERNAME, TEST_PASSWORD)
+
+    response = client.post(
+        "/api/auth/change-password",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "current_password": "wrong-current-password",
+            "new_password": "BrandNewPassword9!",
+            "confirm_password": "BrandNewPassword9!",
+        },
+    )
+
+    assert response.status_code == 401
+    assert response.json()["detail"] == (
+        "Current password is incorrect"
+    )
+
+
+def test_change_password_mismatch_rejected(client, test_user):
+    token = _login(client, TEST_USERNAME, TEST_PASSWORD)
+
+    response = client.post(
+        "/api/auth/change-password",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "current_password": TEST_PASSWORD,
+            "new_password": "BrandNewPassword9!",
+            "confirm_password": "SomethingDifferent9!",
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_change_password_same_as_current_rejected(client, test_user):
+    token = _login(client, TEST_USERNAME, TEST_PASSWORD)
+
+    response = client.post(
+        "/api/auth/change-password",
+        headers={"Authorization": f"Bearer {token}"},
+        json={
+            "current_password": TEST_PASSWORD,
+            "new_password": TEST_PASSWORD,
+            "confirm_password": TEST_PASSWORD,
+        },
+    )
+
+    assert response.status_code == 422
+
+
+# ---------------------------------------------------------------
+# Forgot password / reset password
+# ---------------------------------------------------------------
+
+GENERIC_FORGOT_PASSWORD_MESSAGE = (
+    "If an account exists for this email, a password reset "
+    "link has been sent."
+)
+
+
+def test_forgot_password_unknown_email_returns_generic_response(
+    client,
+):
+    response = client.post(
+        "/api/auth/forgot-password",
+        json={"email": "no-such-account@example.com"},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["detail"] == (
+        GENERIC_FORGOT_PASSWORD_MESSAGE
+    )
+
+
+def test_forgot_password_known_email_returns_same_generic_response(
+    client, test_user,
+):
+    response = client.post(
+        "/api/auth/forgot-password",
+        json={"email": TEST_EMAIL},
+    )
+
+    assert response.status_code == 200
+    assert response.json()["detail"] == (
+        GENERIC_FORGOT_PASSWORD_MESSAGE
+    )
+
+
+def test_forgot_password_known_email_creates_reset_token(
+    client, test_user, db,
+):
+    client.post(
+        "/api/auth/forgot-password",
+        json={"email": TEST_EMAIL},
+    )
+
+    tokens = (
+        db.query(PasswordResetToken)
+        .filter(PasswordResetToken.user_id == test_user.id)
+        .all()
+    )
+
+    assert len(tokens) == 1
+    assert tokens[0].used_at is None
+    # Only a hash is stored - never the raw, usable token.
+    assert tokens[0].token_hash != ""
+
+
+def test_reset_password_success(client, test_user, db):
+    raw_token = create_password_reset_token(db, test_user)
+
+    response = client.post(
+        "/api/auth/reset-password",
+        json={
+            "token": raw_token,
+            "new_password": "ResetPassword9!",
+            "confirm_password": "ResetPassword9!",
+        },
+    )
+
+    assert response.status_code == 200
+    assert response.json() == {
+        "detail": "Password reset successfully. You can now log in."
+    }
+
+    db.refresh(test_user)
+
+    assert verify_password(
+        "ResetPassword9!", test_user.password_hash
+    ) is True
+
+
+def test_reset_password_new_password_actually_logs_in(
+    client, test_user, db,
+):
+    raw_token = create_password_reset_token(db, test_user)
+
+    client.post(
+        "/api/auth/reset-password",
+        json={
+            "token": raw_token,
+            "new_password": "ResetPassword9!",
+            "confirm_password": "ResetPassword9!",
+        },
+    )
+
+    response = client.post(
+        "/api/auth/login",
+        json={
+            "username": TEST_USERNAME,
+            "password": "ResetPassword9!",
+        },
+    )
+
+    assert response.status_code == 200
+
+
+def test_reset_password_token_can_only_be_used_once(
+    client, test_user, db,
+):
+    raw_token = create_password_reset_token(db, test_user)
+
+    first_response = client.post(
+        "/api/auth/reset-password",
+        json={
+            "token": raw_token,
+            "new_password": "ResetPassword9!",
+            "confirm_password": "ResetPassword9!",
+        },
+    )
+
+    assert first_response.status_code == 200
+
+    second_response = client.post(
+        "/api/auth/reset-password",
+        json={
+            "token": raw_token,
+            "new_password": "AnotherPassword9!",
+            "confirm_password": "AnotherPassword9!",
+        },
+    )
+
+    assert second_response.status_code == 400
+    assert second_response.json()["detail"] == (
+        "Invalid or expired reset token"
+    )
+
+
+def test_reset_password_expired_token_rejected(
+    client, test_user, db,
+):
+    raw_token = create_password_reset_token(db, test_user)
+
+    token_row = (
+        db.query(PasswordResetToken)
+        .filter(PasswordResetToken.user_id == test_user.id)
+        .order_by(PasswordResetToken.id.desc())
+        .first()
+    )
+
+    token_row.expires_at = datetime.now(timezone.utc) - timedelta(
+        minutes=1
+    )
+    db.commit()
+
+    response = client.post(
+        "/api/auth/reset-password",
+        json={
+            "token": raw_token,
+            "new_password": "ResetPassword9!",
+            "confirm_password": "ResetPassword9!",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == (
+        "Invalid or expired reset token"
+    )
+
+
+def test_reset_password_invalid_token_rejected(client):
+    response = client.post(
+        "/api/auth/reset-password",
+        json={
+            "token": "this-token-does-not-exist",
+            "new_password": "ResetPassword9!",
+            "confirm_password": "ResetPassword9!",
+        },
+    )
+
+    assert response.status_code == 400
+    assert response.json()["detail"] == (
+        "Invalid or expired reset token"
+    )
+
+
+def test_reset_password_mismatch_rejected(client, test_user, db):
+    raw_token = create_password_reset_token(db, test_user)
+
+    response = client.post(
+        "/api/auth/reset-password",
+        json={
+            "token": raw_token,
+            "new_password": "ResetPassword9!",
+            "confirm_password": "SomethingDifferent9!",
+        },
+    )
+
+    assert response.status_code == 422

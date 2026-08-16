@@ -20,6 +20,12 @@ from app.services.optimization_history import (
 from app.services.production_calculation import (
     BOTTLENECK_REMAINING_THRESHOLD,
 )
+from app.services.resource_utilization import (
+    calculate_resource_utilization,
+)
+from app.services.resource_utilization_history import (
+    save_resource_utilization_history,
+)
 
 def get_optimization_data(
     db: Session,
@@ -598,6 +604,29 @@ def apply_optimization(
         )
 
     try:
+        # Flushed (not committed) so calculate_resource_utilization()
+        # below - which reads ProductionAllocation back via a SELECT
+        # - sees the rows just added above in this same session.
+        # autoflush is disabled project-wide (see
+        # app/database/connection.py), so without this the query
+        # would still see the pre-apply allocations.
+        db.flush()
+
+        # Resource Utilization History is a snapshot of applied
+        # production, never of the optimizer's preview - this is the
+        # ONLY place it's created (generating a plan does not reach
+        # here). Computed from the allocations just flushed above,
+        # then persisted in the SAME transaction as those allocations
+        # (save_resource_utilization_history does not commit) so both
+        # succeed or both roll back together atomically.
+        utilization = calculate_resource_utilization(db, cycle_id)
+
+        save_resource_utilization_history(
+            db,
+            cycle_id,
+            utilization,
+        )
+
         db.commit()
     except Exception:
         db.rollback()

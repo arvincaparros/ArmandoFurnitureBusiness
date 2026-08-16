@@ -45,10 +45,6 @@ const ResourcesPage = () => {
     savePricing,
   } = useResources()
 
-  const handleSave = () => {
-    notify.saved()
-  }
-
   const filteredResources = resources.filter((resource) =>
     resource.name
       .toLowerCase()
@@ -164,7 +160,6 @@ const ResourcesPage = () => {
 
       <ResourceToolbar
         onAdd={handleOpenAdd}
-        onSave={handleSave}
       />
 
       <ChartCard

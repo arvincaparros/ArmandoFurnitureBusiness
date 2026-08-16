@@ -2,22 +2,38 @@ import { useState } from 'react'
 
 import {
   Alert,
+  Anchor,
   Button,
   Center,
+  Group,
   Paper,
   PasswordInput,
   Stack,
+  Text,
   TextInput,
 } from '@mantine/core'
 
-import { AlertCircle } from 'lucide-react'
+import { AlertCircle, CheckCircle2 } from 'lucide-react'
+import { Link, useLocation } from 'react-router-dom'
 
 import Logo from '../../components/common/Logo'
 import { getApiErrorMessage } from '../../api/apiError'
 import { useAuth } from '../../auth/AuthContext'
 
+interface LoginLocationState {
+  message?: string
+}
+
 const LoginPage = () => {
   const { login } = useAuth()
+  const location = useLocation()
+
+  // Set once by RegisterPage/ResetPasswordPage after a successful
+  // action (navigate('/login', { state: { message: '...' } })) - not
+  // persisted anywhere, so it naturally disappears on refresh/re-nav.
+  const locationState = location.state as
+    | LoginLocationState
+    | null
 
   const [username, setUsername] = useState('')
   const [password, setPassword] = useState('')
@@ -68,6 +84,15 @@ const LoginPage = () => {
         <Stack gap="lg">
           <Logo />
 
+          {locationState?.message && (
+            <Alert
+              color="green"
+              icon={<CheckCircle2 size={18} />}
+            >
+              {locationState.message}
+            </Alert>
+          )}
+
           <form onSubmit={handleSubmit}>
             <Stack gap="md">
               <TextInput
@@ -91,6 +116,16 @@ const LoginPage = () => {
                 autoComplete="current-password"
               />
 
+              <Group justify="flex-end">
+                <Anchor
+                  component={Link}
+                  to="/forgot-password"
+                  size="sm"
+                >
+                  Forgot password?
+                </Anchor>
+              </Group>
+
               {error && (
                 <Alert
                   color="red"
@@ -108,6 +143,13 @@ const LoginPage = () => {
               >
                 Log In
               </Button>
+
+              <Text ta="center" size="sm">
+                Don&apos;t have an account?{' '}
+                <Anchor component={Link} to="/register">
+                  Create account
+                </Anchor>
+              </Text>
             </Stack>
           </form>
         </Stack>

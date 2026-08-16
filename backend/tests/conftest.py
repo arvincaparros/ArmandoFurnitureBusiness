@@ -41,6 +41,7 @@ def _shared_auth_test_user():
 
     user = User(
         username=AUTH_TEST_USERNAME,
+        email=f"{AUTH_TEST_USERNAME}@example.com",
         password_hash=hash_password(AUTH_TEST_PASSWORD),
         is_active=True,
     )

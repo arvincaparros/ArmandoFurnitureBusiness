@@ -12,6 +12,8 @@ import DeleteProductModal from './components/DeleteProductModal'
 
 import useProducts from './hooks/useProducts'
 import { notify } from '../../utils/notify'
+import { exportCsv } from '../../utils/exportCsv'
+import { exportExcel } from '../../utils/exportExcel'
 import type { Product } from './types'
 import type {
   ProductCreateRequest,
@@ -127,8 +129,62 @@ const ProductDataPage = () => {
     setSelectedProduct(null)
   }
 
-  const handleSave = () => {
-    notify.saved()
+  // Same product/resource column model ProductTable.tsx renders from
+  // (activeResources decides which resource columns exist at all,
+  // resourceQuantities is looked up by resource id) - a dynamic
+  // resource gaining/losing a column here is a direct consequence of
+  // the same activeResources array, never a second, hardcoded list.
+  // Cost figures (materialCost/laborCost/machineCost/totalCost/
+  // profit) are read straight from each Product - already computed
+  // by productAdapter.ts::calculateCosts, never recomputed here.
+  // Exports the currently searched + sorted list (sortedProducts) -
+  // the same rows visibly rendered in the table - not the full
+  // unfiltered product set.
+  const buildExportRows = () =>
+    sortedProducts.map((product) => {
+      const row: Record<string, unknown> = {
+        Furniture: product.productName,
+      }
+
+      for (const resource of activeResources) {
+        const quantity =
+          product.resourceQuantities[resource.id]
+
+        // Undefined means genuinely no requirement for this
+        // resource on this product (see types.ts) - left blank,
+        // never fabricated as 0, matching resourceCell()'s own
+        // "—" convention in ProductTable.tsx.
+        row[`${resource.name} (${resource.unit})`] =
+          quantity === undefined ? '' : quantity
+      }
+
+      row['Selling Price'] = product.sellingPrice
+      // null means unknown (a required resource has no price
+      // configured for the current cycle) - blank, never a
+      // misleading 0, matching costCell()'s own "—" convention.
+      row['Material'] = product.materialCost ?? ''
+      row['Labor'] = product.laborCost ?? ''
+      row['Machine'] = product.machineCost ?? ''
+      row['Total'] = product.totalCost ?? ''
+      row['Profit'] = product.profit ?? ''
+
+      return row
+    })
+
+  const handleExportCsv = () => {
+    exportCsv('product-data', buildExportRows())
+
+    notify.exported('CSV')
+  }
+
+  const handleExportExcel = async () => {
+    await exportExcel(
+      'product-data',
+      buildExportRows(),
+      'Products',
+    )
+
+    notify.exported('Excel')
   }
 
   return (
@@ -141,7 +197,8 @@ const ProductDataPage = () => {
 
         <ProductToolbar
           onAdd={handleOpenAdd}
-          onSave={handleSave}
+          onExportCsv={handleExportCsv}
+          onExportExcel={handleExportExcel}
         />
 
         <Card

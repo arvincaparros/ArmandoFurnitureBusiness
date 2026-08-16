@@ -1,7 +1,26 @@
-import { Alert, Badge, Modal, Stack, Text } from '@mantine/core'
-import { Info } from 'lucide-react'
+import { useState } from 'react'
+
+import {
+  Alert,
+  Badge,
+  Button,
+  Divider,
+  Modal,
+  PasswordInput,
+  Stack,
+  Text,
+} from '@mantine/core'
+
+import { AlertCircle, CheckCircle2 } from 'lucide-react'
 
 import type { UserResponse } from '../../api/types'
+import { getApiErrorMessage } from '../../api/apiError'
+import { changePasswordRequest } from '../../api/authApi'
+
+// Same policy the backend enforces (backend/app/schemas/auth.py's
+// PASSWORD_MIN_LENGTH) - checked here only for immediate inline
+// feedback; the backend re-validates and is authoritative.
+const PASSWORD_MIN_LENGTH = 8
 
 interface ProfileModalProps {
   opened: boolean
@@ -15,17 +34,21 @@ const fieldLabel = (label: string) => (
   </Text>
 )
 
-// Read-only: backend/app/schemas/auth.py's UserResponse only exposes
-// id/username/is_active/created_at - no first/last name, email, or
-// PATCH/update endpoint exists anywhere for the current user. Editable
-// fields here would have nowhere to persist to, so this shows exactly
-// what the existing GET /api/auth/me already returns rather than
-// faking a save flow.
 const ProfileModal = ({
   opened,
   onClose,
   user,
 }: ProfileModalProps) => {
+  const [currentPassword, setCurrentPassword] = useState('')
+  const [newPassword, setNewPassword] = useState('')
+  const [confirmPassword, setConfirmPassword] = useState('')
+
+  const [isSubmitting, setIsSubmitting] = useState(false)
+  const [error, setError] = useState<string | null>(null)
+  const [successMessage, setSuccessMessage] = useState<
+    string | null
+  >(null)
+
   const memberSince = user
     ? new Date(user.created_at).toLocaleDateString('en-US', {
         month: 'long',
@@ -34,10 +57,67 @@ const ProfileModal = ({
       })
     : '-'
 
+  const isValid =
+    currentPassword !== ''
+    && newPassword.length >= PASSWORD_MIN_LENGTH
+    && confirmPassword === newPassword
+    && newPassword !== currentPassword
+
+  const resetForm = () => {
+    setCurrentPassword('')
+    setNewPassword('')
+    setConfirmPassword('')
+  }
+
+  const handleChangePassword = async (
+    event: React.FormEvent,
+  ) => {
+    event.preventDefault()
+
+    if (!isValid || isSubmitting) {
+      return
+    }
+
+    setIsSubmitting(true)
+    setError(null)
+    setSuccessMessage(null)
+
+    try {
+      const response = await changePasswordRequest({
+        current_password: currentPassword,
+        new_password: newPassword,
+        confirm_password: confirmPassword,
+      })
+
+      // Session is deliberately left intact - the existing JWT stays
+      // valid (it doesn't encode the password), so there's nothing
+      // in the current architecture that requires logging the user
+      // out just because their password changed.
+      setSuccessMessage(response.detail)
+      resetForm()
+    } catch (submitError) {
+      setError(
+        getApiErrorMessage(
+          submitError,
+          'Unable to change password. Please try again.',
+        ),
+      )
+    } finally {
+      setIsSubmitting(false)
+    }
+  }
+
+  const handleClose = () => {
+    resetForm()
+    setError(null)
+    setSuccessMessage(null)
+    onClose()
+  }
+
   return (
     <Modal
       opened={opened}
-      onClose={onClose}
+      onClose={handleClose}
       title="Profile"
       centered
     >
@@ -45,6 +125,11 @@ const ProfileModal = ({
         <Stack gap={4}>
           {fieldLabel('Username')}
           <Text>{user?.username ?? '-'}</Text>
+        </Stack>
+
+        <Stack gap={4}>
+          {fieldLabel('Email')}
+          <Text>{user?.email ?? '-'}</Text>
         </Stack>
 
         <Stack gap={4}>
@@ -62,11 +147,80 @@ const ProfileModal = ({
           <Text>{memberSince}</Text>
         </Stack>
 
-        <Alert color="blue" icon={<Info size={16} />}>
-          Profile editing isn&apos;t available yet - the backend
-          doesn&apos;t currently expose an endpoint to update account
-          details beyond what&apos;s shown here.
-        </Alert>
+        <Divider label="Change Password" labelPosition="left" />
+
+        <form onSubmit={handleChangePassword}>
+          <Stack gap="sm">
+            <PasswordInput
+              label="Current Password"
+              value={currentPassword}
+              onChange={(e) =>
+                setCurrentPassword(e.currentTarget.value)
+              }
+              autoComplete="current-password"
+            />
+
+            <PasswordInput
+              label="New Password"
+              placeholder="At least 8 characters"
+              value={newPassword}
+              onChange={(e) =>
+                setNewPassword(e.currentTarget.value)
+              }
+              autoComplete="new-password"
+              error={
+                newPassword !== ''
+                && currentPassword !== ''
+                && newPassword === currentPassword
+                  ? 'New password must be different from the current password'
+                  : undefined
+              }
+            />
+
+            <PasswordInput
+              label="Confirm New Password"
+              value={confirmPassword}
+              onChange={(e) =>
+                setConfirmPassword(e.currentTarget.value)
+              }
+              autoComplete="new-password"
+              error={
+                confirmPassword !== ''
+                && confirmPassword !== newPassword
+                  ? 'Passwords do not match'
+                  : undefined
+              }
+            />
+
+            {error && (
+              <Alert
+                color="red"
+                icon={<AlertCircle size={16} />}
+              >
+                {error}
+              </Alert>
+            )}
+
+            {successMessage && (
+              <Alert
+                color="green"
+                icon={<CheckCircle2 size={16} />}
+              >
+                {successMessage}
+              </Alert>
+            )}
+
+            <Button
+              type="submit"
+              loading={isSubmitting}
+              disabled={!isValid}
+            >
+              {isSubmitting
+                ? 'Changing password...'
+                : 'Change Password'}
+            </Button>
+          </Stack>
+        </form>
       </Stack>
     </Modal>
   )

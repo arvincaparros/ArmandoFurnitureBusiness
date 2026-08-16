@@ -2,6 +2,7 @@ from datetime import datetime
 from decimal import Decimal
 
 from app.database.models import Product, SalesTransaction
+from app.services.transaction import calculate_transaction_values
 
 
 def create_test_product(db):
@@ -42,10 +43,12 @@ def test_create_transaction(client, db):
     assert Decimal(data["quantity_produced"]) == Decimal("6")
     assert Decimal(data["quantity"]) == Decimal("5")
     assert Decimal(data["unit_price"]) == Decimal("3200.00")
-    assert Decimal(data["production_cost"]) == Decimal("3000.00")
+    # production_cost in the request is PER-UNIT (3000); the stored/
+    # returned value is the TOTAL: quantity_produced (6) x 3000.
+    assert Decimal(data["production_cost"]) == Decimal("18000.00")
     assert Decimal(data["total_sales"]) == Decimal("16000.00")
-    assert Decimal(data["unit_profit"]) == Decimal("2600.0000")
-    assert Decimal(data["total_profit"]) == Decimal("13000.0000")
+    assert Decimal(data["unit_profit"]) == Decimal("-400.0000")
+    assert Decimal(data["total_profit"]) == Decimal("-2000.0000")
 
     db.delete(product)
     db.commit()
@@ -223,10 +226,12 @@ def test_update_transaction_recalculates_totals(client, db):
 
     assert Decimal(data["quantity"]) == Decimal("10")
     assert Decimal(data["unit_price"]) == Decimal("3000.00")
-    assert Decimal(data["production_cost"]) == Decimal("5000.00")
+    # production_cost in the PATCH is PER-UNIT (5000); quantity_produced
+    # is unchanged (6), so the stored/returned total is 6 x 5000.
+    assert Decimal(data["production_cost"]) == Decimal("30000.00")
     assert Decimal(data["total_sales"]) == Decimal("30000.00")
-    assert Decimal(data["unit_profit"]) == Decimal("2500.0000")
-    assert Decimal(data["total_profit"]) == Decimal("25000.0000")
+    assert Decimal(data["unit_profit"]) == Decimal("0.0000")
+    assert Decimal(data["total_profit"]) == Decimal("0.0000")
 
     db.delete(transaction)
     db.delete(product)
@@ -333,6 +338,85 @@ def test_create_transaction_rejects_invalid_unit_price(client, db):
 
     db.delete(product)
     db.commit()
+
+def test_production_cost_uses_quantity_produced_not_sold(client, db):
+    product = create_test_product(db)
+
+    # Validation Case 2: quantity_produced (20) != quantity sold (15) -
+    # sales must be based on units sold, production cost on units
+    # produced.
+    response = client.post(
+        "/api/transactions",
+        json={
+            "product_id": product.id,
+            "transaction_date": "2026-08-10T10:00:00",
+            "quantity_produced": "20",
+            "quantity": "15",
+            "unit_price": "3500.00",
+            "production_cost": "2000.00",
+        },
+    )
+
+    assert response.status_code == 201
+
+    data = response.json()
+
+    assert Decimal(data["total_sales"]) == Decimal("52500.00")
+    assert Decimal(data["production_cost"]) == Decimal("40000.00")
+    assert Decimal(data["total_profit"]) == Decimal("12500.0000")
+
+    db.delete(product)
+    db.commit()
+
+
+def test_zero_production_cost_per_unit(client, db):
+    product = create_test_product(db)
+
+    # Validation Case 4: a per-unit production cost of 0 must not
+    # reduce profit at all.
+    response = client.post(
+        "/api/transactions",
+        json={
+            "product_id": product.id,
+            "transaction_date": "2026-08-10T10:00:00",
+            "quantity_produced": "10",
+            "quantity": "10",
+            "unit_price": "3500.00",
+            "production_cost": "0",
+        },
+    )
+
+    assert response.status_code == 201
+
+    data = response.json()
+
+    assert Decimal(data["total_sales"]) == Decimal("35000.00")
+    assert Decimal(data["production_cost"]) == Decimal("0.00")
+    assert Decimal(data["total_profit"]) == Decimal("35000.0000")
+
+    db.delete(product)
+    db.commit()
+
+
+def test_calculate_transaction_values_zero_quantity_sold():
+    # Validation Case 3: quantity sold = 0 (SalesTransactionCreate
+    # requires quantity > 0, so this can't be submitted through the
+    # live API - verified directly against the calculation function
+    # instead). Production cost must still be charged against units
+    # PRODUCED even when nothing sold, and unit_profit must not divide
+    # by zero.
+    values = calculate_transaction_values(
+        Decimal("10"),
+        Decimal("0"),
+        Decimal("3500.00"),
+        Decimal("2000.00"),
+    )
+
+    assert values["total_sales"] == Decimal("0.00")
+    assert values["production_cost"] == Decimal("20000.00")
+    assert values["total_profit"] == Decimal("-20000.0000")
+    assert values["unit_profit"] == Decimal("0.0000")
+
 
 def test_create_transaction_rejects_negative_production_cost(
     client,

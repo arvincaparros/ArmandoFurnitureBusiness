@@ -15,6 +15,36 @@ export interface LoginResponse {
 export interface UserResponse {
   id: number
   username: string
+  email: string
   is_active: boolean
   created_at: string
+}
+
+// Shared success-message shape used by register/change-password/
+// forgot-password/reset-password - matches backend's MessageResponse.
+export interface MessageResponse {
+  detail: string
+}
+
+export interface RegisterRequest {
+  username: string
+  email: string
+  password: string
+  confirm_password: string
+}
+
+export interface ChangePasswordRequest {
+  current_password: string
+  new_password: string
+  confirm_password: string
+}
+
+export interface ForgotPasswordRequest {
+  email: string
+}
+
+export interface ResetPasswordRequest {
+  token: string
+  new_password: string
+  confirm_password: string
 }

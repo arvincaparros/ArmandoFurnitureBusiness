@@ -1,10 +1,11 @@
 import {
-  ActionIcon,
   Box,
   Divider,
+  Group,
   Stack,
   Text,
   Tooltip,
+  UnstyledButton,
 } from '@mantine/core'
 
 import { useMediaQuery } from '@mantine/hooks'
@@ -15,6 +16,7 @@ import {
   Boxes,
   Factory,
   FileBarChart,
+  FileClock,
   ReceiptText,
   LayoutDashboard,
   Package,
@@ -29,6 +31,8 @@ import { useLocation } from 'react-router-dom'
 import SidebarItem from '../components/SidebarItem'
 import SidebarFooter from './SidebarFooter'
 import { useSidebarCollapsed } from '../SidebarContext'
+
+import classes from './Sidebar.module.css'
 
 const menus = [
   {
@@ -55,6 +59,11 @@ const menus = [
     label: 'Resource Utilization Reports',
     icon: FileBarChart,
     path: '/reports',
+  },
+  {
+    label: 'Resource Utilization History',
+    icon: FileClock,
+    path: '/resource-utilization-history',
   },
   {
     label: 'Transaction History',
@@ -96,6 +105,43 @@ const Sidebar = ({
     ? 'Expand sidebar'
     : 'Collapse sidebar'
 
+  const [dashboardItem, ...otherItems] = menus
+
+  const dashboardLink = (
+    <SidebarItem
+      label={dashboardItem.label}
+      icon={dashboardItem.icon}
+      to={dashboardItem.path}
+      active={location.pathname === dashboardItem.path}
+      collapsed={effectiveCollapsed}
+      onNavigate={onNavigate}
+    />
+  )
+
+  // Desktop only - the mobile drawer always renders fully expanded,
+  // so a collapse toggle has nothing to do there. Same icon/color/
+  // hover/radius language as SidebarItem (see Sidebar.module.css),
+  // just sized as a compact button instead of a full nav row.
+  const collapseToggle = isDesktop && (
+    <Tooltip
+      label={toggleLabel}
+      position="right"
+      withArrow
+    >
+      <UnstyledButton
+        className={classes.collapseToggle}
+        aria-label={toggleLabel}
+        onClick={toggleCollapsed}
+      >
+        {effectiveCollapsed ? (
+          <PanelLeftOpen size={18} />
+        ) : (
+          <PanelLeftClose size={18} />
+        )}
+      </UnstyledButton>
+    </Tooltip>
+  )
+
   return (
     <Box h="100%" p="md">
       <Stack
@@ -104,37 +150,39 @@ const Sidebar = ({
       >
         {/* TOP */}
         <Stack gap="xs">
-          {/* Desktop only - the mobile drawer always renders fully
-              expanded, so a collapse toggle has nothing to do there. */}
-          {isDesktop && (
-            <Tooltip
-              label={toggleLabel}
-              position="right"
-              withArrow
+          {isDesktop && !effectiveCollapsed ? (
+            // Expanded: the toggle sits on the same row as Dashboard,
+            // right-aligned, so it reads as part of the sidebar's
+            // header rather than a separate control.
+            <Group
+              gap={4}
+              wrap="nowrap"
+              w="100%"
             >
-              <ActionIcon
-                variant="subtle"
-                color="gray"
-                size="lg"
-                aria-label={toggleLabel}
-                onClick={toggleCollapsed}
-                style={{
-                  alignSelf: effectiveCollapsed
-                    ? 'center'
-                    : 'flex-end',
-                }}
-                mb={4}
-              >
-                {effectiveCollapsed ? (
-                  <PanelLeftOpen size={18} />
-                ) : (
-                  <PanelLeftClose size={18} />
-                )}
-              </ActionIcon>
-            </Tooltip>
+              <Box style={{ flex: 1, minWidth: 0 }}>
+                {dashboardLink}
+              </Box>
+
+              {collapseToggle}
+            </Group>
+          ) : (
+            <>
+              {isDesktop && (
+                <Box
+                  style={{
+                    display: 'flex',
+                    justifyContent: 'center',
+                  }}
+                >
+                  {collapseToggle}
+                </Box>
+              )}
+
+              {dashboardLink}
+            </>
           )}
 
-          {menus.map((item) => (
+          {otherItems.map((item) => (
             <SidebarItem
               key={item.path}
               label={item.label}

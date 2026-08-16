@@ -38,7 +38,17 @@ export function setUnauthorizedHandler(
   unauthorizedHandler = handler
 }
 
-const LOGIN_ENDPOINT = '/api/auth/login'
+// Endpoints where a 401 means "the credentials you supplied in this
+// request are wrong" rather than "your session/token is invalid" -
+// login's 401 is a wrong username/password; change-password's 401 is
+// a wrong current_password on an otherwise-valid, still-authenticated
+// session. Neither should trigger the same auto-logout path as a
+// real session expiry, or the caller's own inline error handling
+// would never be reached before getting redirected to /login.
+const CREDENTIAL_CHECK_ENDPOINTS = [
+  '/api/auth/login',
+  '/api/auth/change-password',
+]
 
 apiClient.interceptors.response.use(
   (response) => response,
@@ -46,14 +56,11 @@ apiClient.interceptors.response.use(
     const status = error.response?.status
     const requestUrl: string = error.config?.url ?? ''
 
-    // A 401 from the login endpoint itself just means "wrong
-    // credentials" - the caller is already on the login page and
-    // handles that inline. It is not a "your session expired"
-    // event and must not trigger the same auto-logout path, or a
-    // failed login attempt would look identical to a session
-    // timeout and risk a redirect loop back to the page it's
-    // already on.
-    if (status === 401 && !requestUrl.includes(LOGIN_ENDPOINT)) {
+    const isCredentialCheck = CREDENTIAL_CHECK_ENDPOINTS.some(
+      (endpoint) => requestUrl.includes(endpoint),
+    )
+
+    if (status === 401 && !isCredentialCheck) {
       unauthorizedHandler?.()
     }
 

@@ -633,6 +633,13 @@ class User(Base):
         index=True,
     )
 
+    email: Mapped[str] = mapped_column(
+        String(255),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+
     password_hash: Mapped[str] = mapped_column(
         String(255),
         nullable=False,
@@ -649,3 +656,208 @@ class User(Base):
         nullable=False,
         default=datetime.utcnow,
     )
+
+    reset_tokens: Mapped[
+        list["PasswordResetToken"]
+    ] = relationship(
+        back_populates="user",
+        cascade="all, delete-orphan",
+    )
+
+
+class PasswordResetToken(Base):
+    __tablename__ = "password_reset_tokens"
+
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+        index=True,
+    )
+
+    user_id: Mapped[int] = mapped_column(
+        ForeignKey("users.id", ondelete="CASCADE"),
+        nullable=False,
+        index=True,
+    )
+
+    # Only a hash of the token is stored (same principle as
+    # password_hash) - if this table were ever exposed/leaked, the
+    # hashes alone can't be used to reset anyone's password.
+    token_hash: Mapped[str] = mapped_column(
+        String(64),
+        nullable=False,
+        unique=True,
+        index=True,
+    )
+
+    expires_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+    )
+
+    # NULL = unused/valid (subject to expires_at). Set once the token
+    # is redeemed so it can never be used a second time.
+    used_at: Mapped[datetime | None] = mapped_column(
+        DateTime,
+        nullable=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+    )
+
+    user: Mapped["User"] = relationship(
+        back_populates="reset_tokens",
+    )
+
+
+class ResourceUtilizationRun(Base):
+    """
+    One immutable snapshot of resource utilization, created exactly
+    once - when "Apply to Production" successfully completes (see
+    app/services/optimization.py::apply_optimization). Mirrors
+    OptimizationRun/OptimizationResult's parent-child shape above.
+    Never created by generating an optimization preview, and never
+    updated afterward - its ResourceUtilizationHistoryItem rows are
+    the historical record, independent of whatever Resource/
+    CycleResource data says today.
+    """
+
+    __tablename__ = "resource_utilization_runs"
+
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+        index=True,
+    )
+
+    # Same "friendly sequential id" convention as SalesTransaction's
+    # transaction_number (see app/services/transaction.py::
+    # generate_transaction_number) - the service layer generates and
+    # passes "UT-0001"-style values; this default is only a fallback
+    # for any row created without going through that helper.
+    utilization_number: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        unique=True,
+        index=True,
+        default=lambda: f"UT-{uuid4().hex[:8].upper()}",
+    )
+
+    production_cycle_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "production_cycles.id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+        index=True,
+    )
+
+    generated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+    )
+
+    production_cycle: Mapped["ProductionCycle"] = relationship()
+
+    items: Mapped[
+        list["ResourceUtilizationHistoryItem"]
+    ] = relationship(
+        back_populates="utilization_run",
+        cascade="all, delete-orphan",
+    )
+
+
+class ResourceUtilizationHistoryItem(Base):
+    """
+    One resource's snapshotted utilization figures within a single
+    ResourceUtilizationRun. resource_id is kept (ondelete=SET NULL,
+    nullable) for referential integrity/lookups, but every field a
+    history view actually needs to render is duplicated directly onto
+    this row at creation time - resource_name/resource_type/unit
+    alongside the calculated quantities/rate/status - so the row stays
+    fully displayable even if the Resource it pointed to is later
+    renamed, deactivated, or (hypothetically) removed. Never
+    recalculated from current Resource/CycleResource/
+    ProductionAllocation data after creation.
+    """
+
+    __tablename__ = "resource_utilization_history_items"
+
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+        index=True,
+    )
+
+    utilization_run_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "resource_utilization_runs.id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+        index=True,
+    )
+
+    resource_id: Mapped[int | None] = mapped_column(
+        ForeignKey(
+            "resources.id",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
+        index=True,
+    )
+
+    # Snapshotted at creation time - see class docstring.
+    resource_name: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+    )
+
+    resource_type: Mapped[str] = mapped_column(
+        String(50),
+        nullable=False,
+    )
+
+    unit: Mapped[str] = mapped_column(
+        String(30),
+        nullable=False,
+    )
+
+    available_quantity: Mapped[Decimal] = mapped_column(
+        Numeric(12, 4),
+        nullable=False,
+    )
+
+    consumed_quantity: Mapped[Decimal] = mapped_column(
+        Numeric(12, 4),
+        nullable=False,
+    )
+
+    remaining_quantity: Mapped[Decimal] = mapped_column(
+        Numeric(12, 4),
+        nullable=False,
+    )
+
+    utilization_rate: Mapped[Decimal] = mapped_column(
+        Numeric(6, 2),
+        nullable=False,
+    )
+
+    # "normal" | "high" | "at_risk" | "bottleneck" - the exact value
+    # classify_utilization_status() returned at snapshot time (see
+    # app/services/resource_utilization.py). Never reclassified later
+    # even if the shared thresholds change.
+    status: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+    )
+
+    utilization_run: Mapped["ResourceUtilizationRun"] = relationship(
+        back_populates="items",
+    )
+
+    resource: Mapped["Resource | None"] = relationship()

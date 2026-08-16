@@ -17,29 +17,3 @@ export async function fetchOptimizationHistory(): Promise<
 
   return response.data
 }
-
-// Same real workflow Production Allocation's "Generate Optimal
-// Production Plan" button already uses (production-allocation/api/
-// productionApi.ts::runOptimization) - identical endpoint and request
-// body. This computes AND persists a new optimization run
-// (app/services/optimization.py calls save_optimization_history
-// internally) but does NOT write ProductionAllocation - only POST
-// .../optimize/apply does that, and nothing here calls it, so
-// "Run Manual Optimization" can never auto-commit a plan. Kept as a
-// local copy rather than importing production-allocation/api/
-// productionApi.ts, matching this project's established convention
-// of not cross-importing between page modules (the same pattern
-// already used for fetchProductSummaries, duplicated locally in
-// Dashboard/Production Allocation/Transaction History/Demand
-// Forecasting) - same endpoint, same request shape, not a
-// reimplementation of the optimization algorithm. The response body
-// isn't needed here: the caller invalidates the history query and
-// lets it refetch, rather than eagerly merging this response.
-export async function runOptimization(
-  cycleId: number,
-): Promise<void> {
-  await apiClient.post(
-    `/api/production-cycles/${cycleId}/optimize`,
-    { objective: 'MAX_PROFIT' },
-  )
-}

@@ -202,6 +202,7 @@ def inactive_business_test_user(db):
 
     user = User(
         username=username,
+        email=f"{username}@example.com",
         password_hash=hash_password("InactiveUserPassword9!"),
         is_active=False,
     )

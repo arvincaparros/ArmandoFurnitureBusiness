@@ -1,6 +1,7 @@
+from datetime import datetime
 from decimal import Decimal
 
-from pydantic import BaseModel
+from pydantic import BaseModel, ConfigDict
 
 
 class ResourceUtilizationItem(BaseModel):
@@ -51,3 +52,55 @@ class ResourceUtilizationResponse(BaseModel):
 
     resources: list[ResourceUtilizationItem]
     bottlenecks: list[ResourceUtilizationBottleneck]
+
+
+# ---------------------------------------------------------------
+# Resource Utilization History - immutable snapshots created when
+# "Apply to Production" succeeds (see resource_utilization_history.py
+# and optimization.py::apply_optimization). Distinct from
+# ResourceUtilizationItem above: these fields are read directly off
+# ResourceUtilizationHistoryItem's own stored columns, never
+# recalculated from current Resource/CycleResource data.
+# ---------------------------------------------------------------
+
+class ResourceUtilizationHistoryItemResponse(BaseModel):
+    id: int
+    resource_id: int | None
+    resource_name: str
+    resource_type: str
+    unit: str
+    available_quantity: Decimal
+    consumed_quantity: Decimal
+    remaining_quantity: Decimal
+    utilization_rate: Decimal
+    status: str
+
+    model_config = ConfigDict(
+        from_attributes=True,
+    )
+
+
+class ResourceUtilizationRunResponse(BaseModel):
+    id: int
+    utilization_number: str
+    production_cycle_id: int
+    generated_at: datetime
+    items: list[ResourceUtilizationHistoryItemResponse]
+
+    model_config = ConfigDict(
+        from_attributes=True,
+    )
+
+
+# Lightweight list-view shape - omits per-resource items[] so the
+# history list endpoint doesn't repeat the same id/date across N rows
+# (see resource_utilization_history.py::summarize_utilization_run).
+# Use GET .../history/{id} for the full ResourceUtilizationRunResponse.
+class ResourceUtilizationRunSummaryResponse(BaseModel):
+    id: int
+    utilization_number: str
+    production_cycle_id: int
+    generated_at: datetime
+    resource_count: int
+    bottleneck_count: int
+    at_risk_count: int
