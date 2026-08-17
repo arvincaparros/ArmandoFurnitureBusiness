@@ -159,6 +159,17 @@ const useProductionAllocation = () => {
   // OptimizationRun to build ProductionAllocation rows - it never
   // creates/modifies an OptimizationRun, so neither Optimization
   // History page ever goes stale from an Apply.
+  //
+  // A successful Apply DOES atomically create a new resource
+  // utilization snapshot (same apply_optimization() call - see
+  // save_resource_utilization_history), so both the current Resource
+  // Utilization report (['resource-utilization', cycleId], read by
+  // resource-utilization-report/hooks/useResourceUtilization.ts) and
+  // Resource Utilization History (['resource-utilization-history'],
+  // read by resource-utilization-history/hooks/
+  // useResourceUtilizationHistory.ts) go stale here too - previously
+  // neither was invalidated, so the new snapshot only appeared after
+  // a manual refresh.
   const applyMutation = useMutation({
     mutationFn: () => {
       if (latestCycleId === null) {
@@ -170,6 +181,14 @@ const useProductionAllocation = () => {
     onSuccess: () => {
       queryClient.invalidateQueries({
         queryKey: allocationsQueryKey,
+      })
+
+      queryClient.invalidateQueries({
+        queryKey: ['resource-utilization', latestCycleId],
+      })
+
+      queryClient.invalidateQueries({
+        queryKey: ['resource-utilization-history'],
       })
     },
   })

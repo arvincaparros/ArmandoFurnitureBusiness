@@ -14,11 +14,34 @@ function parseDecimal(value: string): number {
   return Number.isFinite(parsed) ? parsed : 0
 }
 
-// generated_at is a full ISO datetime, only reformatted for display
-// (T -> space, drop fractional seconds), never reinterpreted - same
-// pattern as optimizationHistoryAdapter.ts's toDisplayDate.
+// generated_at is always UTC (app/database/models.py::
+// ResourceUtilizationRun.generated_at uses default=datetime.utcnow),
+// but FastAPI/Pydantic serializes a naive datetime with NO "Z" or
+// offset suffix (confirmed: e.g. "2026-08-17T11:25:44.982352") - and
+// the JS Date constructor treats an offset-less ISO date-time string
+// as already being LOCAL time, not UTC (confirmed:
+// new Date("2026-08-17T09:01:27") reports itself as 09:01:27 in the
+// browser's own zone, unshifted). The previous plain string reformat
+// here never parsed the value as a Date at all, so it displayed the
+// raw UTC clock digits as if they were already local - off by exactly
+// the browser's UTC offset (e.g. 8 hours behind Philippine time).
+//
+// Appending "Z" only when the string doesn't already carry a
+// timezone marker tells Date the source is UTC, so the getters below
+// (local, not UTC, accessors) perform exactly one correct UTC -> local
+// conversion for display - never a second one.
 function toDisplayDate(generatedAt: string): string {
-  return generatedAt.replace('T', ' ').split('.')[0]
+  const hasTimezone = /(Z|[+-]\d{2}:?\d{2})$/.test(generatedAt)
+  const date = new Date(
+    hasTimezone ? generatedAt : `${generatedAt}Z`,
+  )
+
+  const pad = (value: number) => String(value).padStart(2, '0')
+
+  return (
+    `${date.getFullYear()}-${pad(date.getMonth() + 1)}-${pad(date.getDate())} ` +
+    `${pad(date.getHours())}:${pad(date.getMinutes())}:${pad(date.getSeconds())}`
+  )
 }
 
 // Flattens one run's detail response into one row per resource item -
