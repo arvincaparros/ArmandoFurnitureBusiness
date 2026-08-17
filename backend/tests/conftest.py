@@ -226,16 +226,19 @@ def test_products(db, cleanup_test_data):
         Product(
             name="Test Dining Table",
             selling_price=Decimal("12500.00"),
+            labor_cost=Decimal("0.00"),
             is_active=True,
         ),
         Product(
             name="Test Chair",
             selling_price=Decimal("3500.00"),
+            labor_cost=Decimal("0.00"),
             is_active=True,
         ),
         Product(
             name="Test Bed Frame",
             selling_price=Decimal("15000.00"),
+            labor_cost=Decimal("0.00"),
             is_active=True,
         ),
     ]

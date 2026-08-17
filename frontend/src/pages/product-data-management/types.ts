@@ -15,9 +15,13 @@ export interface Product {
   // displayed - not deleted, just no longer rendered.
   resourceQuantities: Record<number, number>
 
-  // No backend field exists for any cost/profit figure on Product -
-  // always null. These were already inert in the pre-integration
-  // mock (hardcoded to 0 on save, never truly computed).
+  // materialCost/machineCost/totalCost/profit stay null when a
+  // required material/machine resource has no configured
+  // CycleResource price yet (see productAdapter.ts::calculateCosts).
+  // laborCost is the one exception: it comes straight from
+  // Product.labor_cost (a real backend field, client cost-model
+  // reconciliation Phase 1), so it is only null when totalCost/profit
+  // are also null (kept null together for a consistent breakdown).
   materialCost: number | null
   laborCost: number | null
   machineCost: number | null

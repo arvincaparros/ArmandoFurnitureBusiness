@@ -41,6 +41,7 @@ const AddProductModal = ({
 }: AddProductModalProps) => {
   const [productName, setProductName] = useState('')
   const [sellingPrice, setSellingPrice] = useState(0)
+  const [laborCost, setLaborCost] = useState(0)
 
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -49,16 +50,20 @@ const AddProductModal = ({
     if (product) {
       setProductName(product.productName)
       setSellingPrice(product.sellingPrice)
+      setLaborCost(product.laborCost ?? 0)
     } else {
       setProductName('')
       setSellingPrice(0)
+      setLaborCost(0)
     }
 
     setError(null)
   }, [product, opened])
 
   const isValid =
-    productName.trim() !== '' && sellingPrice > 0
+    productName.trim() !== '' &&
+    sellingPrice > 0 &&
+    laborCost >= 0
 
   const handleSave = async () => {
     if (!isValid || isSubmitting) {
@@ -72,6 +77,7 @@ const AddProductModal = ({
       await onSave({
         name: productName,
         selling_price: sellingPrice,
+        labor_cost: laborCost,
       })
     } catch (submitError) {
       setError(
@@ -121,6 +127,19 @@ const AddProductModal = ({
             thousandSeparator=","
             onChange={(value) =>
                 setSellingPrice(Number(value))
+            }
+            />
+
+            <NumberInput
+            radius="md"
+            label="Labor Cost"
+            description="Per-unit labor cost - not derived from labor hours."
+            value={laborCost}
+            min={0}
+            prefix="₱"
+            thousandSeparator=","
+            onChange={(value) =>
+                setLaborCost(Number(value))
             }
             />
         </SimpleGrid>

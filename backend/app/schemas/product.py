@@ -17,6 +17,17 @@ class ProductBase(BaseModel):
         max_digits=12,
     )
 
+    # Per-product labor cost (client cost model - see
+    # app/database/models.py::Product.labor_cost). Required, like
+    # selling_price, so every product has a real value rather than a
+    # silently-assumed 0.
+    labor_cost: Decimal = Field(
+        ...,
+        ge=0,
+        decimal_places=2,
+        max_digits=12,
+    )
+
     is_active: bool = True
 
 
@@ -34,6 +45,13 @@ class ProductUpdate(BaseModel):
     selling_price: Decimal | None = Field(
         default=None,
         gt=0,
+        decimal_places=2,
+        max_digits=12,
+    )
+
+    labor_cost: Decimal | None = Field(
+        default=None,
+        ge=0,
         decimal_places=2,
         max_digits=12,
     )

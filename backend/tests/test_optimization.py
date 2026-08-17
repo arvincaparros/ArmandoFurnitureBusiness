@@ -4,6 +4,7 @@ from decimal import Decimal
 from app.services.optimization import (
     build_optimization_result,
     calculate_optimized_resource_usage,
+    calculate_unit_profit,
     get_optimization_data,
     identify_optimization_bottlenecks,
     solve_optimization,
@@ -16,6 +17,7 @@ from app.database.models import (
     OptimizationResult,
     OptimizationRun,
     Product,
+    ProductResourceRequirement,
     Resource,
     SalesTransaction,
 )
@@ -63,7 +65,12 @@ def test_optimization_returns_optimal_solution(
         if product.name == "Test Dining Table"
     )
     assert dining_table["quantity"] == 0
-    assert dining_table["unit_profit"] == Decimal("3089.0000")
+    # test_products'/conftest.py labor_cost=0 for all fixture products,
+    # and calculate_unit_profit no longer subtracts
+    # labor_hours x CycleResource(Labor).unit_price - these figures
+    # are 5400/1200/6000 higher than before this change (36/8/40 labor
+    # hours x the old 150/hr rate that no longer applies to cost).
+    assert dining_table["unit_profit"] == Decimal("8489.0000")
     assert dining_table["total_profit"] == Decimal("0.0000")
 
     assert chair["product_id"] == next(
@@ -72,8 +79,8 @@ def test_optimization_returns_optimal_solution(
         if product.name == "Test Chair"
     )
     assert chair["quantity"] == 12
-    assert chair["unit_profit"] == Decimal("949.0000")
-    assert chair["total_profit"] == Decimal("11388.0000")
+    assert chair["unit_profit"] == Decimal("2149.0000")
+    assert chair["total_profit"] == Decimal("25788.0000")
 
     assert bed_frame["product_id"] == next(
         product.id
@@ -81,8 +88,8 @@ def test_optimization_returns_optimal_solution(
         if product.name == "Test Bed Frame"
     )
     assert bed_frame["quantity"] == 12
-    assert bed_frame["unit_profit"] == Decimal("4332.0000")
-    assert bed_frame["total_profit"] == Decimal("51984.0000")
+    assert bed_frame["unit_profit"] == Decimal("10332.0000")
+    assert bed_frame["total_profit"] == Decimal("123984.0000")
 
 
 def test_optimization_profit(db, optimization_cycle):
@@ -108,8 +115,355 @@ def test_optimization_profit(db, optimization_cycle):
     )
 
     assert final["total_revenue"] == Decimal("222000.00")
-    assert final["total_cost"] == Decimal("158628.00000000")
-    assert final["total_profit"] == Decimal("63372.00000000")
+    assert final["total_cost"] == Decimal("72228.00000000")
+    assert final["total_profit"] == Decimal("149772.00000000")
+
+
+def _make_labor_cost_test_fixtures(db, labor_cost_a, labor_cost_b):
+    """
+    Self-contained fixtures (not the shared test_resources/
+    test_products) so labor hours/BOM can be made IDENTICAL between
+    two products - the exact shape needed to prove labor cost is a
+    per-product value, not labor_hours x a shared rate. Caller is
+    responsible for cleanup (returned objects are added but not
+    committed to a cycle).
+    """
+
+    wood = Resource(
+        name="Labor Cost Test Wood",
+        resource_type="material",
+        unit="BF",
+    )
+    labor = Resource(
+        name="Labor Cost Test Labor",
+        resource_type="labor",
+        unit="hours",
+    )
+
+    db.add_all([wood, labor])
+    db.flush()
+
+    product_a = Product(
+        name="Labor Cost Test Product A",
+        selling_price=Decimal("3500.00"),
+        labor_cost=labor_cost_a,
+    )
+    product_b = Product(
+        name="Labor Cost Test Product B",
+        selling_price=Decimal("3500.00"),
+        labor_cost=labor_cost_b,
+    )
+
+    db.add_all([product_a, product_b])
+    db.flush()
+
+    # Identical BOM and identical labor HOURS for both products -
+    # only labor_cost differs (see the two callers below).
+    requirements = [
+        ProductResourceRequirement(
+            product_id=product_a.id,
+            resource_id=wood.id,
+            quantity_required=Decimal("8.0000"),
+        ),
+        ProductResourceRequirement(
+            product_id=product_a.id,
+            resource_id=labor.id,
+            quantity_required=Decimal("8.0000"),
+        ),
+        ProductResourceRequirement(
+            product_id=product_b.id,
+            resource_id=wood.id,
+            quantity_required=Decimal("8.0000"),
+        ),
+        ProductResourceRequirement(
+            product_id=product_b.id,
+            resource_id=labor.id,
+            quantity_required=Decimal("8.0000"),
+        ),
+    ]
+
+    db.add_all(requirements)
+    db.flush()
+
+    cycle_resources = [
+        CycleResource(
+            resource_id=wood.id,
+            available_quantity=Decimal("1250.0000"),
+            unit_price=Decimal("84.00"),
+        ),
+        # Labor's unit_price is deliberately a nonzero, clearly-wrong-
+        # if-used value (999/hr) - if calculate_unit_profit ever
+        # regresses to costing labor via this rate again, these tests
+        # will fail loudly instead of silently passing by coincidence.
+        CycleResource(
+            resource_id=labor.id,
+            available_quantity=Decimal("576.0000"),
+            unit_price=Decimal("999.00"),
+        ),
+    ]
+
+    requirement_rows = [
+        (requirement, wood if requirement.resource_id == wood.id else labor)
+        for requirement in requirements
+    ]
+
+    return product_a, product_b, cycle_resources, requirement_rows, [wood, labor]
+
+
+def test_labor_cost_is_independent_of_labor_hours(db):
+    """
+    Mirrors the client reconciliation's decisive proof (High Chair vs
+    Ordinary Chair): two products with IDENTICAL labor hours and an
+    IDENTICAL BOM must still get different total cost/profit purely
+    from Product.labor_cost - confirming labor is never priced as
+    hours x a shared CycleResource rate.
+    """
+
+    (
+        product_a,
+        product_b,
+        cycle_resources,
+        requirements,
+        resources,
+    ) = _make_labor_cost_test_fixtures(
+        db,
+        labor_cost_a=Decimal("350.00"),
+        labor_cost_b=Decimal("300.00"),
+    )
+
+    try:
+        profit_a = calculate_unit_profit(
+            product_a, requirements, cycle_resources,
+        )
+        profit_b = calculate_unit_profit(
+            product_b, requirements, cycle_resources,
+        )
+
+        # Same selling price, same BOM, same hours - the ONLY possible
+        # source of a profit difference is labor_cost.
+        assert profit_a - profit_b == (
+            product_b.labor_cost - product_a.labor_cost
+        )
+        assert profit_a != profit_b
+
+        # wood cost = 8 x 84.00 = 672.00; labor's 999.00/hr rate must
+        # be completely ignored.
+        assert profit_a == (
+            product_a.selling_price
+            - Decimal("672.00")
+            - product_a.labor_cost
+        )
+
+    finally:
+        db.rollback()
+
+
+def test_zero_labor_cost_does_not_reduce_profit(db):
+    """Validation Case: Product.labor_cost = 0 must not reduce cost."""
+
+    (
+        product_a,
+        _product_b,
+        cycle_resources,
+        requirements,
+        resources,
+    ) = _make_labor_cost_test_fixtures(
+        db,
+        labor_cost_a=Decimal("0.00"),
+        labor_cost_b=Decimal("0.00"),
+    )
+
+    try:
+        profit = calculate_unit_profit(
+            product_a, requirements, cycle_resources,
+        )
+
+        assert profit == (
+            product_a.selling_price - Decimal("672.00")
+        )
+
+    finally:
+        db.rollback()
+
+
+def _build_client_reference_resources(db):
+    """
+    The client's full resource catalog at the exact rates seeded in
+    app/database/seed.py::seed_database() (post doorknob/hand-planer
+    correction - see the reconciliation report). Shared by the
+    per-product reproduction tests below so each one only has to
+    define its own BOM.
+    """
+
+    resources = {
+        "wood": Resource(name="Client Ref Wood", resource_type="material", unit="BF"),
+        "epoxy": Resource(name="Client Ref Epoxy", resource_type="material", unit="L"),
+        "nails": Resource(name="Client Ref Nails", resource_type="material", unit="kg"),
+        "glue": Resource(name="Client Ref Glue", resource_type="material", unit="L"),
+        "sandpaper": Resource(name="Client Ref Sandpaper", resource_type="material", unit="pcs"),
+        "doorknob": Resource(name="Client Ref Doorknob", resource_type="material", unit="sets"),
+        "labor": Resource(name="Client Ref Labor", resource_type="labor", unit="hours"),
+        "saw": Resource(name="Client Ref Saw", resource_type="machine", unit="hours"),
+        "table_planer": Resource(name="Client Ref Table Planer", resource_type="machine", unit="hours"),
+        "hand_planer": Resource(name="Client Ref Hand Planer", resource_type="machine", unit="hours"),
+    }
+
+    db.add_all(resources.values())
+    db.flush()
+
+    cycle_resources = [
+        CycleResource(resource_id=resources["wood"].id, available_quantity=Decimal("1250.0000"), unit_price=Decimal("84.00")),
+        CycleResource(resource_id=resources["epoxy"].id, available_quantity=Decimal("8.0000"), unit_price=Decimal("690.00")),
+        CycleResource(resource_id=resources["nails"].id, available_quantity=Decimal("100.0000"), unit_price=Decimal("54.00")),
+        CycleResource(resource_id=resources["glue"].id, available_quantity=Decimal("12.0000"), unit_price=Decimal("79.00")),
+        CycleResource(resource_id=resources["sandpaper"].id, available_quantity=Decimal("100.0000"), unit_price=Decimal("10.00")),
+        # Doorknob & Hinge - client's stated ₱300/set directly, NOT
+        # weekly_price(300) / availability(13 sets) = ₱23.08. The 13
+        # is only the weekly quantity available.
+        CycleResource(resource_id=resources["doorknob"].id, available_quantity=Decimal("13.0000"), unit_price=Decimal("300.00")),
+        CycleResource(resource_id=resources["labor"].id, available_quantity=Decimal("576.0000"), unit_price=Decimal("0.00")),
+        CycleResource(resource_id=resources["saw"].id, available_quantity=Decimal("336.0000"), unit_price=Decimal("31.57")),
+        CycleResource(resource_id=resources["table_planer"].id, available_quantity=Decimal("96.0000"), unit_price=Decimal("31.57")),
+        # Hand Planer - exactly half the Saw/Table Planer rate
+        # (₱31.56912/hr / 2 = ₱15.78456/hr, rounded to ₱15.78), NOT
+        # weekly_price(757.66) / availability(240) = ₱3.16. That
+        # naive per-machine derivation was the actual root cause of an
+        # earlier ~₱12.62/~₱6.31 per-product discrepancy - solved
+        # exactly via the 3 distinct machine-hour profiles across all
+        # 11 client products (see the reconciliation report).
+        CycleResource(resource_id=resources["hand_planer"].id, available_quantity=Decimal("240.0000"), unit_price=Decimal("15.78")),
+    ]
+
+    return resources, cycle_resources
+
+
+def _add_client_reference_product(db, resources, name, selling_price, labor_cost, bom):
+    """
+    bom: dict of resource-key -> quantity (Decimal-able). Returns
+    (product, requirements) in the (requirement, resource) tuple shape
+    calculate_unit_profit expects.
+    """
+
+    product = Product(
+        name=name,
+        selling_price=selling_price,
+        labor_cost=labor_cost,
+    )
+    db.add(product)
+    db.flush()
+
+    requirement_models = [
+        ProductResourceRequirement(
+            product_id=product.id,
+            resource_id=resources[key].id,
+            quantity_required=Decimal(quantity),
+        )
+        for key, quantity in bom.items()
+    ]
+    db.add_all(requirement_models)
+    db.flush()
+
+    requirements = [
+        (requirement, resources[key])
+        for requirement, key in zip(requirement_models, bom.keys())
+    ]
+
+    return product, requirements
+
+
+def test_product_cost_reproduces_client_reference_ordinary_chair(db):
+    """
+    End-to-end reproduction of the client spreadsheet's x11 (Ordinary
+    Chair) using the corrected seed rates from
+    app/database/seed.py::seed_database(). Expected total cost/profit
+    below are computed from those same centavo-rounded rates (see the
+    reconciliation report) - at most a couple of centavos off the
+    spreadsheet's own higher-precision 1182.09192/2317.90808 figures,
+    which is expected given CycleResource.unit_price is Numeric(12, 2)
+    and 15.78 (Hand Planer) is itself a rounding of 15.78456.
+    """
+
+    resources, cycle_resources = _build_client_reference_resources(db)
+
+    product, requirements = _add_client_reference_product(
+        db, resources,
+        name="Client Ref Ordinary Chair",
+        selling_price=Decimal("3500.00"),
+        labor_cost=Decimal("300.00"),
+        bom={
+            "wood": "8.0000", "epoxy": "0.1000", "nails": "0.0500",
+            "glue": "0.1000", "sandpaper": "2.0000", "labor": "8.0000",
+            "saw": "2.0000", "table_planer": "1.0000", "hand_planer": "1.0000",
+        },
+    )
+
+    try:
+        unit_profit = calculate_unit_profit(
+            product, requirements, cycle_resources,
+        )
+
+        total_cost = product.selling_price - unit_profit
+
+        # material = 8*84 + 0.1*690 + 0.05*54 + 0.1*79 + 2*10 = 771.60
+        # machine  = 2*31.57 + 1*31.57 + 1*15.78 = 110.49
+        # total    = 771.60 + 110.49 + 300 (labor_cost) = 1182.09
+        assert total_cost == Decimal("1182.0900")
+        assert unit_profit == Decimal("2317.9100")
+
+    finally:
+        db.rollback()
+
+
+def test_product_cost_reproduces_client_reference_doors(db):
+    """
+    End-to-end reproduction of all four client Door products (x6-x9) -
+    the products the incorrect ₱23.08/set doorknob rate affected most
+    (a ₱1/set requirement is a much bigger share of a door's BOM than
+    of a table's). Expected values are computed from the corrected
+    seed rates (doorknob ₱300/set, hand planer ₱15.78/hr) and match
+    the client's reference figures to within a few centavos - the
+    residual expected from CycleResource.unit_price being
+    Numeric(12, 2) (see the reconciliation report), not the ~₱283
+    gap the incorrect doorknob rate previously produced.
+    """
+
+    resources, cycle_resources = _build_client_reference_resources(db)
+
+    # (name, wood_bf, selling_price, ref_total_cost, ref_profit)
+    doors = [
+        ("Door (60x210)", "22.0000", Decimal("3800.00"), Decimal("2913.63"), Decimal("886.37")),
+        ("Door (70x210)", "25.0000", Decimal("3800.00"), Decimal("3165.63"), Decimal("634.37")),
+        ("Door (80x210)", "28.0000", Decimal("3800.00"), Decimal("3417.63"), Decimal("382.37")),
+        ("Door (90x210)", "30.0000", Decimal("3800.00"), Decimal("3585.63"), Decimal("214.37")),
+    ]
+
+    try:
+        for name, wood_bf, selling_price, ref_total_cost, ref_profit in doors:
+            product, requirements = _add_client_reference_product(
+                db, resources,
+                name=f"Client Ref {name}",
+                selling_price=selling_price,
+                labor_cost=Decimal("500.00"),
+                bom={
+                    "wood": wood_bf, "epoxy": "0.2000", "nails": "0.2000",
+                    "glue": "0.2000", "sandpaper": "3.0000", "doorknob": "1.0000",
+                    "labor": "8.0000", "saw": "1.0000", "table_planer": "1.0000",
+                    "hand_planer": "0.5000",
+                },
+            )
+
+            unit_profit = calculate_unit_profit(
+                product, requirements, cycle_resources,
+            )
+            total_cost = product.selling_price - unit_profit
+
+            # Within 1 centavo of the client's reference figures - was
+            # off by ~₱283 before the doorknob correction.
+            assert abs(total_cost - ref_total_cost) <= Decimal("0.01")
+            assert abs(unit_profit - ref_profit) <= Decimal("0.01")
+
+    finally:
+        db.rollback()
 
 
 def test_optimized_resource_usage(db, optimization_cycle, test_resources):
@@ -203,7 +557,7 @@ def test_optimize_production_api(client, optimization_cycle):
     assert data["objective"] == "MAX_PROFIT"
 
     assert data["total_revenue"] == "222000.00"
-    assert data["total_profit"] == "63372.00000000"
+    assert data["total_profit"] == "149772.00000000"
 
     allocations = data["allocations"]
 
@@ -329,7 +683,7 @@ def test_apply_optimization_api(client, optimization_cycle):
 
     assert data["cycle_id"] == optimization_cycle.id
     assert data["status"] == "OPTIMAL"
-    assert data["total_profit"] == "63372.00000000"
+    assert data["total_profit"] == "149772.00000000"
 
     allocations = data["allocations"]
 
@@ -851,11 +1205,11 @@ def test_optimize_saves_optimization_history(
     assert optimization_run.duration_ms is not None
 
     assert optimization_run.objective_value == (
-        Decimal("63372.0000")
+        Decimal("149772.0000")
     )
 
     assert optimization_run.total_profit == (
-        Decimal("63372.0000")
+        Decimal("149772.0000")
     )
 
     assert len(optimization_run.results) == 3
@@ -913,9 +1267,9 @@ def test_get_optimization_history(
 
     assert history["status"] == "OPTIMAL"
 
-    assert history["objective_value"] == "63372.0000"
+    assert history["objective_value"] == "149772.0000"
 
-    assert history["total_profit"] == "63372.0000"
+    assert history["total_profit"] == "149772.0000"
 
     assert len(history["results"]) == 3
 

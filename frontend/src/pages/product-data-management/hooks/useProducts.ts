@@ -113,10 +113,6 @@ const useProducts = () => {
     cycleResourcesQuery.data ?? [],
   )
 
-  const activeResourceIds = activeResources.map(
-    (resource) => resource.id,
-  )
-
   const requirementsByProductId = new Map<
     number,
     ResolvedRequirement[]
@@ -191,7 +187,7 @@ const useProducts = () => {
     products: toUiProducts(
       products,
       requirementsByProductId,
-      activeResourceIds,
+      activeResources,
       costRates,
     ),
     activeResources,

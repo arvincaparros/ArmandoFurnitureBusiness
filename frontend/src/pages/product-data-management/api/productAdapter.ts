@@ -14,7 +14,7 @@ function parseDecimal(value: string | null | undefined): number {
   return Number.isFinite(parsed) ? parsed : 0
 }
 
-type CostCategory = 'material' | 'labor' | 'machine'
+type CostCategory = 'material' | 'machine'
 
 interface ResourceCostRate {
   unitPrice: number
@@ -22,16 +22,18 @@ interface ResourceCostRate {
 }
 
 // Mirrors backend/app/services/resource_utilization.py's
-// _classify_resource_type() exactly - "labor"/"machine" are
-// recognized specially, anything else (including "material") is
-// treated as material. No dedicated backend cost-classification
-// endpoint exists, so this reuses the same convention the backend
-// already applies for utilization reporting rather than inventing a
-// new one.
+// _classify_resource_type() exactly for "machine" - anything else
+// (including "material") is treated as material. "labor" is
+// deliberately NOT one of these categories: labor cost comes straight
+// from Product.labor_cost (see calculateCosts below), never from a
+// CycleResource rate, matching backend/app/services/optimization.py::
+// calculate_unit_profit exactly (the client's cost model proves labor
+// cost varies per product independent of labor hours). Labor hours
+// still get their own resource column via ProductTable.tsx's
+// resourceQuantities - only the COST source changed.
 function classifyResourceType(resourceType: string): CostCategory {
   const normalized = resourceType.trim().toLowerCase()
 
-  if (normalized === 'labor') return 'labor'
   if (normalized === 'machine') return 'machine'
 
   return 'material'
@@ -39,10 +41,10 @@ function classifyResourceType(resourceType: string): CostCategory {
 
 // Resource unit prices come from CycleResource on the latest
 // production cycle (see cycleResourceApi.ts) - the only place a
-// price exists in the backend. Only currently-active resources get a
-// rate here, matching exactly which resources get a column in
-// ProductTable.tsx, so a displayed cost is always traceable to
-// visible cells x visible pricing.
+// price exists in the backend. Only currently-active, non-labor
+// resources get a rate here, matching exactly which resources get a
+// column in ProductTable.tsx, so a displayed cost is always traceable
+// to visible cells x visible pricing.
 export function buildResourceCostRates(
   activeResources: ResourceOption[],
   cycleResources: CycleResourceResponse[],
@@ -57,6 +59,10 @@ export function buildResourceCostRates(
   const rates = new Map<number, ResourceCostRate>()
 
   for (const resource of activeResources) {
+    if (resource.resource_type.trim().toLowerCase() === 'labor') {
+      continue
+    }
+
     const unitPrice = unitPriceByResourceId.get(resource.id)
 
     // No CycleResource entry yet for this resource in the current
@@ -90,24 +96,31 @@ const UNPRICED_BREAKDOWN: CostBreakdown = {
   profit: null,
 }
 
-// Material Cost = sum(material resource qty x unit price), Labor
-// Cost = labor usage x labor rate, Machine Cost = sum(machine
-// resource qty x machine rate), Total Cost = the three summed,
-// Profit = selling price - Total Cost - the exact formulas from the
-// approved business model. If ANY active resource this product
-// requires has no configured price, the whole breakdown stays null
-// (never a partial/understated total).
+// Material Cost = sum(material resource qty x unit price), Machine
+// Cost = sum(machine resource qty x machine rate), Labor Cost =
+// Product.labor_cost directly (a per-product value, not a resource
+// rate - see classifyResourceType above), Total Cost = the three
+// summed, Profit = selling price - Total Cost - the exact formulas
+// from backend/app/services/optimization.py::calculate_unit_profit.
+// pricedResourceIds is the active catalog with labor already excluded
+// by the caller (see toUiProduct) - if this product requires any
+// OTHER active resource that has no configured CycleResource price,
+// the whole breakdown stays null (never a partial/understated total).
+// Labor is never part of that check: laborCost comes straight from
+// the product record, so it's always known once the product itself
+// has loaded.
 function calculateCosts(
   resourceQuantities: Record<number, number>,
-  activeResourceIds: number[],
+  pricedResourceIds: number[],
   costRates: Map<number, ResourceCostRate>,
   sellingPrice: number,
+  laborCost: number,
 ): CostBreakdown {
-  const requiredActiveResourceIds = activeResourceIds.filter(
+  const requiredResourceIds = pricedResourceIds.filter(
     (id) => resourceQuantities[id] !== undefined,
   )
 
-  const isFullyPriced = requiredActiveResourceIds.every((id) =>
+  const isFullyPriced = requiredResourceIds.every((id) =>
     costRates.has(id),
   )
 
@@ -116,16 +129,13 @@ function calculateCosts(
   }
 
   let materialCost = 0
-  let laborCost = 0
   let machineCost = 0
 
-  for (const id of requiredActiveResourceIds) {
+  for (const id of requiredResourceIds) {
     const rate = costRates.get(id)!
     const cost = resourceQuantities[id] * rate.unitPrice
 
-    if (rate.category === 'labor') {
-      laborCost += cost
-    } else if (rate.category === 'machine') {
+    if (rate.category === 'machine') {
       machineCost += cost
     } else {
       materialCost += cost
@@ -167,17 +177,29 @@ function resolveResourceQuantities(
 export function toUiProduct(
   product: ProductResponse,
   requirements: ResolvedRequirement[] = [],
-  activeResourceIds: number[] = [],
+  activeResources: ResourceOption[] = [],
   costRates: Map<number, ResourceCostRate> = new Map(),
 ): Product {
   const sellingPrice = parseDecimal(product.selling_price)
+  const laborCost = parseDecimal(product.labor_cost)
   const resourceQuantities = resolveResourceQuantities(requirements)
+
+  // Labor is excluded here (not just from costRates) so
+  // calculateCosts's "fully priced" check never waits on a labor
+  // CycleResource price that no longer has anything to do with cost.
+  const pricedResourceIds = activeResources
+    .filter(
+      (resource) =>
+        resource.resource_type.trim().toLowerCase() !== 'labor',
+    )
+    .map((resource) => resource.id)
 
   const costs = calculateCosts(
     resourceQuantities,
-    activeResourceIds,
+    pricedResourceIds,
     costRates,
     sellingPrice,
+    laborCost,
   )
 
   return {
@@ -195,14 +217,14 @@ export function toUiProduct(
 export function toUiProducts(
   products: ProductResponse[],
   requirementsByProductId: Map<number, ResolvedRequirement[]> = new Map(),
-  activeResourceIds: number[] = [],
+  activeResources: ResourceOption[] = [],
   costRates: Map<number, ResourceCostRate> = new Map(),
 ): Product[] {
   return products.map((product) =>
     toUiProduct(
       product,
       requirementsByProductId.get(product.id) ?? [],
-      activeResourceIds,
+      activeResources,
       costRates,
     ),
   )

@@ -191,7 +191,17 @@ def calculate_unit_profit(
     Calculate the profit for producing one unit
     of a product.
 
-    Profit = selling price - resource costs.
+    Profit = selling price - resource costs - labor cost.
+
+    Labor is deliberately excluded from the resource-price loop
+    below and costed from product.labor_cost instead: the client's
+    cost model proves labor cost varies per product independent of
+    labor hours (two products with identical hours and identical BOM
+    can have different total cost) - it is not
+    labor_hours x a shared CycleResource rate. Labor hours themselves
+    are unaffected and still count toward the Labor resource's
+    capacity constraint in add_resource_constraints() - only the cost
+    contribution changes here.
     """
 
     cycle_resource_prices = {
@@ -205,6 +215,9 @@ def calculate_unit_profit(
         if requirement.product_id != product.id:
             continue
 
+        if resource.resource_type.strip().lower() == "labor":
+            continue
+
         unit_price = cycle_resource_prices.get(
             requirement.resource_id
         )
@@ -216,6 +229,8 @@ def calculate_unit_profit(
             requirement.quantity_required
             * unit_price
         )
+
+    total_resource_cost += product.labor_cost
 
     return (
         product.selling_price

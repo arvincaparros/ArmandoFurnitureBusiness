@@ -41,6 +41,7 @@ def test_list_products_response_fields(client, test_products):
         "id",
         "name",
         "selling_price",
+        "labor_cost",
         "is_active",
     }
 
@@ -66,10 +67,12 @@ def test_create_update_delete_product(client, cleanup_test_data):
         json={
             "name": "Test Dining Table",
             "selling_price": "12500.00",
+            "labor_cost": "500.00",
         },
     )
 
     assert create_response.status_code == 201
+    assert create_response.json()["labor_cost"] == "500.00"
 
     product_id = create_response.json()["id"]
 
@@ -80,6 +83,8 @@ def test_create_update_delete_product(client, cleanup_test_data):
 
     assert update_response.status_code == 200
     assert update_response.json()["selling_price"] == "13000.00"
+    # Unset in the PATCH payload - must stay unchanged, not reset.
+    assert update_response.json()["labor_cost"] == "500.00"
 
     delete_response = client.delete(f"/api/products/{product_id}")
 

@@ -44,6 +44,44 @@ def reset_demo_data(db: Session) -> None:
 
 
 def seed_database() -> None:
+    """
+    Client cost-model reconciliation (Phase 1): resources, products,
+    BOM, and cycle prices below are reverse-engineered/verified
+    directly from the client's reference spreadsheet (11 products,
+    resource weekly-price table, and per-product total-cost/profit
+    figures), not invented demo values. See the reconciliation report
+    for the full derivation - in particular:
+
+    - Wood's true rate is ₱84/BF, not the ₱8.40/BF naively implied by
+      weekly_price / availability - confirmed by isolating wood's
+      contribution across the four Door products, which only differ
+      from each other in wood quantity.
+    - Doorknob & Hinge is ₱300/set - this is the client's stated unit
+      price directly, NOT weekly_price / availability (300 / 13 =
+      ₱23.08 was an earlier, incorrect interpretation: the 13 is only
+      the weekly quantity available, not a divisor for the price).
+    - Circular Saw and Table Planer are BOTH ₱31.56912/hr, and Hand
+      Planer is exactly half that (₱15.78456/hr) - solved exactly by
+      reconciling all 11 products' reference total cost against their
+      machine-hour requirements (a 3-equation/3-unknown system, since
+      only 3 distinct machine-hour profiles exist across the 11
+      products). This is NOT weekly_price / availability per machine
+      independently - that naive approach (₱31.5685/hr, ₱31.5692/hr,
+      ₱3.1569/hr) was the actual root cause of an earlier ~₱12.62 (and
+      ~₱6.31 on doors) discrepancy per product, not a precision issue.
+      Rounded to centavos here (₱31.57, ₱31.57, ₱15.78) because
+      CycleResource.unit_price is Numeric(12, 2) - exact reproduction
+      of the spreadsheet's 5-decimal figures needs 5 decimal places
+      of precision (e.g. 15.78456), which this column does not carry;
+      the resulting drift is at most ~₱0.002 per product, confirmed
+      by direct computation, not assumed.
+    - Labor cost does NOT reduce to labor_hours x a shared rate (two
+      products can share identical hours and identical BOM but have
+      different total cost) - each product's labor_cost below is
+      seeded directly from the client's own per-product figure
+      instead (see Product.labor_cost).
+    """
+
     db = SessionLocal()
 
     try:
@@ -51,12 +89,12 @@ def seed_database() -> None:
         # Resources
         # -------------------------
 
-        wood = Resource(name="Wood", resource_type="material", unit="kg")
-        epoxy = Resource(name="Epoxy", resource_type="material", unit="kg")
+        wood = Resource(name="Wood", resource_type="material", unit="BF")
+        epoxy = Resource(name="Epoxy", resource_type="material", unit="L")
         nails = Resource(name="Nails", resource_type="material", unit="kg")
-        wood_glue = Resource(name="Wood Glue", resource_type="material", unit="liter")
+        wood_glue = Resource(name="Wood Glue", resource_type="material", unit="L")
         sandpaper = Resource(name="Sandpaper", resource_type="material", unit="pcs")
-        doorknob = Resource(name="Doorknob", resource_type="material", unit="pcs")
+        doorknob = Resource(name="Doorknob & Hinge", resource_type="material", unit="sets")
         labor = Resource(name="Labor", resource_type="labor", unit="hours")
         circular_saw = Resource(name="Circular Saw", resource_type="machine", unit="hours")
         table_planer = Resource(name="Table Planer", resource_type="machine", unit="hours")
@@ -68,30 +106,31 @@ def seed_database() -> None:
         ])
 
         # -------------------------
-        # Products
+        # Products (client reference catalog - x1 to x11)
         # -------------------------
 
-        dining_table = Product(name="Dining Table", selling_price=Decimal("12500.00"))
-        dining_table_6 = Product(name="6-Seater Dining Table", selling_price=Decimal("18500.00"))
-        dining_table_8 = Product(name="8-Seater Dining Table", selling_price=Decimal("24000.00"))
-        dining_chair = Product(name="Dining Chair", selling_price=Decimal("3500.00"))
-        high_chair = Product(name="High Chair", selling_price=Decimal("4500.00"))
-        bed_frame = Product(name="Bed Frame", selling_price=Decimal("15000.00"))
-        wardrobe = Product(name="Wardrobe", selling_price=Decimal("22000.00"))
-        side_table = Product(name="Side Table", selling_price=Decimal("4500.00"))
-        wooden_door = Product(name="Wooden Door", selling_price=Decimal("8500.00"))
-        office_desk = Product(name="Office Desk", selling_price=Decimal("9500.00"))
+        dining_table_4 = Product(name="Dining Table (4 seater)", selling_price=Decimal("18000.00"), labor_cost=Decimal("5500.00"))
+        dining_table_6 = Product(name="Dining Table (6 seater)", selling_price=Decimal("28000.00"), labor_cost=Decimal("7000.00"))
+        dining_table_8 = Product(name="Dining Table (8 seater)", selling_price=Decimal("38000.00"), labor_cost=Decimal("7500.00"))
+        ordinary_table = Product(name="Ordinary Table", selling_price=Decimal("7000.00"), labor_cost=Decimal("1200.00"))
+        bed_frame = Product(name="Bed Frame", selling_price=Decimal("15000.00"), labor_cost=Decimal("1500.00"))
+        door_60 = Product(name="Door (60x210)", selling_price=Decimal("3800.00"), labor_cost=Decimal("500.00"))
+        door_70 = Product(name="Door (70x210)", selling_price=Decimal("3800.00"), labor_cost=Decimal("500.00"))
+        door_80 = Product(name="Door (80x210)", selling_price=Decimal("3800.00"), labor_cost=Decimal("500.00"))
+        door_90 = Product(name="Door (90x210)", selling_price=Decimal("3800.00"), labor_cost=Decimal("500.00"))
+        high_chair = Product(name="High Chair", selling_price=Decimal("3500.00"), labor_cost=Decimal("350.00"))
+        ordinary_chair = Product(name="Ordinary Chair", selling_price=Decimal("3500.00"), labor_cost=Decimal("300.00"))
 
         db.add_all([
-            dining_table, dining_table_6, dining_table_8, dining_chair,
-            high_chair, bed_frame, wardrobe, side_table, wooden_door,
-            office_desk,
+            dining_table_4, dining_table_6, dining_table_8, ordinary_table,
+            bed_frame, door_60, door_70, door_80, door_90,
+            high_chair, ordinary_chair,
         ])
 
         db.flush()
 
         # -------------------------
-        # Product Resource Requirements
+        # Product Resource Requirements (exact client BOM)
         # -------------------------
 
         def req(product, resource, quantity):
@@ -102,101 +141,130 @@ def seed_database() -> None:
             )
 
         requirements = [
-            # Dining Table
-            req(dining_table, wood, "12.0000"),
-            req(dining_table, epoxy, "0.5000"),
-            req(dining_table, nails, "0.1500"),
-            req(dining_table, wood_glue, "0.3000"),
-            req(dining_table, sandpaper, "2.0000"),
-            req(dining_table, labor, "8.0000"),
-            req(dining_table, circular_saw, "1.5000"),
-            req(dining_table, table_planer, "0.5000"),
+            # Dining Table (4 seater)
+            req(dining_table_4, wood, "45.0000"),
+            req(dining_table_4, epoxy, "0.3000"),
+            req(dining_table_4, nails, "0.3000"),
+            req(dining_table_4, wood_glue, "0.3000"),
+            req(dining_table_4, sandpaper, "4.0000"),
+            req(dining_table_4, labor, "36.0000"),
+            req(dining_table_4, circular_saw, "3.0000"),
+            req(dining_table_4, table_planer, "2.0000"),
+            req(dining_table_4, hand_planer, "1.0000"),
 
-            # 6-Seater Dining Table
-            req(dining_table_6, wood, "18.0000"),
-            req(dining_table_6, epoxy, "0.7500"),
-            req(dining_table_6, nails, "0.2000"),
-            req(dining_table_6, wood_glue, "0.4500"),
-            req(dining_table_6, sandpaper, "3.0000"),
-            req(dining_table_6, labor, "12.0000"),
-            req(dining_table_6, circular_saw, "2.0000"),
-            req(dining_table_6, table_planer, "0.8000"),
+            # Dining Table (6 seater)
+            req(dining_table_6, wood, "60.0000"),
+            req(dining_table_6, epoxy, "0.4000"),
+            req(dining_table_6, nails, "0.4000"),
+            req(dining_table_6, wood_glue, "0.4000"),
+            req(dining_table_6, sandpaper, "4.0000"),
+            req(dining_table_6, labor, "36.0000"),
+            req(dining_table_6, circular_saw, "3.0000"),
+            req(dining_table_6, table_planer, "2.0000"),
+            req(dining_table_6, hand_planer, "1.0000"),
 
-            # 8-Seater Dining Table
-            req(dining_table_8, wood, "24.0000"),
-            req(dining_table_8, epoxy, "1.0000"),
-            req(dining_table_8, nails, "0.2500"),
-            req(dining_table_8, wood_glue, "0.6000"),
-            req(dining_table_8, sandpaper, "4.0000"),
-            req(dining_table_8, labor, "16.0000"),
-            req(dining_table_8, circular_saw, "2.5000"),
-            req(dining_table_8, table_planer, "1.0000"),
+            # Dining Table (8 seater)
+            req(dining_table_8, wood, "70.0000"),
+            req(dining_table_8, epoxy, "0.5000"),
+            req(dining_table_8, nails, "0.5000"),
+            req(dining_table_8, wood_glue, "0.5000"),
+            req(dining_table_8, sandpaper, "5.0000"),
+            req(dining_table_8, labor, "36.0000"),
+            req(dining_table_8, circular_saw, "3.0000"),
+            req(dining_table_8, table_planer, "2.0000"),
+            req(dining_table_8, hand_planer, "1.0000"),
 
-            # Dining Chair
-            req(dining_chair, wood, "5.0000"),
-            req(dining_chair, nails, "0.0800"),
-            req(dining_chair, wood_glue, "0.1500"),
-            req(dining_chair, sandpaper, "1.0000"),
-            req(dining_chair, labor, "3.0000"),
-            req(dining_chair, circular_saw, "0.5000"),
-            req(dining_chair, hand_planer, "0.3000"),
-
-            # High Chair
-            req(high_chair, wood, "4.0000"),
-            req(high_chair, nails, "0.0600"),
-            req(high_chair, wood_glue, "0.1000"),
-            req(high_chair, sandpaper, "1.0000"),
-            req(high_chair, labor, "3.5000"),
-            req(high_chair, circular_saw, "0.4000"),
-            req(high_chair, hand_planer, "0.3000"),
+            # Ordinary Table
+            req(ordinary_table, wood, "15.0000"),
+            req(ordinary_table, epoxy, "0.2000"),
+            req(ordinary_table, nails, "0.2000"),
+            req(ordinary_table, wood_glue, "0.2000"),
+            req(ordinary_table, sandpaper, "2.0000"),
+            req(ordinary_table, labor, "8.0000"),
+            req(ordinary_table, circular_saw, "2.0000"),
+            req(ordinary_table, table_planer, "1.0000"),
+            req(ordinary_table, hand_planer, "1.0000"),
 
             # Bed Frame
-            req(bed_frame, wood, "25.0000"),
-            req(bed_frame, nails, "0.2500"),
-            req(bed_frame, wood_glue, "0.5000"),
-            req(bed_frame, sandpaper, "3.0000"),
-            req(bed_frame, labor, "10.0000"),
-            req(bed_frame, circular_saw, "2.0000"),
-            req(bed_frame, table_planer, "1.0000"),
+            req(bed_frame, wood, "30.0000"),
+            req(bed_frame, epoxy, "0.2000"),
+            req(bed_frame, nails, "0.4000"),
+            req(bed_frame, wood_glue, "0.3000"),
+            req(bed_frame, sandpaper, "4.0000"),
+            req(bed_frame, labor, "24.0000"),
+            req(bed_frame, circular_saw, "3.0000"),
+            req(bed_frame, table_planer, "2.0000"),
+            req(bed_frame, hand_planer, "1.0000"),
 
-            # Wardrobe
-            req(wardrobe, wood, "40.0000"),
-            req(wardrobe, nails, "0.3000"),
-            req(wardrobe, wood_glue, "0.6000"),
-            req(wardrobe, sandpaper, "5.0000"),
-            req(wardrobe, doorknob, "2.0000"),
-            req(wardrobe, labor, "18.0000"),
-            req(wardrobe, circular_saw, "3.0000"),
-            req(wardrobe, table_planer, "1.5000"),
+            # Door (60x210)
+            req(door_60, wood, "22.0000"),
+            req(door_60, epoxy, "0.2000"),
+            req(door_60, nails, "0.2000"),
+            req(door_60, wood_glue, "0.2000"),
+            req(door_60, sandpaper, "3.0000"),
+            req(door_60, doorknob, "1.0000"),
+            req(door_60, labor, "8.0000"),
+            req(door_60, circular_saw, "1.0000"),
+            req(door_60, table_planer, "1.0000"),
+            req(door_60, hand_planer, "0.5000"),
 
-            # Side Table
-            req(side_table, wood, "6.0000"),
-            req(side_table, nails, "0.1000"),
-            req(side_table, wood_glue, "0.1500"),
-            req(side_table, sandpaper, "1.0000"),
-            req(side_table, labor, "3.0000"),
-            req(side_table, circular_saw, "0.5000"),
-            req(side_table, hand_planer, "0.3000"),
+            # Door (70x210)
+            req(door_70, wood, "25.0000"),
+            req(door_70, epoxy, "0.2000"),
+            req(door_70, nails, "0.2000"),
+            req(door_70, wood_glue, "0.2000"),
+            req(door_70, sandpaper, "3.0000"),
+            req(door_70, doorknob, "1.0000"),
+            req(door_70, labor, "8.0000"),
+            req(door_70, circular_saw, "1.0000"),
+            req(door_70, table_planer, "1.0000"),
+            req(door_70, hand_planer, "0.5000"),
 
-            # Wooden Door
-            req(wooden_door, wood, "15.0000"),
-            req(wooden_door, nails, "0.2000"),
-            req(wooden_door, wood_glue, "0.3000"),
-            req(wooden_door, sandpaper, "2.0000"),
-            req(wooden_door, doorknob, "1.0000"),
-            req(wooden_door, labor, "6.0000"),
-            req(wooden_door, circular_saw, "1.0000"),
-            req(wooden_door, table_planer, "0.5000"),
+            # Door (80x210)
+            req(door_80, wood, "28.0000"),
+            req(door_80, epoxy, "0.2000"),
+            req(door_80, nails, "0.2000"),
+            req(door_80, wood_glue, "0.2000"),
+            req(door_80, sandpaper, "3.0000"),
+            req(door_80, doorknob, "1.0000"),
+            req(door_80, labor, "8.0000"),
+            req(door_80, circular_saw, "1.0000"),
+            req(door_80, table_planer, "1.0000"),
+            req(door_80, hand_planer, "0.5000"),
 
-            # Office Desk
-            req(office_desk, wood, "20.0000"),
-            req(office_desk, epoxy, "0.4000"),
-            req(office_desk, nails, "0.2000"),
-            req(office_desk, wood_glue, "0.4000"),
-            req(office_desk, sandpaper, "3.0000"),
-            req(office_desk, labor, "9.0000"),
-            req(office_desk, circular_saw, "1.5000"),
-            req(office_desk, table_planer, "0.7000"),
+            # Door (90x210)
+            req(door_90, wood, "30.0000"),
+            req(door_90, epoxy, "0.2000"),
+            req(door_90, nails, "0.2000"),
+            req(door_90, wood_glue, "0.2000"),
+            req(door_90, sandpaper, "3.0000"),
+            req(door_90, doorknob, "1.0000"),
+            req(door_90, labor, "8.0000"),
+            req(door_90, circular_saw, "1.0000"),
+            req(door_90, table_planer, "1.0000"),
+            req(door_90, hand_planer, "0.5000"),
+
+            # High Chair
+            req(high_chair, wood, "8.0000"),
+            req(high_chair, epoxy, "0.1000"),
+            req(high_chair, nails, "0.0500"),
+            req(high_chair, wood_glue, "0.1000"),
+            req(high_chair, sandpaper, "2.0000"),
+            req(high_chair, labor, "8.0000"),
+            req(high_chair, circular_saw, "2.0000"),
+            req(high_chair, table_planer, "1.0000"),
+            req(high_chair, hand_planer, "1.0000"),
+
+            # Ordinary Chair
+            req(ordinary_chair, wood, "8.0000"),
+            req(ordinary_chair, epoxy, "0.1000"),
+            req(ordinary_chair, nails, "0.0500"),
+            req(ordinary_chair, wood_glue, "0.1000"),
+            req(ordinary_chair, sandpaper, "2.0000"),
+            req(ordinary_chair, labor, "8.0000"),
+            req(ordinary_chair, circular_saw, "2.0000"),
+            req(ordinary_chair, table_planer, "1.0000"),
+            req(ordinary_chair, hand_planer, "1.0000"),
         ]
 
         db.add_all(requirements)
@@ -219,20 +287,27 @@ def seed_database() -> None:
         db.flush()
 
         # -------------------------
-        # Cycle Resources (availability + unit price for this cycle)
+        # Cycle Resources (client's Available Resources Per Week)
         # -------------------------
+        #
+        # Labor's unit_price is intentionally 0.00 and NOT used for
+        # costing (see calculate_unit_profit in optimization.py) - the
+        # 576-hour availability below is still the real ILP capacity
+        # constraint. It cannot be left unset: CycleResource.unit_price
+        # is a required column and every other resource here still
+        # needs a real per-unit price for the optimizer's cost model.
 
         db.add_all([
-            CycleResource(production_cycle=cycle, resource=wood, available_quantity=Decimal("1250.0000"), unit_price=Decimal("84.0000")),
-            CycleResource(production_cycle=cycle, resource=epoxy, available_quantity=Decimal("25.0000"), unit_price=Decimal("650.0000")),
-            CycleResource(production_cycle=cycle, resource=nails, available_quantity=Decimal("100.0000"), unit_price=Decimal("120.0000")),
-            CycleResource(production_cycle=cycle, resource=wood_glue, available_quantity=Decimal("50.0000"), unit_price=Decimal("79.0000")),
-            CycleResource(production_cycle=cycle, resource=sandpaper, available_quantity=Decimal("500.0000"), unit_price=Decimal("10.0000")),
-            CycleResource(production_cycle=cycle, resource=doorknob, available_quantity=Decimal("100.0000"), unit_price=Decimal("300.0000")),
-            CycleResource(production_cycle=cycle, resource=labor, available_quantity=Decimal("576.0000"), unit_price=Decimal("150.0000")),
-            CycleResource(production_cycle=cycle, resource=circular_saw, available_quantity=Decimal("200.0000"), unit_price=Decimal("80.0000")),
-            CycleResource(production_cycle=cycle, resource=table_planer, available_quantity=Decimal("150.0000"), unit_price=Decimal("100.0000")),
-            CycleResource(production_cycle=cycle, resource=hand_planer, available_quantity=Decimal("150.0000"), unit_price=Decimal("60.0000")),
+            CycleResource(production_cycle=cycle, resource=wood, available_quantity=Decimal("1250.0000"), unit_price=Decimal("84.00")),
+            CycleResource(production_cycle=cycle, resource=epoxy, available_quantity=Decimal("8.0000"), unit_price=Decimal("690.00")),
+            CycleResource(production_cycle=cycle, resource=nails, available_quantity=Decimal("100.0000"), unit_price=Decimal("54.00")),
+            CycleResource(production_cycle=cycle, resource=wood_glue, available_quantity=Decimal("12.0000"), unit_price=Decimal("79.00")),
+            CycleResource(production_cycle=cycle, resource=sandpaper, available_quantity=Decimal("100.0000"), unit_price=Decimal("10.00")),
+            CycleResource(production_cycle=cycle, resource=doorknob, available_quantity=Decimal("13.0000"), unit_price=Decimal("300.00")),
+            CycleResource(production_cycle=cycle, resource=labor, available_quantity=Decimal("576.0000"), unit_price=Decimal("0.00")),
+            CycleResource(production_cycle=cycle, resource=circular_saw, available_quantity=Decimal("336.0000"), unit_price=Decimal("31.57")),
+            CycleResource(production_cycle=cycle, resource=table_planer, available_quantity=Decimal("96.0000"), unit_price=Decimal("31.57")),
+            CycleResource(production_cycle=cycle, resource=hand_planer, available_quantity=Decimal("240.0000"), unit_price=Decimal("15.78")),
         ])
 
         db.commit()

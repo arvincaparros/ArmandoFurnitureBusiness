@@ -34,6 +34,19 @@ class Product(Base):
         nullable=False,
     )
 
+    # Per-product labor cost, used by optimization.py::
+    # calculate_unit_profit INSTEAD OF labor_hours x a shared
+    # CycleResource(Labor).unit_price - the client's cost model proves
+    # labor cost varies per product independent of labor hours (see
+    # migration b3b943d3e019). Labor hours are unaffected - still a
+    # normal ProductResourceRequirement row against the "Labor"
+    # Resource, still constraining capacity in the optimizer.
+    labor_cost: Mapped[Decimal] = mapped_column(
+        Numeric(12, 2),
+        nullable=False,
+        default=Decimal("0"),
+    )
+
     is_active: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,

@@ -37,6 +37,7 @@ def create_product(
     product = Product(
         name=product_data.name,
         selling_price=product_data.selling_price,
+        labor_cost=product_data.labor_cost,
         is_active=product_data.is_active,
     )
 
