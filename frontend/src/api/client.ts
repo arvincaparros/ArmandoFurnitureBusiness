@@ -2,6 +2,32 @@ import axios from 'axios'
 
 import { getToken } from './tokenStorage'
 
+// VITE_API_URL is a Vite BUILD-TIME substitution - it gets baked into
+// the JS bundle when `vite build` runs, not read at runtime in the
+// browser. Locally it comes from .env.development
+// (VITE_API_URL=http://localhost:8000); in production (Vercel) it
+// must be set as a Production environment variable so it's present
+// during that build.
+//
+// If it's ever missing, axios silently falls back to a relative
+// baseURL, which resolves every request against the CURRENT PAGE
+// ORIGIN instead of the API - e.g. a Vercel-hosted frontend would
+// send "POST /api/auth/register" to the Vercel domain itself rather
+// than the Render backend. vercel.json's SPA catch-all rewrite then
+// serves index.html for that path, and Vercel returns 405 Method Not
+// Allowed for the POST - a confusing failure with no indication that
+// the real problem is a missing build-time env var. Failing fast here
+// instead turns that into an immediate, actionable error.
+if (import.meta.env.PROD && !import.meta.env.VITE_API_URL) {
+  throw new Error(
+    'VITE_API_URL is not set for this production build. ' +
+      'Set it as a Production environment variable in Vercel (e.g. ' +
+      'https://your-api.onrender.com) and redeploy - otherwise API ' +
+      'requests silently target this site\'s own origin instead of ' +
+      'the backend.',
+  )
+}
+
 // One shared instance for every backend call. Module-level (not a
 // hook) so it can be imported from anywhere - React components and
 // future non-React service files alike - without creating a second
