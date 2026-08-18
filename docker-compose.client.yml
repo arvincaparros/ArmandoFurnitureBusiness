@@ -1,0 +1,92 @@
+# Client-laptop demo deployment. Separate from the existing
+# docker-compose.yml (dev-only Postgres) - that file is untouched and
+# keeps working exactly as before. Distinct container/volume names
+# here so both stacks can even coexist without colliding.
+#
+# `name:` below is critical, not cosmetic: without an explicit,
+# distinct Compose project name, this file and the root
+# docker-compose.yml (which also has no explicit name) would BOTH
+# default to the same project name (the directory name). Docker
+# Compose tracks "which containers belong to this project" via labels
+# keyed on that project name + service name - NOT via container_name
+# - so `down`/`down -v` on either file would then operate on BOTH
+# stacks' containers interchangeably, including removing the other
+# file's containers. Confirmed the hard way during implementation:
+# running `down -v` on an earlier, unnamed version of this file
+# removed the existing dev docker-compose.yml's running `db`
+# container (its named volume was untouched and the container was
+# immediately recreated with zero data loss - but the project-name
+# collision itself is the real defect this field fixes).
+name: armando-furniture-client
+#
+# Optional customization: create a ".env" file next to this one
+# (see .env.client.example) to override JWT_SECRET_KEY / GEMINI_API_KEY
+# without editing this file. Not required for the default demo flow -
+# start-demo.bat works with zero configuration out of the box.
+
+services:
+  db:
+    image: postgres:16
+    container_name: armando-furniture-client-db
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: armando_furniture
+      POSTGRES_USER: postgres
+      POSTGRES_PASSWORD: postgres
+    volumes:
+      - armando_client_postgres_data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U postgres -d armando_furniture"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+      start_period: 10s
+    # No host port published - nothing outside this Docker network
+    # needs to reach Postgres directly on the client's laptop.
+
+  backend:
+    build:
+      context: ./backend
+    container_name: armando-furniture-client-backend
+    restart: unless-stopped
+    environment:
+      DATABASE_URL: postgresql://postgres:postgres@db:5432/armando_furniture
+      JWT_SECRET_KEY: ${JWT_SECRET_KEY:-armando-furniture-demo-secret-change-me}
+      ACCESS_TOKEN_EXPIRE_MINUTES: ${ACCESS_TOKEN_EXPIRE_MINUTES:-60}
+      RESET_TOKEN_EXPIRE_MINUTES: ${RESET_TOKEN_EXPIRE_MINUTES:-30}
+      # Optional - the Demand Forecasting AI chat feature simply stays
+      # unavailable (with a clear error) until a real key is supplied.
+      GEMINI_API_KEY: ${GEMINI_API_KEY:-}
+      GEMINI_MODEL: ${GEMINI_MODEL:-}
+      # No real email provider is wired up for this demo - password
+      # reset links are printed to `docker compose logs backend`
+      # instead of being emailed. See CLIENT-SETUP.md.
+      EMAIL_PROVIDER: console
+      FRONTEND_URL: http://localhost:3000
+    ports:
+      - "8000:8000"
+    depends_on:
+      db:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 10s
+      timeout: 5s
+      retries: 10
+      start_period: 20s
+
+  frontend:
+    build:
+      context: ./frontend
+      args:
+        VITE_API_URL: http://localhost:8000
+    container_name: armando-furniture-client-frontend
+    restart: unless-stopped
+    ports:
+      - "3000:80"
+    depends_on:
+      backend:
+        condition: service_healthy
+
+volumes:
+  armando_client_postgres_data:
