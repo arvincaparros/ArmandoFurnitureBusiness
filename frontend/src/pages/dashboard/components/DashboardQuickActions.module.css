@@ -1,0 +1,11 @@
+/* Wood-only hover lift for quick-action buttons. Scoped to
+   [data-theme='wood'] so Classic (which never gets this class) is
+   never affected. */
+[data-theme='wood'] .woodActionCard:hover {
+  border-color: var(--oak-500);
+  background: #ffffff;
+}
+
+[data-theme='wood'] .woodActionButton:hover {
+  transform: translateY(-2px);
+}

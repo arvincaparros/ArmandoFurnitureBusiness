@@ -1,0 +1,32 @@
+/* Wood-only login page treatment. Every rule here is scoped to
+   [data-theme='wood'] (or only ever applied via a class that's only
+   passed in wood mode), so Classic - which never receives these
+   classes/attribute - renders byte-identical to before. */
+
+[data-theme='wood'] .woodCard {
+  position: relative;
+  overflow: hidden;
+}
+
+[data-theme='wood'] .woodCard::before {
+  content: '';
+  position: absolute;
+  inset: 0 0 auto 0;
+  height: 6px;
+  background: linear-gradient(
+    90deg,
+    var(--walnut-800),
+    var(--oak-500) 35%,
+    var(--honey-400) 65%,
+    var(--walnut-800)
+  );
+}
+
+[data-theme='wood'] .woodButton:hover {
+  transform: translateY(-1px);
+  box-shadow: 0 6px 16px -3px rgba(154, 84, 23, 0.6);
+}
+
+[data-theme='wood'] .woodButton:active {
+  transform: translateY(0);
+}
