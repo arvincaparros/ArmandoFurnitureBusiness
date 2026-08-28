@@ -19,6 +19,9 @@ import { Link, useLocation } from 'react-router-dom'
 import Logo from '../../components/common/Logo'
 import { getApiErrorMessage } from '../../api/apiError'
 import { useAuth } from '../../auth/AuthContext'
+import { useThemeMode } from '../../theme/ThemeContext'
+
+import classes from './LoginPage.module.css'
 
 interface LoginLocationState {
   message?: string
@@ -27,6 +30,8 @@ interface LoginLocationState {
 const LoginPage = () => {
   const { login } = useAuth()
   const location = useLocation()
+  const { mode } = useThemeMode()
+  const isWood = mode === 'wood'
 
   // Set once by RegisterPage/ResetPasswordPage after a successful
   // action (navigate('/login', { state: { message: '...' } })) - not
@@ -72,7 +77,10 @@ const LoginPage = () => {
   return (
     <Center
       h="100vh"
-      style={{ background: '#F8FAFC' }}
+      style={{
+        backgroundColor: 'var(--page-bg)',
+        backgroundImage: 'var(--page-bg-image)',
+      }}
     >
       <Paper
         w={380}
@@ -80,6 +88,17 @@ const LoginPage = () => {
         radius="md"
         withBorder
         shadow="sm"
+        className={isWood ? classes.woodCard : undefined}
+        style={
+          isWood
+            ? {
+                backgroundColor: 'var(--card-bg)',
+                borderColor: 'var(--line)',
+                borderRadius: 18,
+                boxShadow: 'var(--card-shadow)',
+              }
+            : undefined
+        }
       >
         <Stack gap="lg">
           <Logo />
@@ -104,6 +123,18 @@ const LoginPage = () => {
                 }
                 autoFocus
                 autoComplete="username"
+                styles={
+                  isWood
+                    ? {
+                        label: { color: 'var(--ink-600)' },
+                        input: {
+                          backgroundColor: 'var(--cream-50)',
+                          borderColor: 'var(--line)',
+                          color: 'var(--ink-900)',
+                        },
+                      }
+                    : undefined
+                }
               />
 
               <PasswordInput
@@ -114,6 +145,18 @@ const LoginPage = () => {
                   setPassword(e.currentTarget.value)
                 }
                 autoComplete="current-password"
+                styles={
+                  isWood
+                    ? {
+                        label: { color: 'var(--ink-600)' },
+                        input: {
+                          backgroundColor: 'var(--cream-50)',
+                          borderColor: 'var(--line)',
+                          color: 'var(--ink-900)',
+                        },
+                      }
+                    : undefined
+                }
               />
 
               <Group justify="flex-end">
@@ -140,6 +183,22 @@ const LoginPage = () => {
                 fullWidth
                 loading={isSubmitting}
                 disabled={!isValid}
+                variant={isWood ? 'gradient' : 'filled'}
+                gradient={
+                  isWood
+                    ? { from: '#A16C36', to: '#9A5417', deg: 180 }
+                    : undefined
+                }
+                className={isWood ? classes.woodButton : undefined}
+                style={
+                  isWood
+                    ? {
+                        fontWeight: 700,
+                        transition:
+                          'transform .12s ease, box-shadow .12s ease',
+                      }
+                    : undefined
+                }
               >
                 Log In
               </Button>

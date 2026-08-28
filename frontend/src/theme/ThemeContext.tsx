@@ -7,6 +7,30 @@ import {
 
 type ThemeMode = 'classic' | 'wood'
 
+const THEME_MODES: ThemeMode[] = ['classic', 'wood']
+
+function isThemeMode(value: string | null): value is ThemeMode {
+  return value !== null && THEME_MODES.includes(value as ThemeMode)
+}
+
+// Reads the saved preference synchronously, during initial state
+// computation - not in an effect. This runs once, before the first
+// render/paint, so `mode` is correct from the very start and there
+// is no window where a stale 'wood' render exists to be persisted
+// over a real saved value (see ThemeProvider's single effect below).
+// window/localStorage are guarded since useState's initializer runs
+// during render, which for this SPA is always client-side, but this
+// keeps the function safe if that ever changes.
+function readInitialMode(): ThemeMode {
+  if (typeof window === 'undefined') {
+    return 'wood'
+  }
+
+  const saved = window.localStorage.getItem('theme')
+
+  return isThemeMode(saved) ? saved : 'wood'
+}
+
 interface ThemeContextValue {
   mode: ThemeMode
   setMode: (mode: ThemeMode) => void
@@ -22,20 +46,7 @@ export function ThemeProvider({
   children: React.ReactNode
 }) {
   const [mode, setMode] =
-    useState<ThemeMode>('classic')
-
-  useEffect(() => {
-    const saved =
-      localStorage.getItem('theme') as ThemeMode | null
-
-    if (saved) {
-      setMode(saved)
-      document.documentElement.setAttribute(
-        'data-theme',
-        saved,
-      )
-    }
-  }, [])
+    useState<ThemeMode>(readInitialMode)
 
   useEffect(() => {
     document.documentElement.setAttribute(

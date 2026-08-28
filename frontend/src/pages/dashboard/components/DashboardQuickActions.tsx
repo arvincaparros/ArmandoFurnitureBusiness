@@ -17,6 +17,10 @@ import {
 
 import { useNavigate } from 'react-router-dom'
 
+import { useThemeMode } from '../../../theme/ThemeContext'
+
+import classes from './DashboardQuickActions.module.css'
+
 // Route strings kept local rather than imported from
 // constants/navigation.ts, which is stale (missing Optimization
 // History entirely, and its "History" entry points at /history -
@@ -59,11 +63,35 @@ const actions = [
 
 const DashboardQuickActions = () => {
   const navigate = useNavigate()
+  const { mode } = useThemeMode()
+  const isWood = mode === 'wood'
 
   return (
-    <Card withBorder radius="md" p="md">
+    <Card
+      withBorder
+      radius="md"
+      p="md"
+      style={
+        isWood
+          ? {
+              backgroundColor: 'var(--card-bg)',
+              backgroundImage: 'var(--card-bg-image)',
+              borderColor: 'var(--card-border)',
+              borderRadius: 14,
+              boxShadow: 'var(--card-shadow)',
+            }
+          : undefined
+      }
+    >
       <Stack gap="md">
-        <Text fw={600}>
+        <Text
+          fw={600}
+          style={
+            isWood
+              ? { fontFamily: 'var(--font-heading)', color: 'var(--ink-900)' }
+              : undefined
+          }
+        >
           Quick Actions
         </Text>
 
@@ -86,12 +114,39 @@ const DashboardQuickActions = () => {
                     radius="md"
                     p="sm"
                     h="100%"
+                    className={isWood ? classes.woodActionCard : undefined}
+                    style={
+                      isWood
+                        ? {
+                            backgroundColor: 'var(--cream-50)',
+                            borderColor: 'var(--line)',
+                            transition:
+                              'border-color .15s, background .15s, transform .12s',
+                          }
+                        : undefined
+                    }
                   >
                     <Button
                       variant="subtle"
                       fullWidth
+                      className={
+                        isWood ? classes.woodActionButton : undefined
+                      }
                       leftSection={
-                        <Icon size={18} />
+                        <Icon
+                          size={18}
+                          color={
+                            isWood ? 'var(--copper-500)' : undefined
+                          }
+                        />
+                      }
+                      style={
+                        isWood
+                          ? {
+                              color: 'var(--ink-600)',
+                              transition: 'transform .12s ease',
+                            }
+                          : undefined
                       }
                       styles={{
                         // Mantine's Button forces its label span to

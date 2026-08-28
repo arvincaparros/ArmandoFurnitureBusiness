@@ -10,6 +10,8 @@ import {
 
 import { MoreHorizontal } from 'lucide-react'
 
+import { useThemeMode } from '../../theme/ThemeContext'
+
 interface ChartCardProps {
   title: string
   subtitle?: string
@@ -23,6 +25,9 @@ const ChartCard = ({
   children,
   rightSection,
 }: ChartCardProps) => {
+  const { mode } = useThemeMode()
+  const isWood = mode === 'wood'
+
   return (
     <Card
       withBorder
@@ -30,18 +35,41 @@ const ChartCard = ({
       radius="lg"
       p="lg"
       h="100%"
+      style={
+        isWood
+          ? {
+              backgroundColor: 'var(--card-bg)',
+              backgroundImage: 'var(--card-bg-image)',
+              borderColor: 'var(--card-border)',
+              borderRadius: 14,
+              boxShadow: 'var(--card-shadow)',
+            }
+          : undefined
+      }
     >
       <Group justify="space-between" align="flex-start">
         <div>
-            <Text fw={700} size="xl">
+            <Text
+              fw={700}
+              size="xl"
+              style={
+                isWood
+                  ? {
+                      fontFamily: 'var(--font-heading)',
+                      color: 'var(--ink-900)',
+                    }
+                  : undefined
+              }
+            >
             {title}
             </Text>
 
             {subtitle && (
             <Text
                 size="sm"
-                c="dimmed"
+                c={isWood ? undefined : 'dimmed'}
                 mt={4}
+                style={isWood ? { color: 'var(--ink-400)' } : undefined}
             >
                 {subtitle}
             </Text>

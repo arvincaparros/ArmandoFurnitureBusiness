@@ -19,6 +19,7 @@ body,
 
 :root {
   --page-bg: #f8fafc;
+  --page-bg-image: none;
 
   --sidebar-bg: #ffffff;
   --sidebar-border: #e2e8f0;
@@ -26,14 +27,22 @@ body,
   --sidebar-hover: #93c5fd;
   --sidebar-active: #2563eb;
   --sidebar-active-text: #eff6ff;
+  --sidebar-active-border: transparent;
 
   --card-bg: #ffffff;
   --card-border: #e2e8f0;
+  --card-bg-image: none;
 
   --header-bg: #ffffff;
-  
+  --header-border: #e2e8f0;
+
   --avatar-bg: #dbeafe;
   --avatar-text: #1d4ed8;
+
+  --font-heading:
+    Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  --font-body:
+    Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
 }
 
 /* ===========================
@@ -41,22 +50,80 @@ body,
 =========================== */
 
 [data-theme='wood'] {
-  --page-bg: #faf8f3;
+  /* Palette - mirrors design-reference/armandos-wood-theme.html */
+  --walnut-950: #241209;
+  --walnut-900: #2e160c;
+  --walnut-800: #4a2a17;
+  --walnut-700: #5e3a22;
+  --oak-600: #8b5a2b;
+  --oak-500: #a16c36;
+  --honey-400: #c89660;
+  --honey-300: #ddb88b;
+  --cream-100: #f6ecdb;
+  --cream-50: #fbf5ea;
+  --card: #fffcf6;
+  --copper-500: #b5651d;
+  --copper-600: #9a5417;
+  --sage-500: #5c7a4c;
+  --ink-900: #2b1a10;
+  --ink-600: #5c4632;
+  --ink-400: #8c7660;
+  --line: #e4d3b8;
+  --wood-shadow:
+    0 1px 2px rgba(43, 26, 16, 0.06), 0 8px 24px -8px rgba(43, 26, 16, 0.18);
 
-  --sidebar-bg: #fcfaf6;
-  --sidebar-border: #eadfcf;
-  --sidebar-text: #5f4633;
-  --sidebar-hover: #DFBE95;
-  --sidebar-active: #9d6836;
-  --sidebar-active-text: #fffdf8;
+  --page-bg: var(--cream-100);
+  --page-bg-image:
+    radial-gradient(1200px 600px at 10% -10%, #fffaf1 0%, transparent 60%),
+    repeating-linear-gradient(
+      100deg,
+      rgba(139, 90, 43, 0.035) 0px,
+      rgba(139, 90, 43, 0.035) 2px,
+      transparent 2px,
+      transparent 26px
+    );
 
-  --card-bg: #fffdf9;
-  --card-border: #eadfcf;
+  --sidebar-bg:
+    repeating-linear-gradient(
+      115deg,
+      rgba(255, 255, 255, 0.02) 0px,
+      rgba(255, 255, 255, 0.02) 1px,
+      transparent 1px,
+      transparent 22px
+    ),
+    linear-gradient(190deg, var(--walnut-900), var(--walnut-950));
+  --sidebar-border: transparent;
+  --sidebar-text: var(--honey-300);
+  --sidebar-hover: rgba(255, 255, 255, 0.06);
+  --sidebar-active: linear-gradient(
+    90deg,
+    rgba(181, 101, 29, 0.35),
+    rgba(181, 101, 29, 0.08)
+  );
+  --sidebar-active-text: #ffffff;
+  --sidebar-active-border: var(--copper-500);
 
-  --header-bg: #fcfaf6;
+  --card-bg: var(--card);
+  --card-border: var(--line);
+  --card-bg-image: repeating-linear-gradient(
+    115deg,
+    rgba(139, 90, 43, 0.05) 0px,
+    rgba(139, 90, 43, 0.05) 1px,
+    transparent 1px,
+    transparent 22px
+  );
+  --card-shadow: var(--wood-shadow);
+
+  --header-bg: var(--cream-50);
+  --header-border: var(--line);
 
   --avatar-bg: #e8d2b0;
   --avatar-text: #6b4423;
+
+  --font-heading: 'Fraunces', Georgia, 'Times New Roman', serif;
+  --font-body:
+    'Work Sans', Inter, -apple-system, BlinkMacSystemFont, 'Segoe UI',
+    sans-serif;
 }
 
 /* ===========================
@@ -64,17 +131,26 @@ body,
 =========================== */
 
 body {
-  background: var(--page-bg);
+  background-color: var(--page-bg);
+  background-image: var(--page-bg-image);
 
-  font-family:
-    Inter,
-    system-ui,
-    -apple-system,
-    BlinkMacSystemFont,
-    'Segoe UI',
-    sans-serif;
+  font-family: var(--font-body);
 
   transition:
     background-color .25s ease,
     color .25s ease;
+}
+
+/* Wood-only: honey border + copper focus ring on every input, and a
+   warm selection color - scoped under [data-theme='wood'] so Classic
+   is never touched. */
+[data-theme='wood'] input:focus,
+[data-theme='wood'] textarea:focus {
+  outline: none;
+  border-color: var(--copper-500);
+  box-shadow: 0 0 0 3px rgba(181, 101, 29, 0.15);
+}
+
+[data-theme='wood'] ::selection {
+  background: var(--honey-300);
 }

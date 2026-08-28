@@ -41,19 +41,20 @@ const AppLayoutContent = () => {
       padding="lg"
       styles={{
         main: {
-          background: '#F8FAFC',
+          backgroundColor: 'var(--page-bg)',
+          backgroundImage: 'var(--page-bg-image)',
         },
 
         header: {
           borderBottom:
-            '1px solid #E2E8F0',
-          background: '#FFFFFF',
+            '1px solid var(--header-border)',
+          background: 'var(--header-bg)',
         },
 
         navbar: {
           borderRight:
-            '1px solid #E2E8F0',
-          background: '#FFFFFF',
+            '1px solid var(--sidebar-border)',
+          background: 'var(--sidebar-bg)',
           transition: 'width 200ms ease',
         },
       }}

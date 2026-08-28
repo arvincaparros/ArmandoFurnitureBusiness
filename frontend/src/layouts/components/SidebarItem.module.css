@@ -23,6 +23,10 @@
 .active {
   background: var(--sidebar-active);
   color: var(--sidebar-active-text);
+
+  /* inset box-shadow (not border) so it never shifts layout/geometry
+     in Classic, where --sidebar-active-border resolves to transparent */
+  box-shadow: inset 3px 0 0 var(--sidebar-active-border);
 }
 
 .active:hover {

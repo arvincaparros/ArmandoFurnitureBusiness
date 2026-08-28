@@ -22,6 +22,8 @@ import {
 
 import type { DashboardResourceUtilizationBar } from '../api/dashboardAdapter'
 
+import { useThemeMode } from '../../../theme/ThemeContext'
+
 // Matches the severity convention already used by the Resource
 // Utilization Report module (red >=90%, amber >=70%, else green).
 function barColor(value: number): string {
@@ -47,22 +49,48 @@ const DashboardResourceUtilization = ({
   isLoading,
   isError,
 }: DashboardResourceUtilizationProps) => {
+  const { mode } = useThemeMode()
+  const isWood = mode === 'wood'
+
   return (
     <Card
       shadow="sm"
       radius="md"
       withBorder
       h="100%"
+      style={
+        isWood
+          ? {
+              backgroundColor: 'var(--card-bg)',
+              backgroundImage: 'var(--card-bg-image)',
+              borderColor: 'var(--card-border)',
+              borderRadius: 14,
+              boxShadow: 'var(--card-shadow)',
+            }
+          : undefined
+      }
     >
       <Group justify="space-between" mb="xs">
         <div>
-          <Text fw={600} size="lg">
+          <Text
+            fw={600}
+            size="lg"
+            style={
+              isWood
+                ? {
+                    fontFamily: 'var(--font-heading)',
+                    color: 'var(--ink-900)',
+                  }
+                : undefined
+            }
+          >
             Resource Utilization
           </Text>
 
           <Text
             size="sm"
-            c="dimmed"
+            c={isWood ? undefined : 'dimmed'}
+            style={isWood ? { color: 'var(--ink-400)' } : undefined}
           >
             Current allocation
           </Text>
