@@ -2,10 +2,12 @@ from datetime import datetime, timezone
 from decimal import Decimal
 
 from app.database.models import (
+    CycleResource,
     OptimizationResult,
     OptimizationRun,
     ProductionAllocation,
     ProductionCycle,
+    Resource,
 )
 from app.services.resource_utilization import classify_utilization_status
 
@@ -424,6 +426,64 @@ def test_utilization_status_is_bottleneck_above_100_percent_with_shortage(
 
     finally:
         db.delete(allocation)
+        db.commit()
+
+
+def test_utilization_excludes_soft_deleted_resource_with_leftover_cycle_row(
+    client,
+    db,
+    optimization_cycle,
+):
+    """
+    Reproduces the "test" resource bug: a resource soft-deleted from
+    Resources (is_active = False) whose CycleResource capacity row for
+    the current cycle was never cleaned up must NOT still appear in
+    the current utilization summary, and must not inflate its totals
+    (material_resource_count, total_raw_materials_consumed, etc.).
+    """
+
+    inactive_resource = Resource(
+        name="Regression Deleted Material",
+        resource_type="material",
+        unit="board ft",
+        is_active=False,
+    )
+    db.add(inactive_resource)
+    db.commit()
+    db.refresh(inactive_resource)
+
+    leftover_cycle_resource = CycleResource(
+        production_cycle_id=optimization_cycle.id,
+        resource_id=inactive_resource.id,
+        available_quantity=Decimal("1.0000"),
+        unit_price=Decimal("100.0000"),
+    )
+    db.add(leftover_cycle_resource)
+    db.commit()
+
+    try:
+        response = client.get(
+            f"/api/resource-utilization/{optimization_cycle.id}"
+        )
+
+        assert response.status_code == 200
+
+        data = response.json()
+
+        resource_names = {
+            item["resource_name"] for item in data["resources"]
+        }
+        assert "Regression Deleted Material" not in resource_names
+
+        # Unchanged from the no-allocations baseline - the leftover
+        # inactive resource's available_quantity=1 must not be folded
+        # into the active-resource totals.
+        assert len(data["resources"]) == 4
+        assert data["material_resource_count"] == 3
+
+    finally:
+        db.delete(leftover_cycle_resource)
+        db.delete(inactive_resource)
         db.commit()
 
 

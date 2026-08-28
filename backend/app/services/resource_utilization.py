@@ -98,8 +98,19 @@ def calculate_resource_utilization(
         for cycle_resource in cycle_resources
     ]
 
+    # Current-cycle utilization must reflect the current active
+    # resource inventory, not whatever CycleResource rows happen to
+    # still exist for this cycle - a resource soft-deleted from
+    # Resources (is_active = False) keeps its CycleResource capacity
+    # row (see delete_resource in app/services/resource.py), so
+    # without this filter it would still show up here even though it
+    # no longer exists anywhere in the UI. Historical snapshots
+    # (ResourceUtilizationHistoryItem, see resource_utilization_history.py)
+    # are unaffected - they denormalize resource_name/type/unit at
+    # capture time and never re-join against the live Resource table.
     resources_statement = select(Resource).where(
-        Resource.id.in_(resource_ids)
+        Resource.id.in_(resource_ids),
+        Resource.is_active.is_(True),
     )
 
     resources_by_id = {

@@ -92,102 +92,133 @@ const AddProductModal = ({
   }
 
   return (
-    <Modal
-        opened={opened}
-        onClose={onClose}
-        title={product ? 'Edit Product' : 'Add Product'}
-        size="xl"
-        centered
-        radius="lg"
-        styles={{
-            content: {
-            borderRadius: 16,
-            overflow: 'hidden',
-            },
-        }}
+    <Modal.Root
+      opened={opened}
+      onClose={onClose}
+      size="xl"
+      centered
+      radius="lg"
     >
-      <Stack gap="xs">
-        <SimpleGrid cols={2}>
-            <TextInput
-            radius="md"
-            label="Product Name"
-            placeholder="e.g. Dining Table"
-            value={productName}
-            maxLength={150}
-            onChange={(e) =>
-                setProductName(e.currentTarget.value)
-            }
-            />
+      <Modal.Overlay />
 
-            <NumberInput
-            radius="md"
-            label="Selling Price"
-            value={sellingPrice}
-            prefix="₱"
-            thousandSeparator=","
-            onChange={(value) =>
-                setSellingPrice(Number(value))
-            }
-            />
+      {/* Content is a fixed-height flex column (bounded by Mantine's
+          own --modal-content-max-height, i.e. viewport-aware) with its
+          own overflow hidden - Header and the action footer are fixed
+          flex items, and only Body (flex: 1, its own overflow-y: auto)
+          scrolls. This is what keeps the header/close button and
+          Save/Cancel always reachable no matter how many resource
+          requirement rows a product has. */}
+      <Modal.Content
+        style={{
+          display: 'flex',
+          flexDirection: 'column',
+          overflow: 'hidden',
+        }}
+      >
+        <Modal.Header>
+          <Modal.Title>
+            {product ? 'Edit Product' : 'Add Product'}
+          </Modal.Title>
 
-            <NumberInput
-            radius="md"
-            label="Labor Cost"
-            description="Per-unit labor cost - not derived from labor hours."
-            value={laborCost}
-            min={0}
-            prefix="₱"
-            thousandSeparator=","
-            onChange={(value) =>
-                setLaborCost(Number(value))
-            }
-            />
-        </SimpleGrid>
+          <Modal.CloseButton />
+        </Modal.Header>
 
-        {error && (
-          <Alert
-            color="red"
-            icon={<AlertCircle size={18} />}
-          >
-            {error}
-          </Alert>
-        )}
+        <Modal.Body
+          style={{
+            flex: 1,
+            minHeight: 0,
+            overflowY: 'auto',
+            overflowX: 'hidden',
+          }}
+        >
+          <Stack gap="xs">
+            <SimpleGrid cols={2}>
+              <TextInput
+                radius="md"
+                label="Product Name"
+                placeholder="e.g. Dining Table"
+                value={productName}
+                maxLength={150}
+                onChange={(e) =>
+                  setProductName(e.currentTarget.value)
+                }
+              />
 
-        {product ? (
-          <ProductResourceRequirementsSection
-            productId={product.id}
-          />
-        ) : (
-          <Text size="xs" c="dimmed" ta="center" mt="xs">
-            Save the product first to add resource
-            requirements.
-          </Text>
-        )}
+              <NumberInput
+                radius="md"
+                label="Selling Price"
+                value={sellingPrice}
+                prefix="₱"
+                thousandSeparator=","
+                onChange={(value) =>
+                  setSellingPrice(Number(value))
+                }
+              />
+
+              <NumberInput
+                radius="md"
+                label="Labor Cost"
+                description="Per-unit labor cost - not derived from labor hours."
+                value={laborCost}
+                min={0}
+                prefix="₱"
+                thousandSeparator=","
+                onChange={(value) =>
+                  setLaborCost(Number(value))
+                }
+              />
+            </SimpleGrid>
+
+            {error && (
+              <Alert
+                color="red"
+                icon={<AlertCircle size={18} />}
+              >
+                {error}
+              </Alert>
+            )}
+
+            {product ? (
+              <ProductResourceRequirementsSection
+                productId={product.id}
+              />
+            ) : (
+              <Text size="xs" c="dimmed" ta="center" mt="xs">
+                Save the product first to add resource
+                requirements.
+              </Text>
+            )}
+          </Stack>
+        </Modal.Body>
 
         <Group
-            justify="flex-end"
-            mt="md"
+          justify="flex-end"
+          p="md"
+          style={{
+            flexShrink: 0,
+            borderTop: '1px solid var(--mantine-color-default-border)',
+          }}
         >
-            <Button
-                variant="default"
-                onClick={onClose}
-                disabled={isSubmitting}
-            >
-                Cancel
-            </Button>
+          <Button
+            variant="default"
+            onClick={onClose}
+            disabled={isSubmitting}
+          >
+            Cancel
+          </Button>
 
-            <Button
-                onClick={handleSave}
-                disabled={!isValid}
-                loading={isSubmitting}
-            >
-                {product
-                    ? 'Save Changes'
-                    : 'Add Product'}
-            </Button>
+          <Button
+            onClick={handleSave}
+            disabled={!isValid}
+            loading={isSubmitting}
+          >
+            {product
+              ? 'Save Changes'
+              : 'Add Product'}
+          </Button>
         </Group>
-        </Stack>
-    </Modal>
+      </Modal.Content>
+    </Modal.Root>
   )
 }
 

@@ -68,7 +68,10 @@ const DeleteResourceModal = ({
             variant="light"
             icon={<AlertTriangle size={18} />}
         >
-            This action cannot be undone.
+            This resource will no longer be available for new
+            products or production cycles. Existing records that
+            reference it are kept, and re-adding the same name later
+            restores it.
         </Alert>
 
         <Card
