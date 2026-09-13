@@ -20,9 +20,15 @@
    other table using it is affected since this class is only applied
    here. Sticks it to the right edge of this table's own horizontal
    ScrollArea (the nearest scrolling ancestor), so it stays visible
-   while the dynamic resource columns scroll underneath it. */
+   while the dynamic resource columns scroll underneath it.
+
+   :not(:only-child) excludes AppTable's empty-state row (a single
+   <Td colSpan={columns.length}> is simultaneously :first-child AND
+   :last-child of its row) - without it, that full-width message cell
+   would incorrectly get pinned to this column's fixed width/position
+   instead of spanning the table normally. */
 .stickyActionsScrollArea :global(table) thead th:last-child,
-.stickyActionsScrollArea :global(table) tbody td:last-child {
+.stickyActionsScrollArea :global(table) tbody td:last-child:not(:only-child) {
   position: sticky;
   right: 0;
   z-index: 2;
@@ -46,4 +52,45 @@
 
 .stickyActionsScrollArea :global(table) thead th:last-child {
   z-index: 3;
+}
+
+/* Furniture (product name) is always the first column (see
+   ProductTable.tsx's columns array) - same :first-child scoping
+   approach as Actions above, mirrored to the left edge, so the row
+   stays identifiable while the resource/cost columns scroll
+   underneath it. Same :not(:only-child) guard for the same reason. */
+.stickyActionsScrollArea :global(table) thead th:first-child,
+.stickyActionsScrollArea :global(table) tbody td:first-child:not(:only-child) {
+  position: sticky;
+  left: 0;
+  z-index: 2;
+
+  /* Wide enough for the longest current product name ("Dining Table
+     (8 seater)") plus its sort icon with room to spare, without a
+     max-width cap (unlike Actions' fixed icon-only footprint) - an
+     unusually long future product name can still grow the column
+     instead of clipping. */
+  width: 200px;
+  min-width: 200px;
+
+  background: var(--mantine-color-body);
+
+  box-shadow: 4px 0 6px -4px rgba(0, 0, 0, 0.25);
+}
+
+.stickyActionsScrollArea :global(table) thead th:first-child {
+  z-index: 3;
+}
+
+/* A solid background (above) is required so scrolled-under columns
+   never show through the frozen cell, but it would otherwise flatten
+   this column's alternating stripe to a single flat color, unlike
+   every other column. Mantine's own `striped` implementation colors
+   the <tr> itself using this exact --table-striped-color variable
+   (inherited here from the same <table>, see node_modules/@mantine/
+   core/styles.css) - reapplying it per-cell on odd rows keeps the
+   sticky Furniture column's stripe pattern visually identical to the
+   rest of the row instead of opting out of it. */
+.stickyActionsScrollArea :global(table) tbody tr:nth-of-type(odd) td:first-child:not(:only-child) {
+  background: var(--table-striped-color, var(--mantine-color-body));
 }
