@@ -7,6 +7,7 @@ import {
 import {
   createResource,
   deleteResource,
+  fetchAllResourcesIncludingInactive,
   fetchResources,
   updateResource,
 } from '../api/resourceApi'
@@ -36,6 +37,21 @@ const useResources = () => {
     queryKey: RESOURCES_QUERY_KEY,
     queryFn: fetchResources,
   })
+
+  // Powers the Add Resource form's "reactivate an existing inactive
+  // resource" dropdown (AddResourceModal.tsx) - deliberately the same
+  // ['resources-all'] query already invalidated by every mutation
+  // below (see invalidateResourcesCatalog), so a create/update/delete
+  // here keeps this list correct without a second, separate
+  // invalidation call.
+  const allResourcesQuery = useQuery({
+    queryKey: ['resources-all'],
+    queryFn: fetchAllResourcesIncludingInactive,
+  })
+
+  const inactiveResources = (allResourcesQuery.data ?? []).filter(
+    (resource) => !resource.is_active,
+  )
 
   // Canonical "latest production cycle" resolution (created_at DESC,
   // id DESC), shared with Production Allocation and Resource
@@ -180,6 +196,7 @@ const useResources = () => {
       resourcesQuery.data ?? [],
       cycleResourcesByResourceId,
     ),
+    inactiveResources,
     isLoading:
       resourcesQuery.isLoading || cycleResourcesQuery.isLoading,
     isError: resourcesQuery.isError,
