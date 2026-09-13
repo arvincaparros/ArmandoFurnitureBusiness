@@ -6,6 +6,7 @@ import {
   Group,
   Modal,
   NumberInput,
+  SegmentedControl,
   Select,
   SimpleGrid,
   Stack,
@@ -19,6 +20,7 @@ import { getApiErrorMessage } from '../../../api/apiError'
 import type { Resource } from '../types'
 import type {
   ResourceCreateRequest,
+  ResourceResponse,
   ResourceUpdateRequest,
 } from '../api/resourceTypes'
 
@@ -35,6 +37,13 @@ interface AddResourceModalProps {
     pricing: ResourcePricing | null,
   ) => Promise<void>
   resource?: Resource | null
+  // Soft-deleted (is_active = false) resources - candidates for the
+  // "Reactivate Existing" mode below. Sourced from the database
+  // (['resources-all'], see useResources.ts) - never hardcoded.
+  // Already-active resources are never included, since re-adding one
+  // would just hit the backend's own duplicate-name rejection - see
+  // resourceApi.ts::fetchAllResourcesIncludingInactive.
+  inactiveResources: ResourceResponse[]
   // Availability/price (CycleResource) can only be saved once a
   // production cycle exists - see useResources.ts. When false, the
   // fields below are disabled rather than left to fail on submit.
@@ -62,13 +71,21 @@ const resourceCategories = [
   { value: 'machine', label: 'Machine' },
 ]
 
+type NameMode = 'new' | 'reactivate'
+
 const AddResourceModal = ({
   opened,
   onClose,
   onSave,
   resource,
+  inactiveResources,
   hasCycle,
 }: AddResourceModalProps) => {
+  const [nameMode, setNameMode] = useState<NameMode>('new')
+  const [selectedInactiveId, setSelectedInactiveId] = useState<
+    string | null
+  >(null)
+
   const [name, setName] = useState('')
   const [resourceType, setResourceType] = useState('material')
   const [unit, setUnit] = useState('board ft')
@@ -77,6 +94,10 @@ const AddResourceModal = ({
 
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // Editing an existing resource is a rename/update of that specific
+  // row - the reactivate-existing picker only applies when adding.
+  const isAddMode = !resource
 
   useEffect(() => {
     if (resource) {
@@ -93,13 +114,44 @@ const AddResourceModal = ({
       setUnitPrice(0)
     }
 
+    setNameMode('new')
+    setSelectedInactiveId(null)
     setError(null)
   }, [resource, opened])
+
+  const handleSelectInactive = (value: string | null) => {
+    setSelectedInactiveId(value)
+
+    const selected = inactiveResources.find(
+      (candidate) => String(candidate.id) === value,
+    )
+
+    if (selected) {
+      setName(selected.name)
+      setResourceType(selected.resource_type)
+      setUnit(selected.unit)
+    }
+  }
+
+  const handleNameModeChange = (value: string) => {
+    const mode = value as NameMode
+    setNameMode(mode)
+    setSelectedInactiveId(null)
+
+    if (mode === 'new') {
+      setName('')
+      setResourceType('material')
+      setUnit('board ft')
+    }
+  }
+
+  const isReactivating = isAddMode && nameMode === 'reactivate'
 
   const isValid =
     name.trim() !== '' &&
     resourceType.trim() !== '' &&
     unit.trim() !== '' &&
+    (!isReactivating || selectedInactiveId !== null) &&
     (!hasCycle || (availableQuantity > 0 && unitPrice > 0))
 
   const handleSave = async () => {
@@ -136,6 +188,11 @@ const AddResourceModal = ({
     }
   }
 
+  const inactiveOptions = inactiveResources.map((candidate) => ({
+    value: String(candidate.id),
+    label: candidate.name,
+  }))
+
   return (
     <Modal
       opened={opened}
@@ -148,15 +205,46 @@ const AddResourceModal = ({
       centered
     >
       <Stack gap="md">
-        <TextInput
-          label="Name"
-          placeholder="e.g. Wood"
-          value={name}
-          maxLength={100}
-          onChange={(e) =>
-            setName(e.currentTarget.value)
-          }
-        />
+        {isAddMode && inactiveResources.length > 0 && (
+          <SegmentedControl
+            fullWidth
+            value={nameMode}
+            onChange={handleNameModeChange}
+            data={[
+              { value: 'new', label: 'New Resource' },
+              { value: 'reactivate', label: 'Reactivate Existing' },
+            ]}
+          />
+        )}
+
+        {isReactivating ? (
+          <Select
+            label="Name"
+            placeholder="Select a previously deactivated resource"
+            data={inactiveOptions}
+            value={selectedInactiveId}
+            onChange={handleSelectInactive}
+            searchable
+          />
+        ) : (
+          <TextInput
+            label="Name"
+            placeholder="e.g. Wood"
+            value={name}
+            maxLength={100}
+            onChange={(e) =>
+              setName(e.currentTarget.value)
+            }
+          />
+        )}
+
+        {isReactivating && selectedInactiveId && (
+          <Alert color="blue" icon={<AlertCircle size={18} />}>
+            This will reactivate the existing resource record (same
+            ID, same product requirements) instead of creating a new
+            one.
+          </Alert>
+        )}
 
         <Select
           label="Category"
@@ -236,7 +324,9 @@ const AddResourceModal = ({
           >
             {resource
               ? 'Save Changes'
-              : 'Add Resource'}
+              : isReactivating
+                ? 'Reactivate Resource'
+                : 'Add Resource'}
           </Button>
         </Group>
       </Stack>

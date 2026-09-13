@@ -49,3 +49,25 @@ export async function updateResource(
 export async function deleteResource(id: number): Promise<void> {
   await apiClient.delete(`/api/resources/${id}`)
 }
+
+// Same GET /api/resources?include_inactive=true endpoint and
+// 'resources-all' query key already used by product-data-management/
+// api/productResourceApi.ts's fetchAllResourcesForPicker() - a local
+// copy (not a cross-module import, matching this app's existing
+// per-module convention - see that file's own comment), but sharing
+// the identical query key so a fetch made by either module's page
+// satisfies both, the same cache-sharing pattern already used for
+// 'cycle-resources'. Used by the Add Resource form's "reactivate an
+// existing inactive resource" dropdown (see AddResourceModal.tsx) -
+// filtering to the inactive subset happens where it's consumed, not
+// here, so this stays a plain mirror of the backend response.
+export async function fetchAllResourcesIncludingInactive(): Promise<
+  ResourceResponse[]
+> {
+  const response = await apiClient.get<ResourceResponse[]>(
+    '/api/resources',
+    { params: { include_inactive: true } },
+  )
+
+  return response.data
+}

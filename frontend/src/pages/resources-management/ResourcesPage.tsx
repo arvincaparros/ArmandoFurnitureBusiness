@@ -36,6 +36,7 @@ const ResourcesPage = () => {
 
   const {
     resources,
+    inactiveResources,
     isLoading,
     isError,
     hasCycle,
@@ -193,6 +194,7 @@ const ResourcesPage = () => {
       <AddResourceModal
         opened={opened}
         resource={selectedResource}
+        inactiveResources={inactiveResources}
         hasCycle={hasCycle}
         onClose={() => {
           setSelectedResource(null)
