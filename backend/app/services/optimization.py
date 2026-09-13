@@ -691,6 +691,20 @@ def calculate_optimized_resource_usage(
     """
     Calculate resource usage based on the optimized
     production quantities.
+
+    A CycleResource row whose resource_id is no longer referenced by
+    any current ProductResourceRequirement (e.g. a resource that was
+    superseded/renamed and had its requirements remapped onto a
+    canonical row elsewhere - see migration 7f3cba51324d - or any
+    other stray/orphaned CycleResource row) is skipped entirely here,
+    rather than reported as a fabricated "Unknown"/"" entry with
+    required_quantity 0. This is display-only: such a row already
+    contributes a mathematically trivial `0 <= available_quantity`
+    constraint in add_resource_constraints() regardless (empty
+    resource_requirements -> zero consumption), so it never affected
+    the ILP's chosen quantities, cost, or profit - only this reporting
+    step is changed. Nothing is deleted or written back to the
+    database; the CycleResource row itself is untouched.
     """
 
     allocation_quantities = {
@@ -712,6 +726,9 @@ def calculate_optimized_resource_usage(
 
     for cycle_resource in cycle_resources:
         resource_id = cycle_resource.resource_id
+
+        if resource_id not in resource_names:
+            continue
 
         required_quantity = Decimal("0")
 
@@ -740,10 +757,7 @@ def calculate_optimized_resource_usage(
         usage.append(
             {
                 "resource_id": resource_id,
-                "resource_name": resource_names.get(
-                    resource_id,
-                    "Unknown",
-                ),
+                "resource_name": resource_names[resource_id],
                 "unit": resource_units.get(
                     resource_id,
                     "",
