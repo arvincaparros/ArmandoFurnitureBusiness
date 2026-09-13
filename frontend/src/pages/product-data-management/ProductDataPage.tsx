@@ -39,7 +39,7 @@ const ProductDataPage = () => {
 
   const {
     products,
-    activeResources,
+    displayResources,
     isLoading,
     isError,
     createProduct,
@@ -130,10 +130,11 @@ const ProductDataPage = () => {
   }
 
   // Same product/resource column model ProductTable.tsx renders from
-  // (activeResources decides which resource columns exist at all,
+  // (displayResources decides which resource columns exist at all -
+  // active resources plus inactive-but-still-required ones,
   // resourceQuantities is looked up by resource id) - a dynamic
   // resource gaining/losing a column here is a direct consequence of
-  // the same activeResources array, never a second, hardcoded list.
+  // the same displayResources array, never a second, hardcoded list.
   // Cost figures (materialCost/laborCost/machineCost/totalCost/
   // profit) are read straight from each Product - already computed
   // by productAdapter.ts::calculateCosts, never recomputed here.
@@ -146,16 +147,21 @@ const ProductDataPage = () => {
         Furniture: product.productName,
       }
 
-      for (const resource of activeResources) {
+      for (const resource of displayResources) {
         const quantity =
           product.resourceQuantities[resource.id]
+
+        const columnLabel = resource.is_active
+          ? `${resource.name} (${resource.unit})`
+          : `${resource.name} (${resource.unit}) [Unavailable]`
 
         // Undefined means genuinely no requirement for this
         // resource on this product (see types.ts) - left blank,
         // never fabricated as 0, matching resourceCell()'s own
-        // "—" convention in ProductTable.tsx.
-        row[`${resource.name} (${resource.unit})`] =
-          quantity === undefined ? '' : quantity
+        // "—" convention in ProductTable.tsx. An inactive-but-
+        // required resource still gets its real quantity exported,
+        // just under an "[Unavailable]"-suffixed column label.
+        row[columnLabel] = quantity === undefined ? '' : quantity
       }
 
       row['Selling Price'] = product.sellingPrice
@@ -239,7 +245,7 @@ const ProductDataPage = () => {
           <div className={styles.tableArea}>
             <ProductTable
               products={sortedProducts}
-              activeResources={activeResources}
+              displayResources={displayResources}
               onEdit={handleEditProduct}
               onDelete={handleDeleteProduct}
               isLoading={isLoading}

@@ -13,11 +13,15 @@ import styles from './ProductTable.module.css'
 
 interface ProductTableProps {
   products: Product[]
-  // Currently-active resource catalog (['resources-all'], filtered)
-  // - this, not any hardcoded list, is what decides which resource
-  // columns exist at all. A resource gaining/losing a column is a
-  // direct consequence of it entering/leaving this array.
-  activeResources: ResourceOption[]
+  // Resource catalog (['resources-all'], filtered) that decides which
+  // resource columns exist at all: active resources PLUS any resource
+  // that's inactive but still referenced by an existing product
+  // requirement (see useProducts.ts::displayResources). A resource
+  // gaining/losing a column is a direct consequence of entering/
+  // leaving this array - an inactive one keeps its column (marked
+  // unavailable, see resourceCell) for as long as any product still
+  // requires it.
+  displayResources: ResourceOption[]
   onEdit: (product: Product) => void
   onDelete: (product: Product) => void
 
@@ -106,25 +110,50 @@ const profitCell = (value: number | null) => {
 const NO_REQUIREMENT_RECORDED =
   'No requirement recorded for this resource on this product.'
 
-// Resource columns are dynamic now (see below) - every column that
-// exists corresponds to a real, currently-active resource by
-// construction, so the only reason a cell is empty is that this
-// specific product has no requirement for it. Real requirement data
-// comes from GET /api/products/{id}/resources (the same endpoint and
-// resolveRequirements() the Edit Product modal uses) - undefined here
-// means genuinely no requirement, never a fabricated 0.
-const resourceCell = (value: number | undefined) =>
-  value === undefined ? (
-    <Tooltip label={NO_REQUIREMENT_RECORDED}>
-      <span>—</span>
-    </Tooltip>
-  ) : (
-    value
-  )
+const RESOURCE_UNAVAILABLE_MESSAGE =
+  'Resource unavailable - this resource has been deactivated in Resources Management. The requirement and quantity are preserved and will resume automatically if the resource is reactivated.'
+
+// Resource columns are dynamic (see resourceColumns below) - a column
+// exists for every currently-active resource AND every inactive
+// resource still referenced by at least one product's requirement.
+// Real requirement data comes from GET /api/products/{id}/resources
+// (the same endpoint and resolveRequirements() the Edit Product modal
+// uses) - undefined here means genuinely no requirement, never a
+// fabricated 0. A defined value for an inactive resource is preserved
+// as-is and flagged unavailable, never dropped.
+const resourceCell = (
+  value: number | undefined,
+  isResourceActive: boolean,
+) => {
+  if (value === undefined) {
+    return (
+      <Tooltip label={NO_REQUIREMENT_RECORDED}>
+        <span>—</span>
+      </Tooltip>
+    )
+  }
+
+  if (!isResourceActive) {
+    return (
+      <Tooltip label={RESOURCE_UNAVAILABLE_MESSAGE}>
+        <Badge
+          color="red"
+          variant="light"
+          size="sm"
+          style={{ flexShrink: 0, whiteSpace: 'nowrap' }}
+        >
+          {value} · Unavailable
+        </Badge>
+      </Tooltip>
+    )
+  }
+
+  return value
+}
 
 const ProductTable = ({
   products,
-  activeResources,
+  displayResources,
   onEdit,
   onDelete,
   isLoading,
@@ -133,20 +162,26 @@ const ProductTable = ({
   reverse,
   onSort,
 }: ProductTableProps) => {
-  // One column per currently-active resource, matched to each
+  // One column per displayed resource (active, or inactive-but-still-
+  // required - see the displayResources prop doc), matched to each
   // product's requirement by resource id (the canonical relationship
   // - never by resource name/string). No hardcoded resource list of
-  // any kind: adding, renaming, or deactivating a resource changes
-  // this array on the next fetch of the already-shared
-  // ['resources-all'] query, which is exactly what regenerates these
-  // columns without any code change or page refresh.
-  const resourceColumns: Column<Product>[] = activeResources.map(
+  // any kind: adding, renaming, deactivating, or reactivating a
+  // resource changes this array on the next fetch of the already-
+  // shared ['resources-all'] query, which is exactly what regenerates
+  // these columns without any code change or page refresh.
+  const resourceColumns: Column<Product>[] = displayResources.map(
     (resource) => ({
       accessor: `resource-${resource.id}`,
-      title: `${resource.name} (${resource.unit})`,
+      title: resource.is_active
+        ? `${resource.name} (${resource.unit})`
+        : `${resource.name} (${resource.unit}) — Unavailable`,
       textAlign: 'center',
       render: (row) =>
-        resourceCell(row.resourceQuantities[resource.id]),
+        resourceCell(
+          row.resourceQuantities[resource.id],
+          resource.is_active,
+        ),
     }),
   )
 

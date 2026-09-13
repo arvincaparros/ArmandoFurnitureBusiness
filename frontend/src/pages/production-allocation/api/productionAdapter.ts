@@ -20,6 +20,21 @@ function parseDecimal(value: string | null | undefined): number {
   return Number.isFinite(parsed) ? parsed : 0
 }
 
+// Distinct from parseDecimal above: null must stay null (Revision #2's
+// "unavailable, never a silent 0" convention for cost/profit), not get
+// coerced to 0 like a genuinely-absent/optional value would.
+function parseNullableDecimal(
+  value: string | null | undefined,
+): number | null {
+  if (value === null || value === undefined) {
+    return null
+  }
+
+  const parsed = Number(value)
+
+  return Number.isFinite(parsed) ? parsed : null
+}
+
 function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString()
 }
@@ -46,8 +61,16 @@ interface ProductionResult {
 
 // Fresh result straight from POST /{cycle_id}/optimize. This shape
 // already includes product_name and total_revenue/total_cost
-// directly - no product lookup or revenue derivation needed here,
-// unlike fromHistoryRun below. Start/end/duration aren't part of
+// directly - no product lookup needed for the aggregate summary,
+// unlike fromHistoryRun below. Per-row Total Revenue (Revision #2)
+// still needs a selling_price, which OptimizationAllocation doesn't
+// carry - hence the `products` join here, same pattern fromHistoryRun
+// already used. Per-row Total Cost is derived as revenue - the
+// allocation's own total_profit (already the exact per-product value
+// the ILP's objective function used - see calculate_unit_profit),
+// never a second, independent cost calculation - so it's guaranteed
+// to sum back to this response's own total_cost/total_revenue cards
+// with no reconciliation risk. Start/end/duration aren't part of
 // this response at all (verified - OptimizationResponse has no such
 // fields), so they're measured client-side around the request; see
 // the integration report for why that's a stated frontend
@@ -55,13 +78,31 @@ interface ProductionResult {
 export function fromOptimizeResponse(
   data: OptimizationResponse,
   timing: { startedAt: Date; completedAt: Date },
+  products: ProductSummary[] | undefined,
 ): ProductionResult {
+  const productsById = new Map(
+    (products ?? []).map((product) => [product.id, product]),
+  )
+
   const plans: ProductionPlan[] = data.allocations.map(
-    (allocation) => ({
-      id: allocation.product_id,
-      productName: allocation.product_name,
-      quantity: allocation.quantity,
-    }),
+    (allocation) => {
+      const sellingPrice = parseDecimal(
+        productsById.get(allocation.product_id)?.selling_price,
+      )
+
+      const totalRevenue = allocation.quantity * sellingPrice
+      const totalProfit = parseDecimal(allocation.total_profit)
+      const totalCost = totalRevenue - totalProfit
+
+      return {
+        id: allocation.product_id,
+        productName: allocation.product_name,
+        quantity: allocation.quantity,
+        totalRevenue,
+        totalCost,
+        totalProfit,
+      }
+    },
   )
 
   const durationMs =
@@ -98,23 +139,39 @@ export function fromHistoryRun(
     (products ?? []).map((product) => [product.id, product]),
   )
 
-  const plans: ProductionPlan[] = run.results.map((result) => ({
-    id: result.product_id,
-    productName:
-      productsById.get(result.product_id)?.name ??
-      `Product #${result.product_id}`,
-    quantity: Math.round(parseDecimal(result.recommended_quantity)),
-  }))
+  const plans: ProductionPlan[] = run.results.map((result) => {
+    const quantity = Math.round(
+      parseDecimal(result.recommended_quantity),
+    )
 
-  const totalRevenue = run.results.reduce((sum, result) => {
-    const price = parseDecimal(
+    const sellingPrice = parseDecimal(
       productsById.get(result.product_id)?.selling_price,
     )
 
-    return (
-      sum + parseDecimal(result.recommended_quantity) * price
-    )
-  }, 0)
+    const totalRevenue = quantity * sellingPrice
+    const totalProfit = parseDecimal(result.total_profit)
+    const totalCost = totalRevenue - totalProfit
+
+    return {
+      id: result.product_id,
+      productName:
+        productsById.get(result.product_id)?.name ??
+        `Product #${result.product_id}`,
+      quantity,
+      totalRevenue,
+      totalCost,
+      totalProfit,
+    }
+  })
+
+  // Summed from the same per-row totalRevenue just computed above
+  // (not a second, independent reduce over run.results) - guarantees
+  // this reconciles with the row breakdown by construction rather
+  // than by coincidence.
+  const totalRevenue = plans.reduce(
+    (sum, plan) => sum + plan.totalRevenue,
+    0,
+  )
 
   const totalProfit = parseDecimal(run.total_profit)
   const totalCost = totalRevenue - totalProfit
@@ -140,7 +197,15 @@ export function fromHistoryRun(
 // The actual committed ProductionAllocation records, resolved with
 // product names via a client-side join against /api/products - same
 // join pattern as fromHistoryRun above, since this endpoint also
-// only returns a bare product_id.
+// only returns a bare product_id for the name. total_revenue/
+// total_cost/total_profit (Revision #2) come straight from the
+// backend's own get_allocations_with_financials computation - NOT
+// re-derived here - since that's the one place with access to this
+// cycle's CycleResource prices and each product's full requirement
+// list (including inactive/unpriced ones), which the frontend doesn't
+// otherwise fetch for this page. total_cost/total_profit are passed
+// through as null, never coerced to 0, when the backend reports a
+// required resource as currently unavailable.
 export function fromAllocations(
   allocations: ProductionAllocationResponse[],
   products: ProductSummary[] | undefined,
@@ -155,5 +220,8 @@ export function fromAllocations(
       productsById.get(allocation.product_id)?.name ??
       `Product #${allocation.product_id}`,
     quantity: Math.round(parseDecimal(allocation.quantity)),
+    totalRevenue: parseDecimal(allocation.total_revenue),
+    totalCost: parseNullableDecimal(allocation.total_cost),
+    totalProfit: parseNullableDecimal(allocation.total_profit),
   }))
 }

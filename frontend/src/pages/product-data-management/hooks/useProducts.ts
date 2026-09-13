@@ -79,10 +79,11 @@ const useProducts = () => {
   const resources = resourcesQuery.data ?? []
 
   // Same catalog as `resources` above (['resources-all'], no second
-  // query) - just the active subset, which is what determines which
-  // resource columns the Products table renders at all. Deactivating
-  // a resource removes it from here, so its column disappears next
-  // time this list is fetched fresh.
+  // query) - just the active subset. Used ONLY for cost-rate lookup
+  // (buildResourceCostRates below) and the "new requirement" resource
+  // picker, both of which must stay strictly active-only. The
+  // Products table's actual column set is `displayResources` further
+  // down, which also includes inactive-but-still-required resources.
   const activeResources = resources.filter(
     (resource) => resource.is_active,
   )
@@ -124,6 +125,27 @@ const useProducts = () => {
         resources,
       ),
     ]),
+  )
+
+  // Column/export catalog: active resources PLUS any resource that's
+  // inactive but still referenced by at least one existing product's
+  // requirement (Revision #1 requirement - deactivating a resource must
+  // not hide it from a product that still requires it). Deliberately
+  // NOT the same list as `activeResources` above, which stays
+  // strictly-active for cost-rate lookup and the "new requirement"
+  // picker. A resource that's inactive and unreferenced by any product
+  // still doesn't get a column.
+  const referencedResourceIds = new Set<number>()
+
+  for (const requirements of requirementsByProductId.values()) {
+    for (const requirement of requirements) {
+      referencedResourceIds.add(requirement.resourceId)
+    }
+  }
+
+  const displayResources = resources.filter(
+    (resource) =>
+      resource.is_active || referencedResourceIds.has(resource.id),
   )
 
   // A per-product requirements fetch failing degrades that one
@@ -187,10 +209,10 @@ const useProducts = () => {
     products: toUiProducts(
       products,
       requirementsByProductId,
-      activeResources,
+      displayResources,
       costRates,
     ),
-    activeResources,
+    displayResources,
     // Resource columns wait on the resource catalog + per-product
     // requirement fetches too, so rows don't render with a
     // premature/incomplete set of dashes before those resolve.
