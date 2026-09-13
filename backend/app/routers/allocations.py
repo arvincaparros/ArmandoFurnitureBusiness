@@ -4,6 +4,7 @@ from sqlalchemy.orm import Session
 from app.database.connection import get_db
 from app.schemas.allocation import (
     ProductionAllocationCreate,
+    ProductionAllocationFinancialsResponse,
     ProductionAllocationResponse,
     ProductionAllocationUpdate,
 )
@@ -11,7 +12,7 @@ from app.services.allocation import (
     create_allocation,
     delete_allocation,
     get_allocation,
-    get_allocations,
+    get_allocations_with_financials,
     update_allocation,
 )
 from app.services.auth import get_current_user
@@ -25,13 +26,13 @@ router = APIRouter(
 
 @router.get(
     "",
-    response_model=list[ProductionAllocationResponse],
+    response_model=list[ProductionAllocationFinancialsResponse],
 )
 def list_allocations(
     cycle_id: int,
     db: Session = Depends(get_db),
 ):
-    return get_allocations(db, cycle_id)
+    return get_allocations_with_financials(db, cycle_id)
 
 
 @router.post(

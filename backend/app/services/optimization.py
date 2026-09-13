@@ -116,8 +116,14 @@ def create_decision_variables(
     products,
 ) -> dict[int, pulp.LpVariable]:
     """
-    Create one non-negative integer decision variable
-    for each active product.
+    Create one integer decision variable for each active product,
+    floored at that product's own minimum_demand (Revision #3) rather
+    than a flat 0. Read directly off each product's own ORM row -
+    never a positional/array mapping (see the Revision #3
+    investigation report: Product.id ordering is incidental, not a
+    business contract). `or 0` guards only an unflushed in-memory
+    object with no default applied yet; the DB column itself is NOT
+    NULL DEFAULT 0.
     """
 
     variables = {}
@@ -125,11 +131,233 @@ def create_decision_variables(
     for product in products:
         variables[product.id] = pulp.LpVariable(
             f"product_{product.id}",
-            lowBound=0,
+            lowBound=float(product.minimum_demand or 0),
             cat="Integer",
         )
 
     return variables
+
+
+def validate_minimum_demand_capacity(
+    products,
+    cycle_resources,
+    requirements,
+) -> None:
+    """
+    Pre-solve check (Revision #3): confirms the exact minimum-demand
+    vector alone (every product held at its own minimum, everything
+    else at 0) fits inside this cycle's resource capacities. That
+    single point is a valid feasibility witness for "can every
+    minimum be satisfied simultaneously" - resource consumption is
+    strictly additive/linear, so if that point already violates a
+    resource cap, no point honoring every minimum can exist; if it
+    doesn't, that same point is itself feasible. Raised before
+    create_decision_variables/problem.solve() ever run, listing every
+    short resource - never a single generic "Infeasible" status from
+    the solver for this specific, common cause. Never touches the
+    objective or calculate_unit_profit.
+    """
+
+    minimum_by_product_id = {
+        product.id: product.minimum_demand
+        for product in products
+    }
+
+    required_by_resource: dict[int, Decimal] = {}
+
+    for requirement, _resource in requirements:
+        minimum = minimum_by_product_id.get(
+            requirement.product_id,
+            Decimal("0"),
+        )
+
+        if minimum <= 0:
+            continue
+
+        required_by_resource[requirement.resource_id] = (
+            required_by_resource.get(
+                requirement.resource_id,
+                Decimal("0"),
+            )
+            + requirement.quantity_required * minimum
+        )
+
+    shortages = []
+
+    for cycle_resource in cycle_resources:
+        required = required_by_resource.get(
+            cycle_resource.resource_id,
+            Decimal("0"),
+        )
+
+        if required > cycle_resource.available_quantity:
+            resource = cycle_resource.resource
+
+            shortages.append(
+                f"{resource.name} (needs {required} {resource.unit}, "
+                f"only {cycle_resource.available_quantity} "
+                f"{resource.unit} available)"
+            )
+
+    if shortages:
+        raise ValueError(
+            "Unable to generate a feasible production plan: minimum "
+            "demand requires more than is available this cycle for "
+            + ", ".join(shortages)
+            + "."
+        )
+
+
+def validate_minimum_demand_forecast(
+    products,
+    forecast: dict[int, Decimal] | None,
+) -> None:
+    """
+    Pre-solve check (Revision #3): `forecast` here is already the
+    router's positive-forecast-only dict (see production.py::
+    optimize_production) - exactly the set of products that get a
+    real x_i <= forecast_i ceiling in add_forecast_constraints(). A
+    product with no entry here has no ceiling at all today (existing,
+    unchanged behavior) and can never conflict with its minimum.
+    """
+
+    if not forecast:
+        return
+
+    conflicts = []
+
+    for product in products:
+        if product.minimum_demand <= 0:
+            continue
+
+        ceiling = forecast.get(product.id)
+
+        if ceiling is not None and product.minimum_demand > ceiling:
+            conflicts.append(
+                f"{product.name} (minimum demand "
+                f"{product.minimum_demand}, forecast ceiling "
+                f"{ceiling})"
+            )
+
+    if conflicts:
+        raise ValueError(
+            "Cannot generate a production plan: minimum demand "
+            "exceeds the current forecast ceiling for "
+            + ", ".join(conflicts)
+            + "."
+        )
+
+
+def validate_minimum_demand_resource_availability(
+    db: Session,
+    cycle_id: int,
+) -> None:
+    """
+    Pre-solve check (Revision #3): for every product this cycle would
+    otherwise consider (same "has at least one requirement on a
+    resource priced this cycle" rule get_optimization_data() itself
+    uses to build its product list - so an unrelated product with no
+    connection whatsoever to this cycle's resource universe, e.g. a
+    completely different test fixture's products/resources, is never
+    pulled in) that's ACTIVE with minimum_demand > 0, its COMPLETE
+    ProductResourceRequirement list is re-queried directly here -
+    deliberately NOT the `requirements` collection
+    get_optimization_data() builds, which silently drops any single
+    requirement whose resource lacks a CycleResource row this cycle,
+    and never checks Resource.is_active at all (so a resource that's
+    inactive but still has a leftover CycleResource row - see
+    Revision #1/resource_utilization.py's own note on this - would
+    otherwise be silently treated as valid). Every non-labor
+    requirement's resource must be both active and priced this cycle;
+    Labor is exempt from pricing here exactly as calculate_unit_profit
+    treats it (capacity-constrained, but costed from
+    Product.labor_cost, never from a CycleResource rate). Raises
+    before the solver runs - never forces production against a
+    resource that's unavailable, and never treats it as free. Does
+    not read or change calculate_unit_profit/the objective.
+    """
+
+    priced_resource_ids = {
+        cycle_resource.resource_id
+        for cycle_resource in db.scalars(
+            select(CycleResource).where(
+                CycleResource.production_cycle_id == cycle_id
+            )
+        ).all()
+    }
+
+    if not priced_resource_ids:
+        return
+
+    candidate_product_ids = {
+        requirement.product_id
+        for requirement in db.scalars(
+            select(ProductResourceRequirement).where(
+                ProductResourceRequirement.resource_id.in_(
+                    priced_resource_ids
+                )
+            )
+        ).all()
+    }
+
+    if not candidate_product_ids:
+        return
+
+    minimum_products = db.scalars(
+        select(Product).where(
+            Product.id.in_(candidate_product_ids),
+            Product.is_active.is_(True),
+            Product.minimum_demand > 0,
+        )
+    ).all()
+
+    if not minimum_products:
+        return
+
+    product_ids = [product.id for product in minimum_products]
+    products_by_id = {
+        product.id: product for product in minimum_products
+    }
+
+    requirement_rows = db.execute(
+        select(ProductResourceRequirement, Resource)
+        .join(
+            Resource,
+            Resource.id == ProductResourceRequirement.resource_id,
+        )
+        .where(
+            ProductResourceRequirement.product_id.in_(product_ids)
+        )
+    ).all()
+
+    issues = []
+
+    for requirement, resource in requirement_rows:
+        if resource.resource_type.strip().lower() == "labor":
+            continue
+
+        if resource.is_active and resource.id in priced_resource_ids:
+            continue
+
+        product = products_by_id[requirement.product_id]
+        reason = (
+            "inactive"
+            if not resource.is_active
+            else "unpriced for this cycle"
+        )
+
+        issues.append(
+            f"{product.name} has a minimum demand of "
+            f"{product.minimum_demand} but requires {resource.name}, "
+            f"which is currently {reason}"
+        )
+
+    if issues:
+        raise ValueError(
+            "Cannot generate a production plan: "
+            + "; ".join(issues)
+            + "."
+        )
 
 def add_resource_constraints(
     problem: pulp.LpProblem,
@@ -274,6 +502,24 @@ def solve_optimization(
     """
     Build and solve the integer linear programming model.
     """
+
+    # Step 0: Pre-solve minimum-demand validation (Revision #3) - both
+    # cheap enough to run unconditionally, and raised before any LP is
+    # even built, so a known-infeasible minimum vector never reaches
+    # the solver as an unhelpful, generic "Infeasible" status. The
+    # third minimum-demand check (resource active/priced) needs a
+    # fresh DB query and runs from the router instead, before this
+    # function is even called - see production.py::optimize_production
+    # and validate_minimum_demand_resource_availability() above.
+    validate_minimum_demand_capacity(
+        products,
+        cycle_resources,
+        requirements,
+    )
+    validate_minimum_demand_forecast(
+        products,
+        forecast,
+    )
 
     problem = pulp.LpProblem(
         f"production_optimization_{cycle_id}",

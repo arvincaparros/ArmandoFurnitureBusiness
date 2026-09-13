@@ -47,6 +47,19 @@ class Product(Base):
         default=Decimal("0"),
     )
 
+    # Revision #3: minimum production quantity the ILP must produce
+    # for this product, read directly off this row by
+    # optimization.py::create_decision_variables as each decision
+    # variable's lowBound - see migration fa69029d2755. Never mapped
+    # by array position/Product.id ordering (see the Revision #3
+    # investigation report - that ordering is incidental, not a
+    # business contract).
+    minimum_demand: Mapped[Decimal] = mapped_column(
+        Numeric(12, 4),
+        nullable=False,
+        default=Decimal("0"),
+    )
+
     is_active: Mapped[bool] = mapped_column(
         Boolean,
         nullable=False,
