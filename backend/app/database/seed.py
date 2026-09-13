@@ -80,6 +80,19 @@ def seed_database() -> None:
       different total cost) - each product's labor_cost below is
       seeded directly from the client's own per-product figure
       instead (see Product.labor_cost).
+
+    Revision #3 data-alignment audit: the resource unit prices above
+    were already correct, but the requirement quantities and Dining
+    Table (8 seater)'s labor_cost were found stale against the
+    thesis's dedicated `req.`/`Furniture cost` sheets and corrected
+    below to match exactly (NOT the older/inconsistent secondary
+    requirement table elsewhere in the same workbook). minimum_demand
+    is the finalized rounded row from the thesis `demand` sheet.
+    Sandpaper/Doorknob & Hinge availability on the seeded cycle were
+    also raised above their literal weekly figures so this default
+    development cycle is immediately feasible under its own seeded
+    minimum_demand baseline - see the comment above the CycleResource
+    block below.
     """
 
     db = SessionLocal()
@@ -108,18 +121,30 @@ def seed_database() -> None:
         # -------------------------
         # Products (client reference catalog - x1 to x11)
         # -------------------------
+        #
+        # labor_cost/selling_price are the authoritative values from the
+        # thesis `Furniture cost` main table (Revision #3 data-alignment
+        # audit - Dining Table (8 seater)'s labor_cost was the one value
+        # found wrong here: 7500 -> 10000). minimum_demand is the
+        # finalized rounded row from the thesis `demand` sheet (10-week
+        # average) - assigned by product identity/variable, exactly like
+        # every other field here, never by x1-x11 position. Also kept
+        # in sync with migration fa69029d2755's backfill: that migration
+        # handles EXISTING databases (matches by name, once, at upgrade
+        # time), this seed handles NEWLY-CREATED development data - both
+        # are needed, neither replaces the other.
 
-        dining_table_4 = Product(name="Dining Table (4 seater)", selling_price=Decimal("18000.00"), labor_cost=Decimal("5500.00"))
-        dining_table_6 = Product(name="Dining Table (6 seater)", selling_price=Decimal("28000.00"), labor_cost=Decimal("7000.00"))
-        dining_table_8 = Product(name="Dining Table (8 seater)", selling_price=Decimal("38000.00"), labor_cost=Decimal("7500.00"))
-        ordinary_table = Product(name="Ordinary Table", selling_price=Decimal("7000.00"), labor_cost=Decimal("1200.00"))
-        bed_frame = Product(name="Bed Frame", selling_price=Decimal("15000.00"), labor_cost=Decimal("1500.00"))
-        door_60 = Product(name="Door (60x210)", selling_price=Decimal("3800.00"), labor_cost=Decimal("500.00"))
-        door_70 = Product(name="Door (70x210)", selling_price=Decimal("3800.00"), labor_cost=Decimal("500.00"))
-        door_80 = Product(name="Door (80x210)", selling_price=Decimal("3800.00"), labor_cost=Decimal("500.00"))
-        door_90 = Product(name="Door (90x210)", selling_price=Decimal("3800.00"), labor_cost=Decimal("500.00"))
-        high_chair = Product(name="High Chair", selling_price=Decimal("3500.00"), labor_cost=Decimal("350.00"))
-        ordinary_chair = Product(name="Ordinary Chair", selling_price=Decimal("3500.00"), labor_cost=Decimal("300.00"))
+        dining_table_4 = Product(name="Dining Table (4 seater)", selling_price=Decimal("18000.00"), labor_cost=Decimal("5500.00"), minimum_demand=Decimal("1"))
+        dining_table_6 = Product(name="Dining Table (6 seater)", selling_price=Decimal("28000.00"), labor_cost=Decimal("7000.00"), minimum_demand=Decimal("1"))
+        dining_table_8 = Product(name="Dining Table (8 seater)", selling_price=Decimal("38000.00"), labor_cost=Decimal("10000.00"), minimum_demand=Decimal("0"))
+        ordinary_table = Product(name="Ordinary Table", selling_price=Decimal("7000.00"), labor_cost=Decimal("1200.00"), minimum_demand=Decimal("3"))
+        bed_frame = Product(name="Bed Frame", selling_price=Decimal("15000.00"), labor_cost=Decimal("1500.00"), minimum_demand=Decimal("2"))
+        door_60 = Product(name="Door (60x210)", selling_price=Decimal("3800.00"), labor_cost=Decimal("500.00"), minimum_demand=Decimal("5"))
+        door_70 = Product(name="Door (70x210)", selling_price=Decimal("3800.00"), labor_cost=Decimal("500.00"), minimum_demand=Decimal("5"))
+        door_80 = Product(name="Door (80x210)", selling_price=Decimal("3800.00"), labor_cost=Decimal("500.00"), minimum_demand=Decimal("4"))
+        door_90 = Product(name="Door (90x210)", selling_price=Decimal("3800.00"), labor_cost=Decimal("500.00"), minimum_demand=Decimal("4"))
+        high_chair = Product(name="High Chair", selling_price=Decimal("3500.00"), labor_cost=Decimal("350.00"), minimum_demand=Decimal("2"))
+        ordinary_chair = Product(name="Ordinary Chair", selling_price=Decimal("3500.00"), labor_cost=Decimal("300.00"), minimum_demand=Decimal("3"))
 
         db.add_all([
             dining_table_4, dining_table_6, dining_table_8, ordinary_table,
@@ -140,39 +165,43 @@ def seed_database() -> None:
                 quantity_required=Decimal(str(quantity)),
             )
 
+        # Authoritative BOM from the thesis `req.` sheet (Revision #3
+        # data-alignment audit) - the dedicated req. sheet, not the
+        # older/inconsistent secondary requirement table elsewhere in
+        # the workbook.
         requirements = [
             # Dining Table (4 seater)
-            req(dining_table_4, wood, "45.0000"),
-            req(dining_table_4, epoxy, "0.3000"),
-            req(dining_table_4, nails, "0.3000"),
-            req(dining_table_4, wood_glue, "0.3000"),
-            req(dining_table_4, sandpaper, "4.0000"),
-            req(dining_table_4, labor, "36.0000"),
-            req(dining_table_4, circular_saw, "3.0000"),
-            req(dining_table_4, table_planer, "2.0000"),
-            req(dining_table_4, hand_planer, "1.0000"),
+            req(dining_table_4, wood, "50.0000"),
+            req(dining_table_4, epoxy, "0.6000"),
+            req(dining_table_4, nails, "0.5000"),
+            req(dining_table_4, wood_glue, "0.6000"),
+            req(dining_table_4, sandpaper, "10.0000"),
+            req(dining_table_4, labor, "40.0000"),
+            req(dining_table_4, circular_saw, "15.0000"),
+            req(dining_table_4, table_planer, "10.0000"),
+            req(dining_table_4, hand_planer, "10.0000"),
 
             # Dining Table (6 seater)
-            req(dining_table_6, wood, "60.0000"),
-            req(dining_table_6, epoxy, "0.4000"),
-            req(dining_table_6, nails, "0.4000"),
-            req(dining_table_6, wood_glue, "0.4000"),
-            req(dining_table_6, sandpaper, "4.0000"),
-            req(dining_table_6, labor, "36.0000"),
-            req(dining_table_6, circular_saw, "3.0000"),
-            req(dining_table_6, table_planer, "2.0000"),
-            req(dining_table_6, hand_planer, "1.0000"),
+            req(dining_table_6, wood, "75.0000"),
+            req(dining_table_6, epoxy, "1.0000"),
+            req(dining_table_6, nails, "0.5000"),
+            req(dining_table_6, wood_glue, "1.0000"),
+            req(dining_table_6, sandpaper, "16.0000"),
+            req(dining_table_6, labor, "60.0000"),
+            req(dining_table_6, circular_saw, "20.0000"),
+            req(dining_table_6, table_planer, "15.0000"),
+            req(dining_table_6, hand_planer, "15.0000"),
 
             # Dining Table (8 seater)
-            req(dining_table_8, wood, "70.0000"),
-            req(dining_table_8, epoxy, "0.5000"),
-            req(dining_table_8, nails, "0.5000"),
-            req(dining_table_8, wood_glue, "0.5000"),
-            req(dining_table_8, sandpaper, "5.0000"),
-            req(dining_table_8, labor, "36.0000"),
-            req(dining_table_8, circular_saw, "3.0000"),
-            req(dining_table_8, table_planer, "2.0000"),
-            req(dining_table_8, hand_planer, "1.0000"),
+            req(dining_table_8, wood, "100.0000"),
+            req(dining_table_8, epoxy, "1.5000"),
+            req(dining_table_8, nails, "1.0000"),
+            req(dining_table_8, wood_glue, "1.5000"),
+            req(dining_table_8, sandpaper, "22.0000"),
+            req(dining_table_8, labor, "80.0000"),
+            req(dining_table_8, circular_saw, "30.0000"),
+            req(dining_table_8, table_planer, "20.0000"),
+            req(dining_table_8, hand_planer, "20.0000"),
 
             # Ordinary Table
             req(ordinary_table, wood, "15.0000"),
@@ -180,10 +209,10 @@ def seed_database() -> None:
             req(ordinary_table, nails, "0.2000"),
             req(ordinary_table, wood_glue, "0.2000"),
             req(ordinary_table, sandpaper, "2.0000"),
-            req(ordinary_table, labor, "8.0000"),
+            req(ordinary_table, labor, "10.0000"),
             req(ordinary_table, circular_saw, "2.0000"),
-            req(ordinary_table, table_planer, "1.0000"),
-            req(ordinary_table, hand_planer, "1.0000"),
+            req(ordinary_table, table_planer, "2.0000"),
+            req(ordinary_table, hand_planer, "2.0000"),
 
             # Bed Frame
             req(bed_frame, wood, "30.0000"),
@@ -191,22 +220,22 @@ def seed_database() -> None:
             req(bed_frame, nails, "0.4000"),
             req(bed_frame, wood_glue, "0.3000"),
             req(bed_frame, sandpaper, "4.0000"),
-            req(bed_frame, labor, "24.0000"),
-            req(bed_frame, circular_saw, "3.0000"),
-            req(bed_frame, table_planer, "2.0000"),
-            req(bed_frame, hand_planer, "1.0000"),
+            req(bed_frame, labor, "40.0000"),
+            req(bed_frame, circular_saw, "10.0000"),
+            req(bed_frame, table_planer, "10.0000"),
+            req(bed_frame, hand_planer, "10.0000"),
 
             # Door (60x210)
-            req(door_60, wood, "22.0000"),
+            req(door_60, wood, "25.0000"),
             req(door_60, epoxy, "0.2000"),
             req(door_60, nails, "0.2000"),
             req(door_60, wood_glue, "0.2000"),
             req(door_60, sandpaper, "3.0000"),
             req(door_60, doorknob, "1.0000"),
             req(door_60, labor, "8.0000"),
-            req(door_60, circular_saw, "1.0000"),
+            req(door_60, circular_saw, "2.0000"),
             req(door_60, table_planer, "1.0000"),
-            req(door_60, hand_planer, "0.5000"),
+            req(door_60, hand_planer, "3.0000"),
 
             # Door (70x210)
             req(door_70, wood, "25.0000"),
@@ -216,33 +245,33 @@ def seed_database() -> None:
             req(door_70, sandpaper, "3.0000"),
             req(door_70, doorknob, "1.0000"),
             req(door_70, labor, "8.0000"),
-            req(door_70, circular_saw, "1.0000"),
+            req(door_70, circular_saw, "2.0000"),
             req(door_70, table_planer, "1.0000"),
-            req(door_70, hand_planer, "0.5000"),
+            req(door_70, hand_planer, "3.0000"),
 
             # Door (80x210)
-            req(door_80, wood, "28.0000"),
+            req(door_80, wood, "25.0000"),
             req(door_80, epoxy, "0.2000"),
             req(door_80, nails, "0.2000"),
             req(door_80, wood_glue, "0.2000"),
             req(door_80, sandpaper, "3.0000"),
             req(door_80, doorknob, "1.0000"),
             req(door_80, labor, "8.0000"),
-            req(door_80, circular_saw, "1.0000"),
+            req(door_80, circular_saw, "2.0000"),
             req(door_80, table_planer, "1.0000"),
-            req(door_80, hand_planer, "0.5000"),
+            req(door_80, hand_planer, "3.0000"),
 
             # Door (90x210)
-            req(door_90, wood, "30.0000"),
+            req(door_90, wood, "25.0000"),
             req(door_90, epoxy, "0.2000"),
             req(door_90, nails, "0.2000"),
             req(door_90, wood_glue, "0.2000"),
             req(door_90, sandpaper, "3.0000"),
             req(door_90, doorknob, "1.0000"),
             req(door_90, labor, "8.0000"),
-            req(door_90, circular_saw, "1.0000"),
+            req(door_90, circular_saw, "2.0000"),
             req(door_90, table_planer, "1.0000"),
-            req(door_90, hand_planer, "0.5000"),
+            req(door_90, hand_planer, "3.0000"),
 
             # High Chair
             req(high_chair, wood, "8.0000"),
@@ -253,7 +282,7 @@ def seed_database() -> None:
             req(high_chair, labor, "8.0000"),
             req(high_chair, circular_saw, "2.0000"),
             req(high_chair, table_planer, "1.0000"),
-            req(high_chair, hand_planer, "1.0000"),
+            req(high_chair, hand_planer, "3.0000"),
 
             # Ordinary Chair
             req(ordinary_chair, wood, "8.0000"),
@@ -264,7 +293,7 @@ def seed_database() -> None:
             req(ordinary_chair, labor, "8.0000"),
             req(ordinary_chair, circular_saw, "2.0000"),
             req(ordinary_chair, table_planer, "1.0000"),
-            req(ordinary_chair, hand_planer, "1.0000"),
+            req(ordinary_chair, hand_planer, "3.0000"),
         ]
 
         db.add_all(requirements)
@@ -296,14 +325,25 @@ def seed_database() -> None:
         # constraint. It cannot be left unset: CycleResource.unit_price
         # is a required column and every other resource here still
         # needs a real per-unit price for the optimizer's cost model.
+        #
+        # Sandpaper (100 -> 120) and Doorknob & Hinge (13 -> 25) are
+        # raised above the workbook's literal weekly figures (Revision
+        # #3 data-alignment audit) - this seeded cycle is the single
+        # default, immediately-usable development cycle a fresh
+        # environment gets, and the unmodified figures leave it
+        # infeasible against its own seeded minimum_demand baseline the
+        # moment anyone generates a plan (4 doors x 1 set each = 18
+        # sets needed vs. 13 available). This is deliberately
+        # development/demo seed data, not a change to any operational
+        # cycle - no cycle id is referenced anywhere in this file.
 
         db.add_all([
             CycleResource(production_cycle=cycle, resource=wood, available_quantity=Decimal("1250.0000"), unit_price=Decimal("84.00")),
             CycleResource(production_cycle=cycle, resource=epoxy, available_quantity=Decimal("8.0000"), unit_price=Decimal("690.00")),
             CycleResource(production_cycle=cycle, resource=nails, available_quantity=Decimal("100.0000"), unit_price=Decimal("54.00")),
             CycleResource(production_cycle=cycle, resource=wood_glue, available_quantity=Decimal("12.0000"), unit_price=Decimal("79.00")),
-            CycleResource(production_cycle=cycle, resource=sandpaper, available_quantity=Decimal("100.0000"), unit_price=Decimal("10.00")),
-            CycleResource(production_cycle=cycle, resource=doorknob, available_quantity=Decimal("13.0000"), unit_price=Decimal("300.00")),
+            CycleResource(production_cycle=cycle, resource=sandpaper, available_quantity=Decimal("120.0000"), unit_price=Decimal("10.00")),
+            CycleResource(production_cycle=cycle, resource=doorknob, available_quantity=Decimal("25.0000"), unit_price=Decimal("300.00")),
             CycleResource(production_cycle=cycle, resource=labor, available_quantity=Decimal("576.0000"), unit_price=Decimal("0.00")),
             CycleResource(production_cycle=cycle, resource=circular_saw, available_quantity=Decimal("336.0000"), unit_price=Decimal("31.57")),
             CycleResource(production_cycle=cycle, resource=table_planer, available_quantity=Decimal("96.0000"), unit_price=Decimal("31.57")),

@@ -42,6 +42,7 @@ def test_list_products_response_fields(client, test_products):
         "name",
         "selling_price",
         "labor_cost",
+        "minimum_demand",
         "is_active",
     }
 

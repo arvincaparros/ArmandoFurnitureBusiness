@@ -102,13 +102,16 @@ const UNPRICED_BREAKDOWN: CostBreakdown = {
 // rate - see classifyResourceType above), Total Cost = the three
 // summed, Profit = selling price - Total Cost - the exact formulas
 // from backend/app/services/optimization.py::calculate_unit_profit.
-// pricedResourceIds is the active catalog with labor already excluded
+// pricedResourceIds is the display catalog with labor already excluded
 // by the caller (see toUiProduct) - if this product requires any
-// OTHER active resource that has no configured CycleResource price,
-// the whole breakdown stays null (never a partial/understated total).
-// Labor is never part of that check: laborCost comes straight from
-// the product record, so it's always known once the product itself
-// has loaded.
+// OTHER resource that has no entry in costRates, the whole breakdown
+// stays null (never a partial/understated total). That covers both a
+// missing CycleResource price AND a resource that's been deactivated
+// (costRates is only ever built from strictly-active resources, so a
+// required-but-inactive resource's id is never found there either -
+// see buildResourceCostRates/toUiProduct). Labor is never part of
+// that check: laborCost comes straight from the product record, so
+// it's always known once the product itself has loaded.
 function calculateCosts(
   resourceQuantities: Record<number, number>,
   pricedResourceIds: number[],
@@ -177,17 +180,25 @@ function resolveResourceQuantities(
 export function toUiProduct(
   product: ProductResponse,
   requirements: ResolvedRequirement[] = [],
-  activeResources: ResourceOption[] = [],
+  catalogResources: ResourceOption[] = [],
   costRates: Map<number, ResourceCostRate> = new Map(),
 ): Product {
   const sellingPrice = parseDecimal(product.selling_price)
   const laborCost = parseDecimal(product.labor_cost)
   const resourceQuantities = resolveResourceQuantities(requirements)
 
-  // Labor is excluded here (not just from costRates) so
-  // calculateCosts's "fully priced" check never waits on a labor
-  // CycleResource price that no longer has anything to do with cost.
-  const pricedResourceIds = activeResources
+  // catalogResources is the display catalog (active + inactive-but-
+  // referenced, see useProducts.ts::displayResources) - deliberately
+  // NOT filtered to active here. That's what makes an inactive
+  // required resource fall through to "not fully priced" below: its id
+  // still ends up in requiredResourceIds, but costRates (built from
+  // strictly-active resources only, see buildResourceCostRates above)
+  // never has a rate for it, so isFullyPriced comes back false instead
+  // of the resource's cost contribution being silently dropped. Labor
+  // is excluded here (not just from costRates) so the "fully priced"
+  // check never waits on a labor CycleResource price that no longer
+  // has anything to do with cost.
+  const pricedResourceIds = catalogResources
     .filter(
       (resource) =>
         resource.resource_type.trim().toLowerCase() !== 'labor',
@@ -217,14 +228,14 @@ export function toUiProduct(
 export function toUiProducts(
   products: ProductResponse[],
   requirementsByProductId: Map<number, ResolvedRequirement[]> = new Map(),
-  activeResources: ResourceOption[] = [],
+  catalogResources: ResourceOption[] = [],
   costRates: Map<number, ResourceCostRate> = new Map(),
 ): Product[] {
   return products.map((product) =>
     toUiProduct(
       product,
       requirementsByProductId.get(product.id) ?? [],
-      activeResources,
+      catalogResources,
       costRates,
     ),
   )

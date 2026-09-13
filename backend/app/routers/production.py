@@ -36,6 +36,7 @@ from app.services.optimization import (
     solve_optimization,
     build_optimization_result,
     apply_optimization,
+    validate_minimum_demand_resource_availability,
 )
 
 from app.services.optimization_history import (
@@ -211,6 +212,16 @@ def optimize_production(
     started_at = datetime.now()
 
     try:
+        # Revision #3: the one minimum-demand pre-solve check that
+        # needs a fresh DB query (a product's COMPLETE requirement
+        # list, not the cycle-resource-filtered data["requirements"]
+        # above) runs here, before solve_optimization - see its
+        # docstring for why it can't just reuse `data`.
+        validate_minimum_demand_resource_availability(
+            db,
+            cycle_id,
+        )
+
         result = solve_optimization(
             cycle_id,
             data["products"],

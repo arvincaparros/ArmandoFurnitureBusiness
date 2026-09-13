@@ -62,6 +62,13 @@ class ProductUpdate(BaseModel):
 class ProductResponse(ProductBase):
     id: int
 
+    # Revision #3: read-only for now - no management UI is being added
+    # this revision (see optimization.py::create_decision_variables
+    # for where the ILP actually reads it). Not on ProductBase/Create/
+    # Update, since there's nothing yet that writes it via the API -
+    # only the migration backfill and direct DB access set it.
+    minimum_demand: Decimal
+
     model_config = ConfigDict(
         from_attributes=True,
     )
