@@ -8,6 +8,7 @@ import {
   Popover,
   Stack,
   Text,
+  Tooltip,
 } from '@mantine/core'
 
 import { Trash2 } from 'lucide-react'
@@ -109,9 +110,15 @@ const RequirementRow = ({
           )}
 
           {!requirement.resourceIsActive && (
-            <Badge color="gray" size="sm" variant="light">
-              Inactive
-            </Badge>
+            <Tooltip
+              label="This resource has been deactivated in Resources Management. The requirement and quantity are preserved and will resume automatically if the resource is reactivated."
+              multiline
+              w={260}
+            >
+              <Badge color="red" size="sm" variant="light">
+                Unavailable
+              </Badge>
+            </Tooltip>
           )}
         </Group>
 

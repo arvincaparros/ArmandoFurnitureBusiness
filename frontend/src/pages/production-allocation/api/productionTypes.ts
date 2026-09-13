@@ -64,17 +64,29 @@ export interface ProductSummary {
 }
 
 // GET /api/production-cycles/{cycle_id}/allocations - the ACTUAL
-// committed production plan (backend/app/schemas/allocation.py).
-// Distinct from both OptimizationResponse and
+// committed production plan (backend/app/schemas/allocation.py -
+// ProductionAllocationFinancialsResponse, GET-list only; POST/PATCH
+// still return the bare id/production_cycle_id/product_id/quantity
+// shape, unchanged). Distinct from both OptimizationResponse and
 // OptimizationHistoryResponse above: this table is only ever written
 // by POST /{cycle_id}/optimize/apply (verified in
 // app/services/optimization.py::apply_optimization) or direct manual
 // CRUD against this same endpoint - never by POST /optimize itself.
 // No product_name here either - same bare-FK pattern as everywhere
 // else in this backend.
+//
+// total_revenue/total_cost/total_profit (Revision #2) are computed
+// fresh on every read from CURRENT product/resource prices - there is
+// no apply-time snapshot (see the Revision #2 investigation report).
+// total_cost/total_profit are null when a required non-labor resource
+// is currently inactive or unpriced (backend/app/services/
+// allocation.py::get_allocations_with_financials) - never silently 0.
 export interface ProductionAllocationResponse {
   id: number
   production_cycle_id: number
   product_id: number
   quantity: string
+  total_revenue: string
+  total_cost: string | null
+  total_profit: string | null
 }

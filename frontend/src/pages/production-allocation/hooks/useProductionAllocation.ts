@@ -103,10 +103,11 @@ const useProductionAllocation = () => {
       const data = await runOptimization(latestCycleId)
       const completedAt = new Date()
 
-      return fromOptimizeResponse(data, {
-        startedAt,
-        completedAt,
-      })
+      return fromOptimizeResponse(
+        data,
+        { startedAt, completedAt },
+        productsQuery.data,
+      )
     },
     onSuccess: (result) => {
       setFreshResult(result)

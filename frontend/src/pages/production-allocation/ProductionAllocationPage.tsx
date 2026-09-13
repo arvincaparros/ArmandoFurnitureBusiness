@@ -10,6 +10,7 @@ import {
   Grid,
   Group,
   Stack,
+  Text,
   Tooltip,
 } from '@mantine/core'
 
@@ -165,11 +166,18 @@ const ProductionAllocationPage = () => {
             subtitle="The plan actually committed for this cycle - separate from the preview above until applied."
           >
             <Box h="100%">
+              <Text size="xs" c="dimmed" mb="sm">
+                Financial values are based on current product and
+                resource prices and may differ from values at the
+                time this allocation was applied.
+              </Text>
+
               <ProductionPlanTable
                 plans={currentAllocation}
                 isLoading={isAllocationLoading}
                 isError={isAllocationError}
                 emptyMessage="No allocation has been committed for this cycle yet."
+                showFinancialSummary
               />
             </Box>
           </ChartCard>
