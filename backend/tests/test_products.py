@@ -1,3 +1,8 @@
+from decimal import Decimal
+
+from app.database.models import ProductResourceRequirement
+
+
 def test_list_products_returns_only_active_by_default(client, test_products, db):
     inactive = test_products[0]
     inactive.is_active = False
@@ -117,3 +122,82 @@ def test_product_resource_requirements_endpoint(
         assert item["product_id"] == product.id
         assert "resource_id" in item
         assert "quantity_required" in item
+
+
+def test_update_product_resource_requirement_within_capacity_is_accepted(
+    client,
+    db,
+    optimization_cycle,
+    test_products,
+    test_resources,
+    test_product_resource_requirements,
+):
+    products_by_name = {p.name: p for p in test_products}
+    resources_by_name = {r.name: r for r in test_resources}
+    chair = products_by_name["Test Chair"]
+    wood = resources_by_name["Test Wood"]
+
+    optimize_response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize",
+        json={"objective": "MAX_PROFIT"},
+    )
+    assert optimize_response.status_code == 200
+
+    apply_response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize/apply"
+    )
+    assert apply_response.status_code == 200
+
+    response = client.patch(
+        f"/api/products/{chair.id}/resources/{wood.id}",
+        json={"quantity_required": 13},
+    )
+
+    assert response.status_code == 200
+
+
+def test_update_product_resource_requirement_that_would_invalidate_applied_allocation_is_rejected(
+    client,
+    db,
+    optimization_cycle,
+    test_products,
+    test_resources,
+    test_product_resource_requirements,
+):
+    """
+    Applied allocation: Chair=12, Bed Frame=12 (baseline optimum, no
+    minimum_demand). Wood consumption = 12*12 + 12*55 = 804, capacity
+    1250. Bumping Chair's own Wood requirement from 12 to 50 pushes
+    Chair's Wood need to 12*50=600, total 600+660=1260 > 1250.
+    """
+
+    products_by_name = {p.name: p for p in test_products}
+    resources_by_name = {r.name: r for r in test_resources}
+    chair = products_by_name["Test Chair"]
+    wood = resources_by_name["Test Wood"]
+
+    optimize_response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize",
+        json={"objective": "MAX_PROFIT"},
+    )
+    assert optimize_response.status_code == 200
+
+    apply_response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize/apply"
+    )
+    assert apply_response.status_code == 200
+
+    response = client.patch(
+        f"/api/products/{chair.id}/resources/{wood.id}",
+        json={"quantity_required": 50},
+    )
+
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert "Wood" in detail
+
+    requirement = db.query(ProductResourceRequirement).filter(
+        ProductResourceRequirement.product_id == chair.id,
+        ProductResourceRequirement.resource_id == wood.id,
+    ).first()
+    assert requirement.quantity_required == Decimal("12.0000")

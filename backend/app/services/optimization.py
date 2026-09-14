@@ -19,6 +19,8 @@ from app.services.optimization_history import (
 )
 from app.services.production_calculation import (
     BOTTLENECK_REMAINING_THRESHOLD,
+    find_resource_capacity_shortages,
+    format_capacity_shortage_message,
 )
 from app.services.resource_utilization import (
     calculate_resource_utilization,
@@ -957,6 +959,39 @@ def apply_optimization(
                     minimum_demand - Decimal(str(quantity)),
                 ),
             }
+        )
+
+    # Revalidate the ENTIRE proposed allocation against current
+    # resource state before touching the database at all - the saved
+    # OptimizationResult rows reflect whatever CycleResource/
+    # ProductResourceRequirement looked like the last time /optimize
+    # ran, which may no longer be true by the time Apply is clicked
+    # (a resource's capacity or active state changed, or a product's
+    # requirements changed, in between). find_resource_capacity_
+    # shortages treats an inactive resource as zero capacity here too,
+    # matching add_resource_constraints. Checked before the delete
+    # below runs, so a stale/now-infeasible plan is rejected atomically
+    # - nothing about the existing allocation is touched.
+    proposed_quantities = {
+        allocation["product_id"]: Decimal(str(allocation["quantity"]))
+        for allocation in allocations
+    }
+
+    shortages = find_resource_capacity_shortages(
+        db,
+        cycle_id,
+        proposed_quantities,
+    )
+
+    if shortages:
+        raise ValueError(
+            format_capacity_shortage_message(
+                shortages,
+                "Cannot apply this production plan - resources or "
+                "requirements have changed since it was generated and "
+                "it is no longer feasible. Please regenerate the "
+                "Production Plan",
+            )
         )
 
     db.query(ProductionAllocation).filter(
