@@ -71,6 +71,13 @@ const resourceCategories = [
   { value: 'machine', label: 'Machine' },
 ]
 
+// Also matches _classify_resource_type() (and its enforcement in
+// backend/app/services/cycle_resource.py's
+// _requires_positive_unit_price) - Labor is the only category exempt
+// from needing a positive unit_price.
+const isLaborResourceType = (resourceType: string) =>
+  resourceType.trim().toLowerCase() === 'labor'
+
 type NameMode = 'new' | 'reactivate'
 
 const AddResourceModal = ({
@@ -105,7 +112,11 @@ const AddResourceModal = ({
       setResourceType(resource.resourceType)
       setUnit(resource.unit)
       setAvailableQuantity(resource.availableQuantity ?? 0)
-      setUnitPrice(resource.unitPrice ?? 0)
+      setUnitPrice(
+        isLaborResourceType(resource.resourceType)
+          ? 0
+          : resource.unitPrice ?? 0,
+      )
     } else {
       setName('')
       setResourceType('material')
@@ -130,6 +141,10 @@ const AddResourceModal = ({
       setName(selected.name)
       setResourceType(selected.resource_type)
       setUnit(selected.unit)
+
+      if (isLaborResourceType(selected.resource_type)) {
+        setUnitPrice(0)
+      }
     }
   }
 
@@ -147,12 +162,19 @@ const AddResourceModal = ({
 
   const isReactivating = isAddMode && nameMode === 'reactivate'
 
+  // Labor's cost is tracked separately via Product.labor_cost (see
+  // backend/app/services/cycle_resource.py's _requires_positive_unit_price,
+  // which enforces the same exception server-side) - a Labor
+  // CycleResource's unit_price is allowed to be 0.
+  const isLabor = isLaborResourceType(resourceType)
+
   const isValid =
     name.trim() !== '' &&
     resourceType.trim() !== '' &&
     unit.trim() !== '' &&
     (!isReactivating || selectedInactiveId !== null) &&
-    (!hasCycle || (availableQuantity > 0 && unitPrice > 0))
+    (!hasCycle ||
+      (availableQuantity > 0 && (isLabor || unitPrice > 0)))
 
   const handleSave = async () => {
     if (!isValid || isSubmitting) {
@@ -250,9 +272,14 @@ const AddResourceModal = ({
           label="Category"
           data={resourceCategories}
           value={resourceType}
-          onChange={(value) =>
-            setResourceType(value ?? 'material')
-          }
+          onChange={(value) => {
+            const nextType = value ?? 'material'
+            setResourceType(nextType)
+
+            if (isLaborResourceType(nextType)) {
+              setUnitPrice(0)
+            }
+          }}
         />
 
         <Select
@@ -287,12 +314,15 @@ const AddResourceModal = ({
 
           <NumberInput
             label="Unit Price"
+            description={
+              isLabor ? 'Not required for Labor' : undefined
+            }
             placeholder="e.g. 84"
             value={unitPrice}
             min={0}
             prefix="₱"
             thousandSeparator=","
-            disabled={!hasCycle}
+            disabled={!hasCycle || isLabor}
             onChange={(value) =>
               setUnitPrice(Number(value))
             }
