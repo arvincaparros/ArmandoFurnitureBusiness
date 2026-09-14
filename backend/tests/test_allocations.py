@@ -10,6 +10,13 @@ from app.services.allocation import (
 )
 
 
+def _cleanup_allocations(db, cycle_id):
+    db.query(ProductionAllocation).filter(
+        ProductionAllocation.production_cycle_id == cycle_id
+    ).delete(synchronize_session=False)
+    db.commit()
+
+
 def _create_allocation(db, cycle_id, product_id, quantity):
     allocation = ProductionAllocation(
         production_cycle_id=cycle_id,
@@ -260,5 +267,166 @@ def test_list_allocations_endpoint_returns_financial_fields(
             bed_frame.selling_price * Decimal("2.0000")
         )
 
+    finally:
+        _delete_allocation(db, allocation)
+
+
+# --- Capacity-integrity guard: manual create/update ------------------------
+#
+# optimization_cycle prices Test Epoxy at available_quantity=8.0000.
+# Test Chair requires 0.5 Epoxy/unit, Test Dining Table requires 0.3
+# Epoxy/unit (test_product_resource_requirements fixture) - both
+# deliberately reused as the tight, shared constraint below.
+
+
+def test_create_allocation_within_capacity_is_accepted(
+    client,
+    db,
+    optimization_cycle,
+    test_products,
+    test_product_resource_requirements,
+):
+    products = {p.name: p for p in test_products}
+    chair = products["Test Chair"]
+
+    try:
+        response = client.post(
+            f"/api/production-cycles/{optimization_cycle.id}/allocations",
+            json={"product_id": chair.id, "quantity": 10},
+        )
+
+        assert response.status_code == 201
+    finally:
+        _cleanup_allocations(db, optimization_cycle.id)
+
+
+def test_create_allocation_exceeding_resource_is_rejected(
+    client,
+    db,
+    optimization_cycle,
+    test_products,
+    test_product_resource_requirements,
+):
+    products = {p.name: p for p in test_products}
+    chair = products["Test Chair"]
+
+    try:
+        # 20 chairs x 0.5 Epoxy/unit = 10 Epoxy, only 8 available.
+        response = client.post(
+            f"/api/production-cycles/{optimization_cycle.id}/allocations",
+            json={"product_id": chair.id, "quantity": 20},
+        )
+
+        assert response.status_code == 400
+        detail = response.json()["detail"]
+        assert "Epoxy" in detail
+        assert "10" in detail
+        assert "8" in detail
+
+        # Rejected before commit - nothing was saved.
+        remaining = db.query(ProductionAllocation).filter(
+            ProductionAllocation.production_cycle_id == optimization_cycle.id
+        ).all()
+        assert remaining == []
+    finally:
+        _cleanup_allocations(db, optimization_cycle.id)
+
+
+def test_update_allocation_within_capacity_is_accepted(
+    client,
+    db,
+    optimization_cycle,
+    test_products,
+    test_product_resource_requirements,
+):
+    products = {p.name: p for p in test_products}
+    chair = products["Test Chair"]
+
+    allocation = _create_allocation(
+        db, optimization_cycle.id, chair.id, Decimal("5.0000")
+    )
+
+    try:
+        # 10 chairs x 0.5 = 5 Epoxy, within 8.
+        response = client.patch(
+            f"/api/production-cycles/{optimization_cycle.id}/allocations/{chair.id}",
+            json={"quantity": 10},
+        )
+
+        assert response.status_code == 200
+        assert Decimal(response.json()["quantity"]) == Decimal("10")
+    finally:
+        _delete_allocation(db, allocation)
+
+
+def test_update_allocation_exceeding_shared_capacity_is_rejected(
+    client,
+    db,
+    optimization_cycle,
+    test_products,
+    test_product_resource_requirements,
+):
+    products = {p.name: p for p in test_products}
+    chair = products["Test Chair"]
+    dining_table = products["Test Dining Table"]
+
+    # Dining Table: 10 x 0.3 = 3 Epoxy. Chair: 5 x 0.5 = 2.5 Epoxy.
+    # Combined 5.5, within 8.
+    dining_allocation = _create_allocation(
+        db, optimization_cycle.id, dining_table.id, Decimal("10.0000")
+    )
+    chair_allocation = _create_allocation(
+        db, optimization_cycle.id, chair.id, Decimal("5.0000")
+    )
+
+    try:
+        # Chair alone at 15 x 0.5 = 7.5, plus Dining Table's existing
+        # 3 = 10.5 > 8 - must be rejected, accounting for the OTHER
+        # product's allocation in the same cycle.
+        response = client.patch(
+            f"/api/production-cycles/{optimization_cycle.id}/allocations/{chair.id}",
+            json={"quantity": 15},
+        )
+
+        assert response.status_code == 400
+        detail = response.json()["detail"]
+        assert "Epoxy" in detail
+
+        db.refresh(chair_allocation)
+        assert chair_allocation.quantity == Decimal("5.0000")
+    finally:
+        _delete_allocation(db, dining_allocation)
+        _delete_allocation(db, chair_allocation)
+
+
+def test_update_allocation_does_not_double_count_previous_quantity(
+    client,
+    db,
+    optimization_cycle,
+    test_products,
+    test_product_resource_requirements,
+):
+    """
+    10 chairs x 0.5 Epoxy/unit = 5 Epoxy, within the 8 available - both
+    alone and when re-saved at the SAME quantity. If the projected
+    total wrongly added the old allocation's consumption on top of the
+    new one (5 + 5 = 10 > 8), this would incorrectly reject a no-op
+    update.
+    """
+
+    products = {p.name: p for p in test_products}
+    chair = products["Test Chair"]
+
+    allocation = _create_allocation(
+        db, optimization_cycle.id, chair.id, Decimal("10.0000")
+    )
+
+    try:
+        response = client.patch(
+            f"/api/production-cycles/{optimization_cycle.id}/allocations/{chair.id}",
+            json={"quantity": 10},
+        )
+
+        assert response.status_code == 200
     finally:
         _delete_allocation(db, allocation)

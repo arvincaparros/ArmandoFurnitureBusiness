@@ -782,3 +782,201 @@ def test_create_endpoint_rejects_every_case_and_whitespace_variant(client, db):
     finally:
         db.query(Resource).filter(Resource.id == resource_id).delete()
         db.commit()
+
+
+# --- Capacity-integrity guard: reducing CycleResource.available_quantity ---
+#
+# optimization_cycle's baseline optimum (no minimum_demand set) is
+# Chair=12, Bed Frame=12 - Wood consumption 12*12 + 12*55 = 804,
+# Labor consumption 12*8 + 12*40 = 576 (exactly saturating Labor's own
+# 576 available - see test_optimization.py::
+# test_optimization_returns_optimal_solution).
+
+
+def test_update_cycle_resource_rejects_reduction_below_applied_consumption(
+    client, db, optimization_cycle, test_resources,
+):
+    optimize_response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize",
+        json={"objective": "MAX_PROFIT"},
+    )
+    assert optimize_response.status_code == 200
+
+    apply_response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize/apply"
+    )
+    assert apply_response.status_code == 200
+
+    resources_by_name = {r.name: r for r in test_resources}
+    wood = resources_by_name["Test Wood"]
+
+    response = client.patch(
+        f"/api/production-cycles/{optimization_cycle.id}/resources/{wood.id}",
+        json={"available_quantity": 500},
+    )
+
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert "Wood" in detail
+    assert "804" in detail
+
+    cycle_resource = db.query(CycleResource).filter(
+        CycleResource.production_cycle_id == optimization_cycle.id,
+        CycleResource.resource_id == wood.id,
+    ).first()
+    assert cycle_resource.available_quantity == Decimal("1250.0000")
+
+
+def test_update_cycle_resource_allows_capacity_increase(
+    client, db, optimization_cycle, test_resources,
+):
+    optimize_response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize",
+        json={"objective": "MAX_PROFIT"},
+    )
+    assert optimize_response.status_code == 200
+
+    apply_response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize/apply"
+    )
+    assert apply_response.status_code == 200
+
+    resources_by_name = {r.name: r for r in test_resources}
+    wood = resources_by_name["Test Wood"]
+
+    response = client.patch(
+        f"/api/production-cycles/{optimization_cycle.id}/resources/{wood.id}",
+        json={"available_quantity": 2000},
+    )
+
+    assert response.status_code == 200
+    assert Decimal(response.json()["available_quantity"]) == Decimal("2000")
+
+
+def test_update_cycle_resource_unit_price_only_edit_not_blocked_by_capacity(
+    client, db, optimization_cycle, test_resources,
+):
+    """
+    A unit-price-only PATCH (no available_quantity key at all) must
+    never be blocked by the capacity-reduction guard, even though the
+    resource is fully consumed by an already-applied allocation.
+    """
+
+    optimize_response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize",
+        json={"objective": "MAX_PROFIT"},
+    )
+    assert optimize_response.status_code == 200
+
+    apply_response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize/apply"
+    )
+    assert apply_response.status_code == 200
+
+    resources_by_name = {r.name: r for r in test_resources}
+    wood = resources_by_name["Test Wood"]
+
+    response = client.patch(
+        f"/api/production-cycles/{optimization_cycle.id}/resources/{wood.id}",
+        json={"unit_price": 99},
+    )
+
+    assert response.status_code == 200
+    assert Decimal(response.json()["unit_price"]) == Decimal("99")
+
+
+def test_update_cycle_resource_labor_capacity_reduction_still_validated(
+    client, db, optimization_cycle, test_resources,
+):
+    """
+    Labor is exempt from the positive-unit-price rule (it may be 0 -
+    product labor cost is tracked separately via Product.labor_cost),
+    but it is NOT exempt from the capacity-integrity guard: it still
+    physically constrains production and the already-applied
+    allocation saturates it exactly (576/576 hours).
+    """
+
+    optimize_response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize",
+        json={"objective": "MAX_PROFIT"},
+    )
+    assert optimize_response.status_code == 200
+
+    apply_response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize/apply"
+    )
+    assert apply_response.status_code == 200
+
+    resources_by_name = {r.name: r for r in test_resources}
+    labor = resources_by_name["Test Labor"]
+
+    response = client.patch(
+        f"/api/production-cycles/{optimization_cycle.id}/resources/{labor.id}",
+        json={"available_quantity": 100, "unit_price": 0},
+    )
+
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert "Labor" in detail
+    assert "576" in detail
+
+
+def test_update_cycle_resource_labor_zero_unit_price_still_valid(
+    client, db, optimization_cycle, test_resources,
+):
+    """
+    Regression: Labor's zero-unit-price exception (Revision from the
+    earlier student-feedback fix) must remain valid when nothing about
+    capacity is being reduced.
+    """
+
+    resources_by_name = {r.name: r for r in test_resources}
+    labor = resources_by_name["Test Labor"]
+
+    response = client.patch(
+        f"/api/production-cycles/{optimization_cycle.id}/resources/{labor.id}",
+        json={"unit_price": 0},
+    )
+
+    assert response.status_code == 200
+    assert Decimal(response.json()["unit_price"]) == Decimal("0")
+
+
+def test_update_cycle_resource_inactive_resource_capacity_reduction_not_blocked(
+    client, db, optimization_cycle, test_resources,
+):
+    """
+    An inactive resource is already treated as zero capacity
+    everywhere it matters (the optimizer's own resource constraint,
+    and it's filtered out of the Resource Utilization Report entirely)
+    - so reducing its stored available_quantity, even below whatever a
+    stale applied allocation implies it consumed, has no real safety
+    impact and must not be blocked.
+    """
+
+    optimize_response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize",
+        json={"objective": "MAX_PROFIT"},
+    )
+    assert optimize_response.status_code == 200
+
+    apply_response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize/apply"
+    )
+    assert apply_response.status_code == 200
+
+    resources_by_name = {r.name: r for r in test_resources}
+    wood = resources_by_name["Test Wood"]
+    wood.is_active = False
+    db.commit()
+
+    try:
+        response = client.patch(
+            f"/api/production-cycles/{optimization_cycle.id}/resources/{wood.id}",
+            json={"available_quantity": 1},
+        )
+
+        assert response.status_code == 200
+    finally:
+        wood.is_active = True
+        db.commit()

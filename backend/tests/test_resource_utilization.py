@@ -541,3 +541,42 @@ def test_utilization_ignores_optimization_preview_without_applied_allocation(
     finally:
         db.delete(run)
         db.commit()
+
+
+def test_utilization_after_valid_apply_never_exceeds_capacity(
+    client,
+    db,
+    optimization_cycle,
+    test_products,
+):
+    """
+    A fresh, valid Apply (nothing changed in between) must produce a
+    Resource Utilization report where every resource's required
+    consumption stays within its available capacity - the capacity-
+    integrity guards added to apply_optimization exist precisely to
+    keep this true for anything freshly applied.
+    """
+
+    optimize_response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize",
+        json={"objective": "MAX_PROFIT"},
+    )
+    assert optimize_response.status_code == 200
+
+    apply_response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize/apply"
+    )
+    assert apply_response.status_code == 200
+
+    response = client.get(
+        f"/api/resource-utilization/{optimization_cycle.id}"
+    )
+
+    assert response.status_code == 200
+    data = response.json()
+
+    for item in data["resources"]:
+        assert Decimal(item["consumed_quantity"]) <= Decimal(
+            item["available_quantity"]
+        )
+        assert Decimal(item["remaining_quantity"]) >= Decimal("0")

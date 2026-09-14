@@ -1,3 +1,5 @@
+from decimal import Decimal
+
 from sqlalchemy import select
 from sqlalchemy.orm import Session
 
@@ -9,6 +11,9 @@ from app.database.models import (
 from app.schemas.production import (
     CycleResourceCreate,
     CycleResourceUpdate,
+)
+from app.services.production_calculation import (
+    calculate_resource_consumption,
 )
 
 
@@ -149,6 +154,44 @@ def update_cycle_resource(
         raise ValueError(
             "Unit price must be greater than 0 for this resource type"
         )
+
+    # Capacity-integrity guard: only fires on an actual REDUCTION
+    # (never blocks a unit-price-only edit, which never includes
+    # "available_quantity" in update_data at all, and never blocks an
+    # increase). Skipped for an inactive resource - it's already
+    # treated as zero capacity everywhere that matters
+    # (add_resource_constraints, and it's filtered out of the Resource
+    # Utilization Report entirely), so its stored available_quantity
+    # has no real safety impact either way.
+    if (
+        "available_quantity" in update_data
+        and cycle_resource.resource.is_active
+        and update_data["available_quantity"]
+        < cycle_resource.available_quantity
+    ):
+        consumption = calculate_resource_consumption(
+            db,
+            cycle_resource.production_cycle_id,
+        )
+
+        current_consumption = next(
+            (
+                item["required_quantity"]
+                for item in consumption
+                if item["resource_id"] == cycle_resource.resource_id
+            ),
+            Decimal("0"),
+        )
+
+        if current_consumption > update_data["available_quantity"]:
+            raise ValueError(
+                f"Cannot reduce {cycle_resource.resource.name}'s "
+                f"available quantity to "
+                f"{update_data['available_quantity']}: the currently "
+                "applied production allocation already consumes "
+                f"{current_consumption} of this resource (minimum "
+                f"required capacity is {current_consumption})."
+            )
 
     for field, value in update_data.items():
         setattr(

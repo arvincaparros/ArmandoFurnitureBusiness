@@ -805,6 +805,181 @@ def test_apply_optimization_saves_allocations(
 
     assert allocations[1].quantity == Decimal("12.0000")
 
+
+# --- Apply capacity revalidation --------------------------------------------
+
+
+def test_apply_optimization_rejects_when_capacity_reduced_after_generation(
+    client,
+    db,
+    optimization_cycle,
+    test_products,
+    test_resources,
+):
+    optimize_response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize",
+        json={"objective": "MAX_PROFIT"},
+    )
+    assert optimize_response.status_code == 200
+
+    resources_by_name = {r.name: r for r in test_resources}
+    epoxy_cycle_resource = db.query(CycleResource).filter(
+        CycleResource.production_cycle_id == optimization_cycle.id,
+        CycleResource.resource_id == resources_by_name["Test Epoxy"].id,
+    ).first()
+    original_available = epoxy_cycle_resource.available_quantity
+    epoxy_cycle_resource.available_quantity = Decimal("0.1000")
+    db.commit()
+
+    try:
+        apply_response = client.post(
+            f"/api/production-cycles/{optimization_cycle.id}/optimize/apply"
+        )
+
+        assert apply_response.status_code == 400
+        detail = apply_response.json()["detail"]
+        assert "Epoxy" in detail
+        assert "regenerate" in detail.lower()
+
+        # Rejected before anything was touched.
+        allocations = db.query(ProductionAllocation).filter(
+            ProductionAllocation.production_cycle_id == optimization_cycle.id
+        ).all()
+        assert allocations == []
+    finally:
+        epoxy_cycle_resource.available_quantity = original_available
+        db.commit()
+
+
+def test_apply_optimization_rejects_when_requirement_changed_after_generation(
+    client,
+    db,
+    optimization_cycle,
+    test_products,
+    test_resources,
+):
+    optimize_response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize",
+        json={"objective": "MAX_PROFIT"},
+    )
+    assert optimize_response.status_code == 200
+
+    products_by_name = {p.name: p for p in test_products}
+    resources_by_name = {r.name: r for r in test_resources}
+    chair = products_by_name["Test Chair"]
+
+    requirement = db.query(ProductResourceRequirement).filter(
+        ProductResourceRequirement.product_id == chair.id,
+        ProductResourceRequirement.resource_id
+        == resources_by_name["Test Epoxy"].id,
+    ).first()
+    original_quantity_required = requirement.quantity_required
+    # The generated plan recommends 12 chairs at the OLD requirement
+    # (0.5 Epoxy/unit = 6, within the 8 available) - bumping it to 100
+    # makes that same quantity require 1200 Epoxy, far over capacity.
+    requirement.quantity_required = Decimal("100.0000")
+    db.commit()
+
+    try:
+        apply_response = client.post(
+            f"/api/production-cycles/{optimization_cycle.id}/optimize/apply"
+        )
+
+        assert apply_response.status_code == 400
+        detail = apply_response.json()["detail"]
+        assert "Epoxy" in detail
+
+        allocations = db.query(ProductionAllocation).filter(
+            ProductionAllocation.production_cycle_id == optimization_cycle.id
+        ).all()
+        assert allocations == []
+    finally:
+        requirement.quantity_required = original_quantity_required
+        db.commit()
+
+
+def test_failed_apply_leaves_existing_allocation_unchanged(
+    client,
+    db,
+    optimization_cycle,
+    test_products,
+    test_resources,
+):
+    optimize_response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize",
+        json={"objective": "MAX_PROFIT"},
+    )
+    assert optimize_response.status_code == 200
+
+    first_apply = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize/apply"
+    )
+    assert first_apply.status_code == 200
+
+    original_allocations = {
+        allocation.product_id: allocation.quantity
+        for allocation in db.query(ProductionAllocation)
+        .filter(
+            ProductionAllocation.production_cycle_id == optimization_cycle.id
+        )
+        .all()
+    }
+    assert original_allocations
+
+    resources_by_name = {r.name: r for r in test_resources}
+    epoxy_cycle_resource = db.query(CycleResource).filter(
+        CycleResource.production_cycle_id == optimization_cycle.id,
+        CycleResource.resource_id == resources_by_name["Test Epoxy"].id,
+    ).first()
+    original_available = epoxy_cycle_resource.available_quantity
+    epoxy_cycle_resource.available_quantity = Decimal("0.1000")
+    db.commit()
+
+    try:
+        second_apply = client.post(
+            f"/api/production-cycles/{optimization_cycle.id}/optimize/apply"
+        )
+        assert second_apply.status_code == 400
+
+        after_allocations = {
+            allocation.product_id: allocation.quantity
+            for allocation in db.query(ProductionAllocation)
+            .filter(
+                ProductionAllocation.production_cycle_id
+                == optimization_cycle.id
+            )
+            .all()
+        }
+        assert after_allocations == original_allocations
+    finally:
+        epoxy_cycle_resource.available_quantity = original_available
+        db.commit()
+
+
+def test_apply_optimization_accepts_unchanged_valid_plan(
+    client,
+    db,
+    optimization_cycle,
+):
+    """
+    A fresh generate immediately followed by apply, nothing changed in
+    between - the revalidation added alongside the capacity-integrity
+    guards must not reject a genuinely still-feasible plan.
+    """
+
+    optimize_response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize",
+        json={"objective": "MAX_PROFIT"},
+    )
+    assert optimize_response.status_code == 200
+
+    apply_response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize/apply"
+    )
+    assert apply_response.status_code == 200
+    assert apply_response.json()["status"] == "OPTIMAL"
+
+
 def test_apply_optimization_is_repeatable(
     db,
     client,
@@ -1493,13 +1668,28 @@ def test_apply_optimization_uses_latest_history(
 
     assert len(latest_run.results) > 0
 
-    result_to_modify = latest_run.results[0]
+    # Reduced, not set to an arbitrary absolute value: this fixture's
+    # baseline optimum already saturates Labor exactly (Chair 12 +
+    # Bed Frame 12 = 576/576 hours - see
+    # test_optimization_returns_optimal_solution), so forcing ANY
+    # product's result to a larger/unrelated value (as this test used
+    # to do, picking results[0] - which happened to be Dining Table,
+    # naturally 0 - and setting it to 10) can trip the capacity-
+    # revalidation guard added in apply_optimization. Reducing an
+    # already-positive result can only free capacity, never exceed
+    # it, while still being a distinguishable sentinel value proving
+    # THIS (modified) row was what got applied.
+    result_to_modify = next(
+        result
+        for result in latest_run.results
+        if result.recommended_quantity > 0
+    )
 
     product_id = result_to_modify.product_id
+    original_quantity = result_to_modify.recommended_quantity
+    sentinel_quantity = original_quantity - Decimal("2.0000")
 
-    result_to_modify.recommended_quantity = Decimal(
-        "10.0000"
-    )
+    result_to_modify.recommended_quantity = sentinel_quantity
 
     db.commit()
 
@@ -1524,9 +1714,7 @@ def test_apply_optimization_uses_latest_history(
         if allocation.product_id == product_id
     )
 
-    assert applied_allocation.quantity == Decimal(
-        "10.0000"
-    )
+    assert applied_allocation.quantity == sentinel_quantity
 
 def test_older_optimization_history_is_preserved(
     db,

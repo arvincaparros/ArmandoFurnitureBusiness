@@ -87,11 +87,18 @@ def update_product_resource(
             detail="Product resource requirement not found",
         )
 
-    return update_product_resource_requirement(
-        db,
-        requirement,
-        data,
-    )
+    try:
+        return update_product_resource_requirement(
+            db,
+            requirement,
+            data,
+        )
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
 
 
 @router.delete(

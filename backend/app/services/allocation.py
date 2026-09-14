@@ -15,6 +15,47 @@ from app.schemas.allocation import (
     ProductionAllocationCreate,
     ProductionAllocationUpdate,
 )
+from app.services.production_calculation import (
+    find_resource_capacity_shortages,
+    format_capacity_shortage_message,
+)
+
+
+def _validate_proposed_allocation_capacity(
+    db: Session,
+    cycle_id: int,
+    product_id: int,
+    proposed_quantity,
+) -> None:
+    """
+    Checks a proposed create/update against every resource shared with
+    every OTHER allocation already in this cycle - the proposed
+    quantity REPLACES this product's own current allocation (if any)
+    in the projected total, so a no-op update or a reduction is never
+    double-counted against itself.
+    """
+
+    quantities_by_product_id = {
+        allocation.product_id: allocation.quantity
+        for allocation in get_allocations(db, cycle_id)
+    }
+
+    quantities_by_product_id[product_id] = proposed_quantity
+
+    shortages = find_resource_capacity_shortages(
+        db,
+        cycle_id,
+        quantities_by_product_id,
+    )
+
+    if shortages:
+        raise ValueError(
+            format_capacity_shortage_message(
+                shortages,
+                "Cannot save this allocation - it would exceed "
+                "available resource capacity",
+            )
+        )
 
 
 def get_allocations(
@@ -236,6 +277,13 @@ def create_allocation(
             "Product already has an allocation in this production cycle"
         )
 
+    _validate_proposed_allocation_capacity(
+        db,
+        cycle_id,
+        data.product_id,
+        data.quantity,
+    )
+
     allocation = ProductionAllocation(
         production_cycle_id=cycle_id,
         product_id=data.product_id,
@@ -259,6 +307,13 @@ def update_allocation(
     allocation: ProductionAllocation,
     data: ProductionAllocationUpdate,
 ) -> ProductionAllocation:
+    _validate_proposed_allocation_capacity(
+        db,
+        allocation.production_cycle_id,
+        allocation.product_id,
+        data.quantity,
+    )
+
     allocation.quantity = data.quantity
 
     try:
