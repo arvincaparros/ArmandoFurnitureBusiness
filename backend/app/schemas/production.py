@@ -53,9 +53,15 @@ class CycleResourceCreate(BaseModel):
         max_digits=12,
     )
 
+    # Labor resources are exempt from the positive-price rule enforced
+    # below (ge=0, not gt=0) - product labor cost is tracked separately
+    # via Product.labor_cost, so a Labor CycleResource's unit_price is
+    # allowed to be 0. Non-labor resources still require > 0; that
+    # check is done in app.services.cycle_resource, which has access
+    # to the resource's resource_type (not present on this schema).
     unit_price: Decimal = Field(
         ...,
-        gt=0,
+        ge=0,
         decimal_places=4,
         max_digits=12,
     )
@@ -69,9 +75,11 @@ class CycleResourceUpdate(BaseModel):
         max_digits=12,
     )
 
+    # See CycleResourceCreate.unit_price - same Labor exception,
+    # enforced in app.services.cycle_resource.
     unit_price: Decimal | None = Field(
         default=None,
-        gt=0,
+        ge=0,
         decimal_places=4,
         max_digits=12,
     )

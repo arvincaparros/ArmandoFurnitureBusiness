@@ -1,6 +1,13 @@
+from datetime import datetime
 from decimal import Decimal
 
-from app.database.models import Product, ProductResourceRequirement, Resource
+from app.database.models import (
+    CycleResource,
+    Product,
+    ProductionCycle,
+    ProductResourceRequirement,
+    Resource,
+)
 
 
 def test_list_resources_returns_only_active_by_default(client, test_resources, db):
@@ -161,6 +168,214 @@ def test_cycle_resource_includes_total_value(client, optimization_cycle):
         )
 
         assert Decimal(item["total_value"]) == expected_total
+
+
+def _create_cycle(db):
+    cycle = ProductionCycle(
+        cycle_date=datetime(2026, 8, 9),
+        start_date=datetime(2026, 8, 9),
+        end_date=datetime(2026, 8, 9),
+        status="PLANNED",
+    )
+
+    db.add(cycle)
+    db.commit()
+    db.refresh(cycle)
+
+    return cycle
+
+
+def _delete_cycle(db, cycle):
+    db.query(CycleResource).filter(
+        CycleResource.production_cycle_id == cycle.id
+    ).delete(synchronize_session=False)
+
+    db.delete(cycle)
+    db.commit()
+
+
+def test_create_cycle_resource_labor_allows_zero_unit_price(
+    client, db, test_resources
+):
+    labor = next(r for r in test_resources if r.resource_type == "labor")
+    cycle = _create_cycle(db)
+
+    try:
+        response = client.post(
+            f"/api/production-cycles/{cycle.id}/resources",
+            json={
+                "resource_id": labor.id,
+                "available_quantity": 100,
+                "unit_price": 0,
+            },
+        )
+
+        assert response.status_code == 201
+        assert Decimal(response.json()["unit_price"]) == Decimal("0")
+
+    finally:
+        _delete_cycle(db, cycle)
+
+
+def test_create_cycle_resource_non_labor_rejects_zero_unit_price(
+    client, db, test_resources
+):
+    wood = next(r for r in test_resources if r.name == "Test Wood")
+    cycle = _create_cycle(db)
+
+    try:
+        response = client.post(
+            f"/api/production-cycles/{cycle.id}/resources",
+            json={
+                "resource_id": wood.id,
+                "available_quantity": 100,
+                "unit_price": 0,
+            },
+        )
+
+        assert response.status_code == 400
+
+    finally:
+        _delete_cycle(db, cycle)
+
+
+def test_create_cycle_resource_labor_still_requires_positive_quantity(
+    client, db, test_resources
+):
+    labor = next(r for r in test_resources if r.resource_type == "labor")
+    cycle = _create_cycle(db)
+
+    try:
+        response = client.post(
+            f"/api/production-cycles/{cycle.id}/resources",
+            json={
+                "resource_id": labor.id,
+                "available_quantity": 0,
+                "unit_price": 0,
+            },
+        )
+
+        assert response.status_code == 422
+
+    finally:
+        _delete_cycle(db, cycle)
+
+
+def test_update_cycle_resource_labor_allows_zero_unit_price(
+    client, db, test_resources
+):
+    labor = next(r for r in test_resources if r.resource_type == "labor")
+    cycle = _create_cycle(db)
+
+    try:
+        create_response = client.post(
+            f"/api/production-cycles/{cycle.id}/resources",
+            json={
+                "resource_id": labor.id,
+                "available_quantity": 100,
+                "unit_price": 50,
+            },
+        )
+
+        assert create_response.status_code == 201
+
+        update_response = client.patch(
+            f"/api/production-cycles/{cycle.id}/resources/{labor.id}",
+            json={"unit_price": 0},
+        )
+
+        assert update_response.status_code == 200
+        assert Decimal(update_response.json()["unit_price"]) == Decimal("0")
+
+    finally:
+        _delete_cycle(db, cycle)
+
+
+def test_update_cycle_resource_non_labor_rejects_zero_unit_price(
+    client, db, test_resources
+):
+    wood = next(r for r in test_resources if r.name == "Test Wood")
+    cycle = _create_cycle(db)
+
+    try:
+        create_response = client.post(
+            f"/api/production-cycles/{cycle.id}/resources",
+            json={
+                "resource_id": wood.id,
+                "available_quantity": 100,
+                "unit_price": 84,
+            },
+        )
+
+        assert create_response.status_code == 201
+
+        update_response = client.patch(
+            f"/api/production-cycles/{cycle.id}/resources/{wood.id}",
+            json={"unit_price": 0},
+        )
+
+        assert update_response.status_code == 400
+
+    finally:
+        _delete_cycle(db, cycle)
+
+
+def test_update_cycle_resource_rejects_explicit_null_unit_price(
+    client, db, test_resources
+):
+    wood = next(r for r in test_resources if r.name == "Test Wood")
+    cycle = _create_cycle(db)
+
+    try:
+        create_response = client.post(
+            f"/api/production-cycles/{cycle.id}/resources",
+            json={
+                "resource_id": wood.id,
+                "available_quantity": 100,
+                "unit_price": 84,
+            },
+        )
+
+        assert create_response.status_code == 201
+
+        update_response = client.patch(
+            f"/api/production-cycles/{cycle.id}/resources/{wood.id}",
+            json={"unit_price": None},
+        )
+
+        assert update_response.status_code == 400
+
+    finally:
+        _delete_cycle(db, cycle)
+
+
+def test_update_cycle_resource_rejects_explicit_null_available_quantity(
+    client, db, test_resources
+):
+    wood = next(r for r in test_resources if r.name == "Test Wood")
+    cycle = _create_cycle(db)
+
+    try:
+        create_response = client.post(
+            f"/api/production-cycles/{cycle.id}/resources",
+            json={
+                "resource_id": wood.id,
+                "available_quantity": 100,
+                "unit_price": 84,
+            },
+        )
+
+        assert create_response.status_code == 201
+
+        update_response = client.patch(
+            f"/api/production-cycles/{cycle.id}/resources/{wood.id}",
+            json={"available_quantity": None},
+        )
+
+        assert update_response.status_code == 400
+
+    finally:
+        _delete_cycle(db, cycle)
 
 
 def test_readd_deleted_resource_reactivates_same_id(client, test_resources):

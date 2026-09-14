@@ -10,6 +10,11 @@ class OptimizationHistoryResult(BaseModel):
     recommended_quantity: Decimal
     unit_profit: Decimal
     total_profit: Decimal
+    # Revision #4: additive, backward-compatible fields - read off the
+    # OptimizationResult ORM row's own minimum_demand/shortfall
+    # properties (app/database/models.py), not persisted separately.
+    minimum_demand: Decimal
+    shortfall: Decimal
 
 
 class OptimizationHistoryResponse(BaseModel):

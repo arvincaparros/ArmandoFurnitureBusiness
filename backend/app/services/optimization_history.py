@@ -1,6 +1,6 @@
 from datetime import datetime
 
-from sqlalchemy.orm import Session
+from sqlalchemy.orm import Session, selectinload
 from sqlalchemy import select
 
 from app.database.models import (
@@ -68,6 +68,16 @@ def get_optimization_history(
 ):
     statement = (
         select(OptimizationRun)
+        # OptimizationHistoryResponse serializes every result's
+        # minimum_demand/shortfall properties (app/database/models.py),
+        # which read result.product - without this, each row would
+        # trigger its own lazy-loaded SELECT (N+1) that didn't exist
+        # before those fields were added.
+        .options(
+            selectinload(OptimizationRun.results).selectinload(
+                OptimizationResult.product
+            )
+        )
         .order_by(
             OptimizationRun.started_at.desc()
         )
@@ -87,6 +97,11 @@ def get_optimization_history_run(
 ):
     statement = (
         select(OptimizationRun)
+        .options(
+            selectinload(OptimizationRun.results).selectinload(
+                OptimizationResult.product
+            )
+        )
         .where(
             OptimizationRun.id == run_id
         )

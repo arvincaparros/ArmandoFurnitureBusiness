@@ -479,6 +479,25 @@ class OptimizationResult(Base):
 
     product: Mapped["Product"] = relationship()
 
+    # Revision #4: read-only, not a mapped column - no migration
+    # needed. minimum_demand/shortfall are fully derivable from
+    # already-persisted data (this row's own recommended_quantity plus
+    # the linked Product's minimum_demand), so there's nothing to
+    # store. Exposed as plain attributes here specifically so
+    # OptimizationHistoryResult (schemas/optimization_history.py) can
+    # read them the same way it reads every other field, via
+    # from_attributes.
+    @property
+    def minimum_demand(self) -> Decimal:
+        return self.product.minimum_demand
+
+    @property
+    def shortfall(self) -> Decimal:
+        return max(
+            Decimal("0"),
+            self.product.minimum_demand - self.recommended_quantity,
+        )
+
 class SalesTransaction(Base):
     __tablename__ = "sales_transactions"
 

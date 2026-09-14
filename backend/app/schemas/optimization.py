@@ -19,6 +19,14 @@ class OptimizationAllocation(BaseModel):
     quantity: int
     unit_profit: Decimal
     total_profit: Decimal
+    # Revision #4: additive fields, backward-compatible with any
+    # existing consumer that only reads the fields above -
+    # minimum_demand is 0 for a product with no minimum, and shortfall
+    # is 0 whenever quantity already meets it (see
+    # app/services/optimization.py::solve_optimization/
+    # apply_optimization for how these are computed).
+    minimum_demand: Decimal
+    shortfall: Decimal
 
 
 class OptimizationResourceUsage(BaseModel):

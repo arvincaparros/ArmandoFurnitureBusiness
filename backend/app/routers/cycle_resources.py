@@ -87,11 +87,18 @@ def update_existing_cycle_resource(
             detail="Cycle resource not found",
         )
 
-    return update_cycle_resource(
-        db,
-        cycle_resource,
-        data,
-    )
+    try:
+        return update_cycle_resource(
+            db,
+            cycle_resource,
+            data,
+        )
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
 
 
 @router.delete(
