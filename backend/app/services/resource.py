@@ -59,6 +59,25 @@ def create_resource(
     db: Session,
     resource_data: ResourceCreate,
 ) -> Resource:
+    """
+    The `_find_by_normalized_name` lookup below is a SELECT-then-act
+    check, not an atomic guarantee - two concurrent requests for
+    case/whitespace-variant names (e.g. "Circular Saw" and
+    "Circular saw") can both run it before either has committed, both
+    see no match, and both insert successfully, since the table's
+    plain `UniqueConstraint("name")` is exact-string and never catches
+    that. This is believed to be exactly how production ended up with
+    a split Circular Saw identity (see migration 78b1304118b7's
+    docstring). The real, final backstop against that race is the
+    `ix_resources_normalized_name` unique index on
+    `lower(trim(name))` added by that same migration: whichever of two
+    racing commits loses hits a real IntegrityError on that index, and
+    every commit() below is already wrapped to turn ANY IntegrityError
+    - this one included, not just the pre-existing exact-name
+    constraint - into the same DUPLICATE_NAME_ERROR the non-race path
+    already returns as a clean 409, never a raw 500.
+    """
+
     name = resource_data.name.strip()
 
     existing = _find_by_normalized_name(db, name)

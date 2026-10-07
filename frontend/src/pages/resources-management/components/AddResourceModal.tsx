@@ -62,6 +62,22 @@ const units = [
   label: value,
 }))
 
+// Some existing resources (seeded before this list existed, or
+// carrying a historical value like "hours" instead of "hrs") have a
+// unit that isn't one of the choices above. Mantine's Select shows no
+// selection at all for a value missing from `data` - which, left
+// as-is, invites silently "fixing" it to whatever's closest just by
+// opening Edit and hitting Save with Unit untouched-but-reset. Adding
+// the resource's own current value as an extra option (only when it's
+// not already one of the standard ones) keeps it visibly selected and
+// unchanged unless the user deliberately picks something else -
+// without renaming it, and without adding it to the list for every
+// NEW resource going forward.
+const unitOptions = (currentUnit: string) =>
+  currentUnit && !units.some((option) => option.value === currentUnit)
+    ? [...units, { value: currentUnit, label: currentUnit }]
+    : units
+
 // Matches backend/app/services/resource_utilization.py's
 // _classify_resource_type() - "labor"/"machine" are recognized
 // specially there, anything else is treated as "material".
@@ -284,7 +300,7 @@ const AddResourceModal = ({
 
         <Select
           label="Unit"
-          data={units}
+          data={unitOptions(unit)}
           value={unit}
           onChange={(value) =>
             setUnit(value ?? '')
