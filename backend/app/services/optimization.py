@@ -130,19 +130,15 @@ def create_decision_variables(
 ) -> dict[int, pulp.LpVariable]:
     """
     Create one integer decision variable for each active product,
-    floored at a flat 0 - never at that product's own minimum_demand.
-
-    Revision #4 (minimum demand as a soft target): minimum_demand used
-    to be wired in here directly as each variable's lowBound, making it
-    a hard ILP requirement - if resources couldn't support every
-    product's minimum simultaneously, the whole plan came back
-    Infeasible. It's now enforced instead as a soft constraint via a
-    paired shortfall variable (see create_shortfall_variables/
-    add_minimum_demand_constraints) so a shortage in one product's
-    minimum no longer blocks a plan for every other product. Read
+    floored at that product's own minimum_demand (never a flat 0) -
+    a hard ILP requirement: if resources/forecast can't support every
+    product's minimum simultaneously, the whole plan must come back
+    Infeasible rather than silently under-producing one product. Read
     directly off each product's own ORM row - never a positional/array
-    mapping (see the Revision #3 investigation report: Product.id
-    ordering is incidental, not a business contract).
+    mapping (Product.id ordering is incidental, not a business
+    contract). `or 0` guards only an unflushed in-memory object with
+    no default applied yet; the DB column itself is NOT NULL
+    DEFAULT 0.
     """
 
     variables = {}
@@ -150,67 +146,131 @@ def create_decision_variables(
     for product in products:
         variables[product.id] = pulp.LpVariable(
             f"product_{product.id}",
-            lowBound=0,
+            lowBound=float(product.minimum_demand or 0),
             cat="Integer",
         )
 
     return variables
 
 
-def create_shortfall_variables(
+def validate_minimum_demand_capacity(
     products,
-) -> dict[int, pulp.LpVariable]:
-    """
-    Revision #4: one integer "unmet minimum demand" variable per
-    product that actually has a positive minimum_demand - never for a
-    product whose minimum is 0, so it can never be pushed as a false
-    shortfall in reporting or count toward the Stage 1 objective
-    below. `or 0` guards only an unflushed in-memory object with no
-    default applied yet; the DB column itself is NOT NULL DEFAULT 0.
-    """
-
-    variables = {}
-
-    for product in products:
-        if (product.minimum_demand or 0) <= 0:
-            continue
-
-        variables[product.id] = pulp.LpVariable(
-            f"shortfall_{product.id}",
-            lowBound=0,
-            cat="Integer",
-        )
-
-    return variables
-
-
-def add_minimum_demand_constraints(
-    problem: pulp.LpProblem,
-    variables: dict[int, pulp.LpVariable],
-    shortfall_variables: dict[int, pulp.LpVariable],
-    products,
+    cycle_resources,
+    requirements,
 ) -> None:
     """
-    Revision #4: for every product with a shortfall variable (i.e.
-    minimum_demand > 0), tie its production quantity and its shortfall
-    together as `quantity + shortfall >= minimum_demand`. This is the
-    soft-constraint replacement for the old hard `lowBound=
-    minimum_demand` - production can now legitimately land below
-    minimum_demand as long as the paired shortfall variable absorbs
-    the difference, which the Stage 1 solve below then works to
-    minimize.
+    Pre-solve check: confirms the exact minimum-demand vector alone
+    (every product held at its own minimum, everything else at 0)
+    fits inside this cycle's resource capacities. That single point is
+    a valid feasibility witness for "can every minimum be satisfied
+    simultaneously" - resource consumption is strictly additive/
+    linear, so if that point already violates a resource cap, no point
+    honoring every minimum can exist; if it doesn't, that same point is
+    itself feasible. Raised before create_decision_variables/
+    problem.solve() ever run, listing every short resource - never a
+    single generic "Infeasible" status from the solver for this
+    specific, common cause. Never touches the objective or
+    calculate_unit_profit.
+
+    An inactive resource is treated as zero available capacity here
+    too, matching add_resource_constraints' convention - never its
+    stale available_quantity (that would silently treat a soft-deleted
+    resource as still fully available).
     """
 
-    for product in products:
-        shortfall_variable = shortfall_variables.get(product.id)
+    minimum_by_product_id = {
+        product.id: product.minimum_demand
+        for product in products
+    }
 
-        if shortfall_variable is None:
+    required_by_resource: dict[int, Decimal] = {}
+
+    for requirement, _resource in requirements:
+        minimum = minimum_by_product_id.get(
+            requirement.product_id,
+            Decimal("0"),
+        )
+
+        if minimum <= 0:
             continue
 
-        problem += (
-            variables[product.id] + shortfall_variable
-            >= float(product.minimum_demand),
-            f"minimum_demand_{product.id}",
+        required_by_resource[requirement.resource_id] = (
+            required_by_resource.get(
+                requirement.resource_id,
+                Decimal("0"),
+            )
+            + requirement.quantity_required * minimum
+        )
+
+    shortages = []
+
+    for cycle_resource in cycle_resources:
+        required = required_by_resource.get(
+            cycle_resource.resource_id,
+            Decimal("0"),
+        )
+
+        available = (
+            cycle_resource.available_quantity
+            if cycle_resource.resource.is_active
+            else Decimal("0")
+        )
+
+        if required > available:
+            resource = cycle_resource.resource
+
+            shortages.append(
+                f"{resource.name} (needs {required} {resource.unit}, "
+                f"only {available} "
+                f"{resource.unit} available)"
+            )
+
+    if shortages:
+        raise ValueError(
+            "Unable to generate a feasible production plan: minimum "
+            "demand requires more than is available this cycle for "
+            + ", ".join(shortages)
+            + "."
+        )
+
+
+def validate_minimum_demand_forecast(
+    products,
+    forecast: dict[int, Decimal] | None,
+) -> None:
+    """
+    Pre-solve check: `forecast` here is already the router's
+    positive-forecast-only dict (see production.py::
+    optimize_production) - exactly the set of products that get a
+    real x_i <= forecast_i ceiling in add_forecast_constraints(). A
+    product with no entry here has no ceiling at all today (existing,
+    unchanged behavior) and can never conflict with its minimum.
+    """
+
+    if not forecast:
+        return
+
+    conflicts = []
+
+    for product in products:
+        if product.minimum_demand <= 0:
+            continue
+
+        ceiling = forecast.get(product.id)
+
+        if ceiling is not None and product.minimum_demand > ceiling:
+            conflicts.append(
+                f"{product.name} (minimum demand "
+                f"{product.minimum_demand}, forecast ceiling "
+                f"{ceiling})"
+            )
+
+    if conflicts:
+        raise ValueError(
+            "Cannot generate a production plan: minimum demand "
+            "exceeds the current forecast ceiling for "
+            + ", ".join(conflicts)
+            + "."
         )
 
 
@@ -219,25 +279,25 @@ def validate_minimum_demand_resource_availability(
     cycle_id: int,
 ) -> None:
     """
-    Pre-solve check (Revision #3, narrowed by Revision #4): for every
-    product this cycle would otherwise consider (same "has at least
-    one requirement on a resource priced this cycle" rule
-    get_optimization_data() itself uses to build its product list - so
-    an unrelated product with no connection whatsoever to this cycle's
-    resource universe, e.g. a completely different test fixture's
-    products/resources, is never pulled in) that's ACTIVE with
-    minimum_demand > 0, its COMPLETE ProductResourceRequirement list is
-    re-queried directly here - deliberately NOT the `requirements`
-    collection get_optimization_data() builds, which silently drops
-    any single requirement whose resource lacks a CycleResource row
-    this cycle at all.
+    Pre-solve check: for every product this cycle would otherwise
+    consider (same "has at least one requirement on a resource priced
+    this cycle" rule get_optimization_data() itself uses to build its
+    product list - so an unrelated product with no connection
+    whatsoever to this cycle's resource universe, e.g. a completely
+    different test fixture's products/resources, is never pulled in)
+    that's ACTIVE with minimum_demand > 0, its COMPLETE
+    ProductResourceRequirement list is re-queried directly here -
+    deliberately NOT the `requirements` collection
+    get_optimization_data() builds, which silently drops any single
+    requirement whose resource lacks a CycleResource row this cycle at
+    all.
 
-    Revision #4 narrows what this raises on. It used to also block on
-    an INACTIVE resource - that case no longer needs blocking: an
-    inactive resource is now modeled as zero available capacity (see
-    add_resource_constraints), so a product needing it is correctly
-    forced toward a minimum-demand shortfall instead of being blocked,
-    exactly like any other resource-capacity shortage. This check now
+    Deliberately does NOT raise on an INACTIVE resource - an inactive
+    resource is modeled as zero available capacity (see
+    add_resource_constraints), so a product whose minimum demand needs
+    it is already caught as an ordinary resource-capacity shortage by
+    validate_minimum_demand_capacity (it raises "needs X, only 0
+    available" there, naming the same resource). This check instead
     fires only when a resource has genuinely NO CycleResource row for
     this cycle at all - there's no known capacity to model as zero
     (not even a real zero), so unlike the inactive case there's no
@@ -361,18 +421,17 @@ def add_resource_constraints(
     for cycle_resource in cycle_resources:
         resource_id = cycle_resource.resource_id
 
-        # Revision #4: an inactive resource is modeled as having zero
-        # available capacity this cycle - never its stale
-        # available_quantity (that would silently treat a soft-deleted
-        # resource as still fully available, see Revision #1/
-        # resource_utilization.py's own note on this), and never left
-        # unconstrained either (that would fabricate unlimited
-        # capacity). Any product that needs a positive amount of it is
-        # thereby forced to 0 for its own production - which then
-        # surfaces as an ordinary minimum-demand shortfall (see
-        # add_minimum_demand_constraints) for just that product,
-        # rather than blocking the whole plan the way
-        # validate_minimum_demand_resource_availability used to.
+        # An inactive resource is modeled as having zero available
+        # capacity this cycle - never its stale available_quantity
+        # (that would silently treat a soft-deleted resource as still
+        # fully available, see resource_utilization.py's own note on
+        # this), and never left unconstrained either (that would
+        # fabricate unlimited capacity). If a product's minimum demand
+        # needs a positive amount of it, validate_minimum_demand_
+        # capacity catches that pre-solve as an ordinary capacity
+        # shortage naming this same resource; if the product has no
+        # minimum demand, it's simply pushed toward 0 for its own
+        # production here, same as any other capacity shortage.
         available_quantity = (
             cycle_resource.available_quantity
             if cycle_resource.resource.is_active
@@ -487,101 +546,25 @@ def solve_optimization(
 ) -> dict:
     """
     Build and solve the integer linear programming model.
-
-    Revision #4: minimum_demand is now a soft target, enforced via a
-    two-stage/lexicographic solve rather than a hard ILP lower bound:
-
-      Stage 1 - minimize total unmet minimum demand (unweighted total
-      missing units - see create_shortfall_variables), subject to the
-      same hard resource/forecast constraints Stage 2 uses. This
-      always has a feasible solution (every quantity at 0, every
-      shortfall at its own minimum_demand, trivially satisfies both
-      resource and forecast constraints), so it can never itself come
-      back Infeasible.
-
-      Stage 2 - fix total shortfall at the best value Stage 1 found,
-      then maximize profit. Stage 1's own optimal point is itself
-      feasible for Stage 2 (same constraints, and it already hits the
-      shortfall cap exactly), so Stage 2 can never come back Infeasible
-      either. This is what replaces validate_minimum_demand_capacity/
-      validate_minimum_demand_forecast (Revision #3) - both were
-      pre-solve checks whose entire purpose was to reject a plan when
-      minimum demand couldn't be fully met; that's exactly the
-      behavior the soft-constraint model no longer wants, so both were
-      removed rather than kept alongside it.
-
-    When no product has a positive minimum_demand at all (the common
-    case), there is nothing to trade off against profit, so Stage 1 is
-    skipped entirely and only Stage 2 runs - identical in structure to
-    the single-solve model this replaces.
     """
 
-    shortfall_variables = create_shortfall_variables(products)
-
-    total_shortfall = 0
-
-    if shortfall_variables:
-        shortfall_problem = pulp.LpProblem(
-            f"minimum_demand_shortfall_{cycle_id}",
-            pulp.LpMinimize,
-        )
-
-        shortfall_stage_variables = create_decision_variables(
-            products
-        )
-
-        add_resource_constraints(
-            shortfall_problem,
-            shortfall_stage_variables,
-            cycle_resources,
-            requirements,
-        )
-
-        if forecast is not None:
-            add_forecast_constraints(
-                shortfall_problem,
-                shortfall_stage_variables,
-                forecast,
-            )
-
-        add_minimum_demand_constraints(
-            shortfall_problem,
-            shortfall_stage_variables,
-            shortfall_variables,
-            products,
-        )
-
-        shortfall_problem += pulp.lpSum(
-            shortfall_variables.values()
-        )
-
-        shortfall_problem.solve(
-            pulp.PULP_CBC_CMD(msg=False)
-        )
-
-        shortfall_status = pulp.LpStatus[
-            shortfall_problem.status
-        ]
-
-        if shortfall_status != "Optimal":
-            raise ValueError(
-                "Unable to determine the best achievable minimum-demand "
-                f"shortfall: status {shortfall_status}"
-            )
-
-        # Shortfall variables are integer-typed, but CBC returns the
-        # objective as a float that can land a hair off an exact
-        # integer (e.g. 1.9999999998) - rounding here (same convention
-        # already used below for extracted quantities) keeps Stage 2's
-        # cap from silently over-constraining by one unit.
-        total_shortfall = round(
-            pulp.value(shortfall_problem.objective) or 0
-        )
-
-        # Fresh variables for Stage 2 - PuLP variables are bound to the
-        # problem they were added to, so Stage 1's variables can't be
-        # reused here.
-        shortfall_variables = create_shortfall_variables(products)
+    # Step 0: Pre-solve minimum-demand validation - both cheap enough
+    # to run unconditionally, and raised before any LP is even built,
+    # so a known-infeasible minimum vector never reaches the solver as
+    # an unhelpful, generic "Infeasible" status. The third
+    # minimum-demand check (resource active/priced) needs a fresh DB
+    # query and runs from the router instead, before this function is
+    # even called - see production.py::optimize_production and
+    # validate_minimum_demand_resource_availability() above.
+    validate_minimum_demand_capacity(
+        products,
+        cycle_resources,
+        requirements,
+    )
+    validate_minimum_demand_forecast(
+        products,
+        forecast,
+    )
 
     problem = pulp.LpProblem(
         f"production_optimization_{cycle_id}",
@@ -607,24 +590,7 @@ def solve_optimization(
             forecast,
         )
 
-    # Step 4: Add minimum-demand constraints, capped at the best
-    # achievable total shortfall from Stage 1 - this is what preserves
-    # that shortfall level while Step 5 below maximizes profit.
-    if shortfall_variables:
-        add_minimum_demand_constraints(
-            problem,
-            variables,
-            shortfall_variables,
-            products,
-        )
-
-        problem += (
-            pulp.lpSum(shortfall_variables.values())
-            <= total_shortfall,
-            "minimum_demand_shortfall_cap",
-        )
-
-    # Step 5: Add profit objective
+    # Step 4: Add profit objective
     add_profit_objective(
         problem,
         variables,
@@ -633,7 +599,7 @@ def solve_optimization(
         cycle_resources,
     )
 
-    # Step 6: Solve the model
+    # Step 5: Solve the model
     problem.solve(
         pulp.PULP_CBC_CMD(msg=False)
     )
@@ -672,16 +638,6 @@ def solve_optimization(
 
         quantity = int(round(quantity))
 
-        shortfall_variable = shortfall_variables.get(product.id)
-
-        if shortfall_variable is None:
-            shortfall = Decimal("0")
-        else:
-            shortfall_value = shortfall_variable.value()
-            shortfall = Decimal(
-                str(int(round(shortfall_value or 0)))
-            )
-
         unit_profit = calculate_unit_profit(
             product,
             requirements,
@@ -700,7 +656,12 @@ def solve_optimization(
                 "unit_profit": unit_profit,
                 "total_profit": total_profit,
                 "minimum_demand": product.minimum_demand or Decimal("0"),
-                "shortfall": shortfall,
+                # Hard-floored at minimum_demand via lowBound above (or
+                # rejected pre-solve by validate_minimum_demand_capacity/
+                # validate_minimum_demand_forecast) - a returned,
+                # persisted allocation can never fall short of its own
+                # minimum, so shortfall is always 0 here.
+                "shortfall": Decimal("0"),
             }
         )
 
@@ -838,9 +799,9 @@ def calculate_optimized_resource_usage(
             )
 
         # Matches add_resource_constraints' zero-capacity treatment of
-        # an inactive resource (Revision #4) - reporting its stale
-        # available_quantity here would make it look like there was
-        # slack the solver never actually had access to.
+        # an inactive resource - reporting its stale available_quantity
+        # here would make it look like there was slack the solver
+        # never actually had access to.
         available_quantity = (
             cycle_resource.available_quantity
             if cycle_resource.resource.is_active

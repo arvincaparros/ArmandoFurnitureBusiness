@@ -14,7 +14,6 @@ from app.database.models import (
 
 from app.services.optimization import (
     create_decision_variables,
-    create_shortfall_variables,
     get_optimization_data,
     solve_optimization,
 )
@@ -53,18 +52,18 @@ def test_finalized_products_have_correct_minimum_demand(db):
         assert products_by_name[name].minimum_demand == expected
 
 
-# --- B. Decision/shortfall variables (Revision #4) -----------------------
+# --- B. Decision variables are hard-floored at minimum_demand --------------
 
 
-def test_decision_variable_lowbound_is_always_zero(
+def test_decision_variable_lowbound_equals_minimum_demand(
     db,
     test_products,
 ):
     """
-    Revision #4: minimum_demand is no longer wired in as the ILP
-    variable's lowBound - that was the hard constraint that made an
-    unreachable minimum block the whole plan. It's every decision
-    variable's lowBound now, regardless of minimum_demand.
+    minimum_demand is wired in directly as each variable's lowBound -
+    a hard ILP requirement, not a soft target. A product with
+    minimum_demand == 0 still gets lowBound == 0 (quantity 0 stays
+    legal for it).
     """
 
     products_by_name = {p.name: p for p in test_products}
@@ -83,38 +82,16 @@ def test_decision_variable_lowbound_is_always_zero(
 
     variables = create_decision_variables(shuffled)
 
+    expected_lowbound_by_name = {
+        "Test Dining Table": 7,
+        "Test Chair": 0,
+        "Test Bed Frame": 3,
+    }
+
     for product in test_products:
         variable = variables[product.id]
-        assert variable.lowBound == 0
+        assert variable.lowBound == expected_lowbound_by_name[product.name]
         assert variable.cat == "Integer"
-
-
-def test_shortfall_variables_created_only_for_positive_minimum_demand(
-    db,
-    test_products,
-):
-    products_by_name = {p.name: p for p in test_products}
-
-    products_by_name["Test Dining Table"].minimum_demand = Decimal("7")
-    products_by_name["Test Chair"].minimum_demand = Decimal("0")
-    products_by_name["Test Bed Frame"].minimum_demand = Decimal("3")
-    db.commit()
-
-    for product in test_products:
-        db.refresh(product)
-
-    shortfall_variables = create_shortfall_variables(test_products)
-
-    dining_table = products_by_name["Test Dining Table"]
-    chair = products_by_name["Test Chair"]
-    bed_frame = products_by_name["Test Bed Frame"]
-
-    assert dining_table.id in shortfall_variables
-    assert bed_frame.id in shortfall_variables
-    assert chair.id not in shortfall_variables
-
-    assert shortfall_variables[dining_table.id].lowBound == 0
-    assert shortfall_variables[dining_table.id].cat == "Integer"
 
 
 # --- C. Successful optimization (all minimums achievable) -----------------
@@ -156,9 +133,7 @@ def test_optimization_respects_minimum_demand_while_maximizing_profit(
     for product in test_products:
         assert quantity_by_name[product.name] >= product.minimum_demand
         assert isinstance(quantity_by_name[product.name], int)
-        # All minimums are achievable here - Revision #4 must produce
-        # zero shortfall everywhere, identical to the old hard-bound
-        # behavior.
+        # A hard-satisfied minimum is always reported with zero shortfall.
         assert shortfall_by_name[product.name] == Decimal("0")
 
     # Test Dining Table's minimum is 0 - legitimately allowed to stay 0.
@@ -168,8 +143,7 @@ def test_optimization_respects_minimum_demand_while_maximizing_profit(
     # allow it - Test Chair's minimum is 2 but nothing caps it there.
     assert quantity_by_name["Test Chair"] >= 2
 
-    # Independently re-verify every resource constraint still holds
-    # (Revision #4 must not weaken add_resource_constraints).
+    # Independently re-verify every resource constraint still holds.
     available_by_name = {
         cr.resource.name: cr.available_quantity
         for cr in data["cycle_resources"]
@@ -194,22 +168,55 @@ def test_optimization_respects_minimum_demand_while_maximizing_profit(
         )
 
 
-# --- D. Minimum-capacity shortage: plan still generated (Revision #4) -----
+def test_minimum_demand_zero_allows_zero_quantity(
+    db,
+    optimization_cycle,
+    test_products,
+    test_resources,
+):
+    """
+    A product with minimum_demand == 0 may legitimately be produced at
+    0 - the restored hard bound must never implicitly require a
+    positive quantity for a product with no minimum.
+    """
+
+    products_by_name = {p.name: p for p in test_products}
+    products_by_name["Test Chair"].minimum_demand = Decimal("0")
+    products_by_name["Test Dining Table"].minimum_demand = Decimal("0")
+    products_by_name["Test Bed Frame"].minimum_demand = Decimal("0")
+    db.commit()
+
+    data = get_optimization_data(db, optimization_cycle.id)
+
+    result = solve_optimization(
+        optimization_cycle.id,
+        data["products"],
+        data["cycle_resources"],
+        data["requirements"],
+    )
+
+    assert result["status"].upper() == "OPTIMAL"
+
+    for allocation in result["allocations"]:
+        assert allocation["quantity"] >= 0
+        assert allocation["shortfall"] == Decimal("0")
 
 
-def test_minimum_demand_capacity_shortage_produces_shortfall_not_rejection(
+# --- D. Minimum-capacity shortage: plan rejected, nothing saved -----------
+
+
+def test_minimum_demand_capacity_shortage_is_rejected(
     client,
     db,
     optimization_cycle,
     test_products,
 ):
     """
-    The exact scenario that used to return HTTP 400 with no plan at
-    all (validate_minimum_demand_capacity, removed in Revision #4).
-    The clarified business requirement: the system must still return
-    the best feasible plan, with a shortfall reported for whichever
-    product(s) can't reach their minimum - never reject the whole
-    plan over it.
+    The restored business requirement: if mandatory minimum demand
+    cannot be satisfied simultaneously for every product given this
+    cycle's resource capacities, the optimizer must reject the whole
+    plan with an actionable error - never silently return a plan that
+    violates someone's minimum.
     """
 
     products_by_name = {p.name: p for p in test_products}
@@ -235,52 +242,28 @@ def test_minimum_demand_capacity_shortage_produces_shortfall_not_rejection(
         json={"objective": "MAX_PROFIT"},
     )
 
-    assert response.status_code == 200
+    assert response.status_code == 400
 
-    data = response.json()
-    assert data["status"] == "OPTIMAL"
+    detail = response.json()["detail"]
+    assert "Test Epoxy" in detail
+    assert "Test Wood" in detail
 
-    allocations_by_name = {
-        a["product_name"]: a for a in data["allocations"]
-    }
-    chair = allocations_by_name["Test Chair"]
-    dining_table = allocations_by_name["Test Dining Table"]
-
-    assert chair["quantity"] < 20
-    assert Decimal(str(chair["minimum_demand"])) == Decimal("20")
-    assert Decimal(str(chair["shortfall"])) == Decimal("20") - Decimal(
-        str(chair["quantity"])
-    )
-
-    assert dining_table["quantity"] < 30
-    assert Decimal(str(dining_table["minimum_demand"])) == Decimal("30")
-    assert Decimal(str(dining_table["shortfall"])) == Decimal(
-        "30"
-    ) - Decimal(str(dining_table["quantity"]))
-
-    # Resource usage must never exceed availability, even under
-    # shortfall.
-    for usage in data["resource_usage"]:
-        assert Decimal(str(usage["required_quantity"])) <= Decimal(
-            str(usage["available_quantity"])
-        )
-
-    # An optimization run IS now persisted (unlike the old 400, which
-    # never reached save_optimization_history).
+    # No optimization run is persisted for a rejected plan.
     runs_after = db.scalar(
         select(OptimizationRun).where(
             OptimizationRun.production_cycle_id == optimization_cycle.id
         )
     )
-    assert runs_after is not None
-    if runs_before is not None:
-        assert runs_after.id != runs_before.id
+    if runs_before is None:
+        assert runs_after is None
+    else:
+        assert runs_after.id == runs_before.id
 
 
-# --- E. Forecast below minimum: plan still generated (Revision #4) --------
+# --- E. Forecast below minimum: plan rejected ------------------------------
 
 
-def test_forecast_below_minimum_produces_shortfall(
+def test_forecast_below_minimum_is_rejected(
     db,
     optimization_cycle,
     test_products,
@@ -294,29 +277,20 @@ def test_forecast_below_minimum_produces_shortfall(
 
     data = get_optimization_data(db, optimization_cycle.id)
 
-    result = solve_optimization(
-        optimization_cycle.id,
-        data["products"],
-        data["cycle_resources"],
-        data["requirements"],
-        forecast={chair.id: Decimal("4")},
-    )
-
-    assert result["status"] == "Optimal"
-
-    allocation = next(
-        a for a in result["allocations"] if a["product_id"] == chair.id
-    )
-
-    # Forecast is the only binding cap here (resources are ample) -
-    # the plan is generated, capped at forecast, with the gap to
-    # minimum_demand reported as shortfall rather than rejected.
-    assert allocation["quantity"] == 4
-    assert allocation["minimum_demand"] == Decimal("5")
-    assert allocation["shortfall"] == Decimal("1")
+    try:
+        solve_optimization(
+            optimization_cycle.id,
+            data["products"],
+            data["cycle_resources"],
+            data["requirements"],
+            forecast={chair.id: Decimal("4")},
+        )
+        assert False, "expected ValueError for forecast below minimum demand"
+    except ValueError as exc:
+        assert "Test Chair" in str(exc)
 
 
-def test_forecast_equal_to_minimum_has_no_shortfall(
+def test_forecast_equal_to_minimum_is_feasible(
     db,
     optimization_cycle,
     test_products,
@@ -383,10 +357,10 @@ def test_forecast_absent_entry_has_no_ceiling(
     assert allocation["shortfall"] == Decimal("0")
 
 
-# --- F. Resource lifecycle (Revision #4: inactive -> zero capacity) -------
+# --- F. Resource lifecycle ---------------------------------------------
 
 
-def test_minimum_demand_inactive_resource_produces_shortfall_not_rejection(
+def test_minimum_demand_inactive_required_resource_is_rejected(
     client,
     db,
     optimization_cycle,
@@ -394,10 +368,11 @@ def test_minimum_demand_inactive_resource_produces_shortfall_not_rejection(
     test_resources,
 ):
     """
-    An inactive resource is now modeled as zero available capacity
-    (add_resource_constraints), not a validation error - the affected
-    product is pushed toward a minimum-demand shortfall exactly like
-    any other capacity shortage, and the plan is still generated.
+    An inactive resource is modeled as zero available capacity
+    (add_resource_constraints) - a product whose minimum demand needs
+    a positive amount of it can never be satisfied, so this must be
+    rejected exactly like any other capacity shortage, never silently
+    forced to 0.
     """
 
     products_by_name = {p.name: p for p in test_products}
@@ -412,39 +387,9 @@ def test_minimum_demand_inactive_resource_produces_shortfall_not_rejection(
         json={"objective": "MAX_PROFIT"},
     )
 
-    assert response.status_code == 200
-    data = response.json()
-    assert data["status"] == "OPTIMAL"
-
-    # Every fixture product (Dining Table, Chair, Bed Frame) requires
-    # Test Nails, so zeroing its capacity forces all of them to 0 -
-    # this is the correct, physically consistent outcome (you cannot
-    # produce any of them without a required, now-unavailable input).
-    for allocation in data["allocations"]:
-        assert allocation["quantity"] == 0
-
-    chair = next(
-        a for a in data["allocations"] if a["product_name"] == "Test Chair"
-    )
-    assert Decimal(str(chair["shortfall"])) == Decimal("1")
-
-    for usage in data["resource_usage"]:
-        assert Decimal(str(usage["required_quantity"])) <= Decimal(
-            str(usage["available_quantity"])
-        )
-
-    # The reported resource_usage must reflect the same zero-capacity
-    # treatment the solver actually used - not the resource's stale,
-    # pre-deactivation available_quantity (which would make it look
-    # like there was unused slack rather than the actual reason every
-    # product was forced to 0).
-    nails_usage = next(
-        usage
-        for usage in data["resource_usage"]
-        if usage["resource_name"] == "Test Nails"
-    )
-    assert Decimal(str(nails_usage["available_quantity"])) == Decimal("0")
-    assert Decimal(str(nails_usage["remaining_quantity"])) == Decimal("0")
+    assert response.status_code == 400
+    detail = response.json()["detail"]
+    assert "Test Nails" in detail
 
 
 def test_minimum_demand_blocked_by_unpriced_resource_this_cycle(
@@ -458,9 +403,7 @@ def test_minimum_demand_blocked_by_unpriced_resource_this_cycle(
     Distinct from the inactive case above: a resource with NO
     CycleResource row at all this cycle has no known capacity to model
     as zero (not even a real zero) and no known cost - there's nothing
-    safe to fall back to, so this remains a hard validation error
-    (Revision #4 case 3: genuinely missing pricing/cost data must not
-    be silently treated as free/unlimited).
+    safe to fall back to, so this remains a hard validation error.
     """
 
     products_by_name = {p.name: p for p in test_products}
@@ -517,19 +460,11 @@ def test_minimum_demand_optimization_recovers_after_resource_reactivated(
     resources_by_name["Test Nails"].is_active = False
     db.commit()
 
-    shortfall_response = client.post(
+    rejected_response = client.post(
         f"/api/production-cycles/{optimization_cycle.id}/optimize",
         json={"objective": "MAX_PROFIT"},
     )
-    assert shortfall_response.status_code == 200
-    shortfall_data = shortfall_response.json()
-    chair_before = next(
-        a
-        for a in shortfall_data["allocations"]
-        if a["product_name"] == "Test Chair"
-    )
-    assert chair_before["quantity"] == 0
-    assert Decimal(str(chair_before["shortfall"])) == Decimal("1")
+    assert rejected_response.status_code == 400
 
     resources_by_name["Test Nails"].is_active = True
     db.commit()
@@ -552,39 +487,22 @@ def test_minimum_demand_optimization_recovers_after_resource_reactivated(
     assert Decimal(str(chair_after["shortfall"])) == Decimal("0")
 
 
-def test_inactive_resource_isolates_shortfall_to_dependent_product(
+def test_inactive_resource_for_one_product_blocks_only_that_products_minimum(
     db,
     optimization_cycle,
     test_products,
     test_resources,
 ):
     """
-    Distinguishes an inactive resource shared by every product (see
-    the "produces_shortfall_not_rejection" test above, where all three
-    fixture products depend on Test Nails) from one that only a single
-    product depends on - a resource going inactive must not drag down
-    products that never used it. Adds an ad-hoc resource used ONLY by
-    Test Chair, mirroring test_resource_usage_filtering.py's
-    _add_orphan_cycle_resource pattern for constructing one-off
-    resources/requirements directly in a test.
-
-    Checked against Test Bed Frame, not Test Dining Table: in this
-    fixture's ample-resource baseline (test_optimization.py::
-    test_optimization_returns_optimal_solution), Dining Table is
-    already the profit-maximizer's choice to produce 0 units with no
-    minimum demand and no inactive resource involved at all - it
-    wouldn't demonstrate anything here either way. Bed Frame produces
-    12 in that same baseline (and even more here, since Chair being
-    forced to 0 frees up the Wood/Nails/Labor it would otherwise have
-    competed for), making it the right witness for "a product with no
-    dependency on the inactive resource keeps being optimized
-    normally" - a strict quantity > 0 is what that requires, not an
-    exact number that depends on how much Chair's absence frees up.
+    Distinguishes an inactive resource shared by every product from
+    one that only a single product depends on - the rejection must be
+    driven by whichever product's minimum actually needs the now-zero
+    capacity resource, named clearly in the error, not a generic
+    whole-cycle failure.
     """
 
     products_by_name = {p.name: p for p in test_products}
     chair = products_by_name["Test Chair"]
-    bed_frame = products_by_name["Test Bed Frame"]
 
     chair.minimum_demand = Decimal("2")
     db.commit()
@@ -618,28 +536,16 @@ def test_inactive_resource_isolates_shortfall_to_dependent_product(
     try:
         data = get_optimization_data(db, optimization_cycle.id)
 
-        result = solve_optimization(
-            optimization_cycle.id,
-            data["products"],
-            data["cycle_resources"],
-            data["requirements"],
-        )
-
-        assert result["status"] == "Optimal"
-
-        allocations_by_id = {
-            a["product_id"]: a for a in result["allocations"]
-        }
-
-        chair_allocation = allocations_by_id[chair.id]
-        assert chair_allocation["quantity"] == 0
-        assert Decimal(str(chair_allocation["shortfall"])) == Decimal("2")
-
-        # Bed Frame has no dependency on the inactive resource at all
-        # - it must still be optimized normally (same baseline optimum
-        # as without Chair's issue at all), not dragged to 0 by
-        # Chair's shortage.
-        assert allocations_by_id[bed_frame.id]["quantity"] > 0
+        try:
+            solve_optimization(
+                optimization_cycle.id,
+                data["products"],
+                data["cycle_resources"],
+                data["requirements"],
+            )
+            assert False, "expected ValueError for inactive required resource"
+        except ValueError as exc:
+            assert "Test Chair-Only Resource" in str(exc)
     finally:
         db.delete(chair_only_requirement)
         db.delete(chair_only_cycle_resource)
@@ -728,7 +634,69 @@ def test_minimum_driven_plan_applies_and_persists_quantities(
     assert chair_result.shortfall == Decimal("0")
 
 
-# --- H. Revision #2 financial reconciliation --------------------------------
+def test_rejected_optimization_leaves_existing_allocations_untouched(
+    client,
+    db,
+    optimization_cycle,
+    test_products,
+):
+    """
+    Generate and apply a feasible plan first, then attempt a second
+    /optimize call whose minimum demand is impossible to satisfy. The
+    rejected second call must leave the previously applied
+    ProductionAllocation rows completely untouched.
+    """
+
+    products_by_name = {p.name: p for p in test_products}
+    products_by_name["Test Chair"].minimum_demand = Decimal("2")
+    db.commit()
+
+    optimize_response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize",
+        json={"objective": "MAX_PROFIT"},
+    )
+    assert optimize_response.status_code == 200
+
+    apply_response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize/apply"
+    )
+    assert apply_response.status_code == 200
+
+    allocations_before = {
+        allocation.product_id: allocation.quantity
+        for allocation in db.scalars(
+            select(ProductionAllocation).where(
+                ProductionAllocation.production_cycle_id
+                == optimization_cycle.id
+            )
+        ).all()
+    }
+    assert allocations_before
+
+    # Now push Test Chair's minimum demand past what Epoxy can supply.
+    products_by_name["Test Chair"].minimum_demand = Decimal("20")
+    db.commit()
+
+    rejected_response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize",
+        json={"objective": "MAX_PROFIT"},
+    )
+    assert rejected_response.status_code == 400
+
+    allocations_after = {
+        allocation.product_id: allocation.quantity
+        for allocation in db.scalars(
+            select(ProductionAllocation).where(
+                ProductionAllocation.production_cycle_id
+                == optimization_cycle.id
+            )
+        ).all()
+    }
+
+    assert allocations_after == allocations_before
+
+
+# --- H. Financial reconciliation --------------------------------
 
 
 def test_minimum_driven_plan_financials_reconcile(
@@ -774,37 +742,23 @@ def test_minimum_driven_plan_financials_reconcile(
     assert row_profit_sum == total_profit
 
 
-# --- I. Lexicographic two-stage correctness (Revision #4) -----------------
+# --- I. Profit maximization among feasible minimum-satisfying plans -------
 
 
-def test_shortfall_is_minimal_and_profit_is_maximal_among_tied_plans(
+def test_profit_maximized_among_minimum_satisfying_plans(
     db,
     optimization_cycle,
     test_products,
 ):
     """
-    Hand-verified tie-breaking scenario. Test Chair (unit_profit
-    2149.0000) and Test Bed Frame (unit_profit 10332.0000, from the
-    same ample-resource baseline as test_optimization_returns_optimal_
-    solution in test_optimization.py) both get minimum_demand=6 and
-    both require exactly 1 unit of a new zero-priced "Scarce" resource
-    per unit produced; only 10 units of Scarce are available (Wood/
-    Epoxy/Nails/Labor are all left with ample headroom at these
-    quantities, so Scarce is the only binding constraint). Test Dining
-    Table is capped at forecast=0 so it can't consume shared resources
-    and confound the analysis.
-
-    Since 6 + 6 = 12 > 10, at least 2 units of total shortfall are
-    mathematically unavoidable (chair + bed_frame <= 10 while each
-    needs 6) - Stage 1 must find total_shortfall == 2. That leaves a
-    genuine tie for Stage 2 to break: any (chair, bed_frame) split
-    summing to 10 with each <= 6 - e.g. (6, 4), (5, 5), or (4, 6) -
-    achieves that same minimal total shortfall of 2. Because Bed
-    Frame's unit_profit is far higher, maximizing profit among those
-    ties means giving Bed Frame its full minimum (0 shortfall) and
-    letting Chair absorb the entire shortfall - the opposite split
-    (chair=6, bed_frame=4) would be shortfall-optimal too, but far
-    less profitable (54222 vs 70588), so Stage 2 must reject it.
+    Hand-verified scenario, adapted from the resource-contention case
+    that used to prove Stage 2's tie-break under the soft-shortfall
+    model. Under the restored hard bound, both minimums are easily
+    within the 10-unit Scarce budget (6 + 2 = 8 <= 10), so there is no
+    forced shortfall at all - the optimizer must give every product
+    AT LEAST its minimum and then spend any remaining Scarce capacity
+    on whichever product is most profitable (Test Bed Frame, far
+    higher unit_profit than Test Chair).
     """
 
     products_by_name = {p.name: p for p in test_products}
@@ -812,8 +766,8 @@ def test_shortfall_is_minimal_and_profit_is_maximal_among_tied_plans(
     bed_frame = products_by_name["Test Bed Frame"]
     dining_table = products_by_name["Test Dining Table"]
 
-    chair.minimum_demand = Decimal("6")
-    bed_frame.minimum_demand = Decimal("6")
+    chair.minimum_demand = Decimal("2")
+    bed_frame.minimum_demand = Decimal("2")
     db.commit()
 
     scarce_resource = Resource(
@@ -867,26 +821,15 @@ def test_shortfall_is_minimal_and_profit_is_maximal_among_tied_plans(
         chair_allocation = allocations_by_id[chair.id]
         bed_frame_allocation = allocations_by_id[bed_frame.id]
 
-        total_shortfall = (
-            chair_allocation["shortfall"] + bed_frame_allocation["shortfall"]
-        )
-        assert total_shortfall == Decimal("2")
-
-        # Profit-maximal among the shortfall-minimal ties: Bed Frame
-        # (far more profitable) keeps its full minimum; Chair absorbs
-        # the entire unavoidable shortfall.
-        assert bed_frame_allocation["quantity"] == 6
+        assert chair_allocation["quantity"] >= 2
+        assert bed_frame_allocation["quantity"] >= 2
+        assert chair_allocation["shortfall"] == Decimal("0")
         assert bed_frame_allocation["shortfall"] == Decimal("0")
-        assert chair_allocation["quantity"] == 4
-        assert chair_allocation["shortfall"] == Decimal("2")
 
-        expected_profit = (
-            Decimal("4") * Decimal("2149.0000")
-            + Decimal("6") * Decimal("10332.0000")
-        )
-        assert chair_allocation["total_profit"] + bed_frame_allocation[
-            "total_profit"
-        ] == expected_profit
+        # All remaining Scarce capacity (10 - 2 - 2 = 6 units) must go
+        # to the more profitable product, Bed Frame, not Chair.
+        assert bed_frame_allocation["quantity"] == 8
+        assert chair_allocation["quantity"] == 2
 
         # Resource usage must never exceed availability.
         for usage in build_resource_usage_check(
