@@ -420,6 +420,19 @@ class OptimizationRun(Base):
         nullable=True,
     )
 
+    # Nullable on purpose and forever for rows saved before this
+    # column existed: there's no apply-time price snapshot to recover
+    # a historically accurate cost from (Product/CycleResource prices
+    # may have changed since), so an old run simply has no total_cost
+    # rather than one backfilled from today's prices. Populated going
+    # forward from build_optimization_result()'s own total_cost - the
+    # exact figure computed from this run's own allocations at solve
+    # time, never a second/independent cost formula.
+    total_cost: Mapped[Decimal | None] = mapped_column(
+        Numeric(12, 4),
+        nullable=True,
+    )
+
     production_cycle: Mapped["ProductionCycle"] = relationship(
         back_populates="optimization_runs",
     )

@@ -26,4 +26,7 @@ class OptimizationHistoryResponse(BaseModel):
     status: str
     objective_value: Decimal | None
     total_profit: Decimal | None
+    # Null forever for any run saved before this field existed - never
+    # backfilled from current prices (see OptimizationRun.total_cost).
+    total_cost: Decimal | None
     results: list[OptimizationHistoryResult]

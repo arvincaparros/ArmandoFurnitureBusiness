@@ -1304,6 +1304,7 @@ def test_save_optimization_history(
         started_at=started_at,
         completed_at=completed_at,
         result=result,
+        total_cost=Decimal("31428.0000"),
     )
 
     assert optimization_run.id is not None
@@ -1317,6 +1318,10 @@ def test_save_optimization_history(
 
     assert optimization_run.total_profit == (
         Decimal("63372.0000")
+    )
+
+    assert optimization_run.total_cost == (
+        Decimal("31428.0000")
     )
 
     assert optimization_run.objective_value == (
@@ -1387,6 +1392,10 @@ def test_optimize_saves_optimization_history(
         Decimal("149772.0000")
     )
 
+    assert optimization_run.total_cost == (
+        Decimal(str(data["total_cost"]))
+    )
+
     assert len(optimization_run.results) == 3
 
     result_by_product = {
@@ -1424,8 +1433,14 @@ def test_get_optimization_history(
 
     assert response.status_code == 200
 
+    # Scoped to this test's own cycle_id - the shared dev database can
+    # already hold optimization_runs rows belonging to other,
+    # unrelated production cycles (real historical data this test
+    # must never touch), so an unfiltered GET would be flaky
+    # depending on what else already exists.
     response = client.get(
-        "/api/optimization/history"
+        "/api/optimization/history",
+        params={"cycle_id": optimization_cycle.id},
     )
 
     assert response.status_code == 200
@@ -1446,7 +1461,50 @@ def test_get_optimization_history(
 
     assert history["total_profit"] == "149772.0000"
 
+    assert history["total_cost"] == "72228.0000"
+
     assert len(history["results"]) == 3
+
+
+def test_get_optimization_history_preserves_null_total_cost_for_pre_existing_runs(
+    client,
+    db,
+    optimization_cycle,
+):
+    """
+    A run saved before this column existed (simulated here by
+    inserting an OptimizationRun with no total_cost) must keep
+    reporting total_cost as null/None forever - never backfilled
+    from today's prices, and never coerced to a fabricated 0.
+    """
+
+    legacy_run = OptimizationRun(
+        production_cycle_id=optimization_cycle.id,
+        started_at=datetime(2026, 1, 1, 0, 0, 0),
+        completed_at=datetime(2026, 1, 1, 0, 0, 1),
+        duration_ms=1000,
+        status="OPTIMAL",
+        objective_value=Decimal("1000.0000"),
+        total_profit=Decimal("1000.0000"),
+    )
+
+    db.add(legacy_run)
+    db.commit()
+
+    response = client.get(
+        "/api/optimization/history",
+        params={"cycle_id": optimization_cycle.id},
+    )
+
+    assert response.status_code == 200
+
+    history = next(
+        run
+        for run in response.json()
+        if run["id"] == legacy_run.id
+    )
+
+    assert history["total_cost"] is None
 
 def test_get_optimization_history_by_cycle(
     client,

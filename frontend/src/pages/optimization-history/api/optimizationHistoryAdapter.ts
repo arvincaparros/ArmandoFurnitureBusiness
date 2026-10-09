@@ -14,6 +14,21 @@ function parseDecimal(value: string | null): number {
   return Number.isFinite(parsed) ? parsed : 0
 }
 
+// Distinct from parseDecimal above: null must stay null (a run saved
+// before total_cost existed, or any other genuinely-unknown figure),
+// never coerced to a fabricated 0 - same convention
+// productionAdapter.ts's parseNullableDecimal already uses for
+// cost/profit fields.
+function parseNullableDecimal(value: string | null): number | null {
+  if (value === null) {
+    return null
+  }
+
+  const parsed = Number(value)
+
+  return Number.isFinite(parsed) ? parsed : null
+}
+
 // started_at is a full ISO datetime ("2026-08-15T20:53:57.901496") -
 // only reformatted for display (T -> space, drop fractional seconds),
 // never reinterpreted or recalculated.
@@ -37,12 +52,13 @@ export function toUiOptimizationHistory(
     // this is a defensive fallback, not evidence of a real gap.
     duration: run.duration_ms ?? 0,
     totalProfit: parseDecimal(run.total_profit),
-    // No total-cost/total-revenue field exists anywhere on this
-    // response (confirmed against backend/app/schemas/
-    // optimization_history.py) - null here, not a fabricated 0 or
-    // derived estimate. OptimizationHistoryTable renders this as an
-    // explained dash rather than a number.
-    totalProductionCost: null,
+    // A solve-time snapshot from the backend (build_optimization_
+    // result()'s own total_cost, persisted the moment this run was
+    // saved - see backend/app/services/optimization_history.py) -
+    // null only for a run saved before that column existed, never a
+    // fabricated 0 or a value derived from current prices.
+    // OptimizationHistoryTable renders null as an explained dash.
+    totalProductionCost: parseNullableDecimal(run.total_cost),
     // Not provided by the backend as a count; the closest honest,
     // non-fabricated equivalent is the total recommended quantity
     // across this run's results - a display-only sum of real values

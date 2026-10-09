@@ -239,15 +239,11 @@ def optimize_production(
 
     completed_at = datetime.now()
 
-    save_optimization_history(
-        db=db,
-        cycle_id=cycle_id,
-        started_at=started_at,
-        completed_at=completed_at,
-        result=result,
-    )
-
-    return build_optimization_result(
+    # Computed once, before the save below, so the persisted
+    # total_cost snapshot and the total_cost returned in this same
+    # response are guaranteed to be the exact same figure - never two
+    # independent calculations that could drift from each other.
+    optimization_result = build_optimization_result(
         cycle_id,
         data["products"],
         data["cycle_resources"],
@@ -255,6 +251,17 @@ def optimize_production(
         result["allocations"],
         result["status"],
     )
+
+    save_optimization_history(
+        db=db,
+        cycle_id=cycle_id,
+        started_at=started_at,
+        completed_at=completed_at,
+        result=result,
+        total_cost=optimization_result["total_cost"],
+    )
+
+    return optimization_result
 
 @router.post(
     "/{cycle_id}/optimize/apply",

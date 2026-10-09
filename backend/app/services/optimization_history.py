@@ -1,4 +1,5 @@
 from datetime import datetime
+from decimal import Decimal
 
 from sqlalchemy.orm import Session, selectinload
 from sqlalchemy import select
@@ -15,10 +16,18 @@ def save_optimization_history(
     started_at: datetime,
     completed_at: datetime,
     result: dict,
+    total_cost: Decimal,
 ) -> OptimizationRun:
     """
     Save one optimization execution and its recommended
     production quantities.
+
+    total_cost is a snapshot, not recomputed here: the caller passes
+    build_optimization_result()'s own total_cost for this exact
+    result/allocations - the same prices already used for the
+    objective value and the API response - never a second,
+    independent cost formula, and never derived from whatever
+    ProductionAllocation rows happen to be committed right now.
     """
 
     duration_ms = int(
@@ -39,6 +48,7 @@ def save_optimization_history(
             allocation["total_profit"]
             for allocation in result["allocations"]
         ),
+        total_cost=total_cost,
     )
 
     db.add(optimization_run)

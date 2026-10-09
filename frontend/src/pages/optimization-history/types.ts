@@ -4,9 +4,8 @@ export interface OptimizationHistory {
   dateGenerated: string
   duration: number
   totalProfit: number
-  // null when the backend doesn't provide a cost figure for this run
-  // (GET /api/optimization/history has no total-cost field) - never a
-  // fabricated 0. See optimizationHistoryAdapter.ts.
+  // null only for a run saved before total_cost was tracked - never
+  // backfilled from current prices. See optimizationHistoryAdapter.ts.
   totalProductionCost: number | null
   productsProduced: number
 }

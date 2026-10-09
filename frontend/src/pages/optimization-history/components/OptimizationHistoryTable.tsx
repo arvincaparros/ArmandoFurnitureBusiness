@@ -12,11 +12,11 @@ interface OptimizationHistoryTableProps {
 }
 
 const NO_COST_DATA =
-  'Not provided by GET /api/optimization/history - this endpoint returns total_profit only, no production-cost figure.'
+  'Not available for optimizations run before this figure was tracked - never backfilled from current prices, to keep historical figures accurate.'
 
 // Same explained-dash pattern used by ProductTable.tsx for backend
-// fields that genuinely don't exist yet - explicit, not fabricated,
-// not silently dropped.
+// fields that are genuinely unknown for this row - explicit, not
+// fabricated, not silently dropped.
 const costDash = () => (
   <Tooltip label={NO_COST_DATA}>
     <span>—</span>

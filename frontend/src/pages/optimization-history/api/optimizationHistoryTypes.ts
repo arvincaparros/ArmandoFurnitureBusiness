@@ -1,10 +1,12 @@
-// Mirrors backend/app/schemas/optimization_history.py exactly. Notably
-// absent: any total-cost/total-revenue field - GET /api/optimization/
-// history only ever exposes total_profit (and objective_value) per
-// run, never a production-cost breakdown. See optimizationHistoryAdapter.ts
-// for how the UI handles that gap honestly rather than fabricating a
-// value. All Decimal fields arrive as JSON strings, never bare numbers,
-// matching every other Decimal field in this backend.
+// Mirrors backend/app/schemas/optimization_history.py exactly.
+// total_cost is a snapshot taken at solve time (from the same
+// build_optimization_result() figure the /optimize response itself
+// returns) - null for any run saved before that column existed, and
+// permanently null for those, never backfilled from current prices.
+// See optimizationHistoryAdapter.ts for how the UI handles that null
+// honestly rather than fabricating a value. All Decimal fields arrive
+// as JSON strings, never bare numbers, matching every other Decimal
+// field in this backend.
 
 export interface OptimizationHistoryResultResponse {
   id: number
@@ -23,5 +25,6 @@ export interface OptimizationHistoryRunResponse {
   status: string
   objective_value: string | null
   total_profit: string | null
+  total_cost: string | null
   results: OptimizationHistoryResultResponse[]
 }
