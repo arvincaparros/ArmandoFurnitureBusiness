@@ -28,6 +28,7 @@ const ResourceRowActions = ({
       <ActionIcon
         variant="subtle"
         color="blue"
+        aria-label={`Edit ${resource.name}`}
         onClick={() => onEdit?.(resource)}
       >
         <Pencil size={16} />

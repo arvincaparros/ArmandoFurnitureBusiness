@@ -90,3 +90,36 @@ export interface ProductionAllocationResponse {
   total_cost: string | null
   total_profit: string | null
 }
+
+// GET /api/production-cycles/{cycle_id}/feasibility - derives
+// whether the currently committed ProductionAllocation is still
+// feasible/optimal against the latest CycleResource availability
+// (backend/app/schemas/... - see Task 4). needs_reoptimization is
+// true whenever resources have changed since applied_at in a way
+// that could affect feasibility/optimality; bottlenecks is only
+// populated when is_feasible is false.
+export interface ResourceFeasibility {
+  resource_id: number
+  resource_name: string
+  unit: string
+  required_quantity: string
+  available_quantity: string
+  remaining_quantity: string
+  is_feasible: boolean
+}
+
+export interface ResourceBottleneck {
+  resource_id: number
+  resource_name: string
+  unit: string
+  shortage_quantity: string
+}
+
+export interface ProductionFeasibilityResponse {
+  cycle_id: number
+  is_feasible: boolean
+  resources: ResourceFeasibility[]
+  bottlenecks: ResourceBottleneck[]
+  needs_reoptimization: boolean
+  applied_at: string | null
+}

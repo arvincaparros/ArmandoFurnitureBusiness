@@ -1,3 +1,4 @@
+from datetime import datetime
 from decimal import Decimal
 
 import pulp
@@ -961,6 +962,8 @@ def apply_optimization(
         synchronize_session=False
     )
 
+    applied_at = datetime.utcnow()
+
     for allocation in allocations:
         quantity = allocation["quantity"]
 
@@ -972,6 +975,7 @@ def apply_optimization(
                 production_cycle_id=cycle_id,
                 product_id=allocation["product_id"],
                 quantity=quantity,
+                applied_at=applied_at,
             )
         )
 

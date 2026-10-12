@@ -26,6 +26,25 @@ export const notify = {
     })
   },
 
+  // `name` is accepted for a consistent call signature with the
+  // other notify.* helpers even though the message text doesn't
+  // currently interpolate it - keeping the parameter means a future
+  // per-resource-name variant of this message won't require every
+  // call site to change. The `void name` below is only to satisfy
+  // noUnusedParameters/no-unused-vars without renaming the parameter.
+  resourceNeedsReoptimization(name: string) {
+    void name
+
+    notifications.show({
+      color: 'orange',
+      title: 'Resource Updated — Re-optimization Required',
+      message:
+        'The resource quantity has been updated successfully. Your existing production allocation may no longer be feasible or optimal based on the updated resources. Please generate a new Optimal Production Plan and apply it to update your production allocation.',
+      icon: <Pencil size={18} />,
+      autoClose: false,
+    })
+  },
+
   deleted(name: string) {
     notifications.show({
       color: 'red',

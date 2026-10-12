@@ -46,6 +46,10 @@ const ProductionAllocationPage = () => {
     applyToProduction,
     isApplying,
     applyError,
+
+    needsReoptimization,
+    isAllocationInfeasible,
+    bottlenecks,
   } = useProductionAllocation()
 
   const [applyModalOpened, setApplyModalOpened] = useState(false)
@@ -158,6 +162,40 @@ const ProductionAllocationPage = () => {
           </Stack>
         </Grid.Col>
       </Grid>
+
+      {needsReoptimization && currentAllocation.length > 0 && (
+        <Alert
+          color={isAllocationInfeasible ? 'red' : 'orange'}
+          icon={<AlertCircle size={18} />}
+          mt="md"
+          title={
+            isAllocationInfeasible
+              ? 'Needs Review — Resource Shortage'
+              : 'Needs Re-optimization'
+          }
+        >
+          <Text size="sm">
+            Your existing production allocation needs
+            re-optimization: it may no longer be feasible or optimal
+            based on the updated resources. Please generate a new
+            Optimal Production Plan and apply it to update your
+            production allocation.
+          </Text>
+
+          {bottlenecks.length > 0 && (
+            <Text size="sm" mt="xs">
+              Shortage:{' '}
+              {bottlenecks
+                .map(
+                  (b) =>
+                    `${b.resourceName} is short by ${b.shortageQuantity} ${b.unit}`,
+                )
+                .join('; ')}
+              .
+            </Text>
+          )}
+        </Alert>
+      )}
 
       <Grid mt="md">
         <Grid.Col span={12}>

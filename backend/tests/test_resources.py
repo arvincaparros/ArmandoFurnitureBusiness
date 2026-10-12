@@ -4,6 +4,7 @@ from decimal import Decimal
 from app.database.models import (
     CycleResource,
     Product,
+    ProductionAllocation,
     ProductionCycle,
     ProductResourceRequirement,
     Resource,
@@ -793,9 +794,18 @@ def test_create_endpoint_rejects_every_case_and_whitespace_variant(client, db):
 # test_optimization_returns_optimal_solution).
 
 
-def test_update_cycle_resource_rejects_reduction_below_applied_consumption(
+def test_update_cycle_resource_allows_reduction_below_applied_consumption(
     client, db, optimization_cycle, test_resources,
 ):
+    """
+    Reducing a resource's available_quantity below what the currently
+    applied allocation consumes must now succeed - the system no
+    longer blocks this at write time (re-optimization is the intended
+    remediation, not a write-time rejection). The applied
+    ProductionAllocation rows themselves must be left completely
+    untouched by this edit.
+    """
+
     optimize_response = client.post(
         f"/api/production-cycles/{optimization_cycle.id}/optimize",
         json={"objective": "MAX_PROFIT"},
@@ -810,21 +820,35 @@ def test_update_cycle_resource_rejects_reduction_below_applied_consumption(
     resources_by_name = {r.name: r for r in test_resources}
     wood = resources_by_name["Test Wood"]
 
+    original_allocations = {
+        allocation.product_id: allocation.quantity
+        for allocation in db.query(ProductionAllocation).filter(
+            ProductionAllocation.production_cycle_id == optimization_cycle.id
+        ).all()
+    }
+    assert original_allocations
+
     response = client.patch(
         f"/api/production-cycles/{optimization_cycle.id}/resources/{wood.id}",
         json={"available_quantity": 500},
     )
 
-    assert response.status_code == 400
-    detail = response.json()["detail"]
-    assert "Wood" in detail
-    assert "804" in detail
+    assert response.status_code == 200
+    assert Decimal(response.json()["available_quantity"]) == Decimal("500")
 
     cycle_resource = db.query(CycleResource).filter(
         CycleResource.production_cycle_id == optimization_cycle.id,
         CycleResource.resource_id == wood.id,
     ).first()
-    assert cycle_resource.available_quantity == Decimal("1250.0000")
+    assert cycle_resource.available_quantity == Decimal("500.0000")
+
+    after_allocations = {
+        allocation.product_id: allocation.quantity
+        for allocation in db.query(ProductionAllocation).filter(
+            ProductionAllocation.production_cycle_id == optimization_cycle.id
+        ).all()
+    }
+    assert after_allocations == original_allocations
 
 
 def test_update_cycle_resource_allows_capacity_increase(
@@ -885,15 +909,14 @@ def test_update_cycle_resource_unit_price_only_edit_not_blocked_by_capacity(
     assert Decimal(response.json()["unit_price"]) == Decimal("99")
 
 
-def test_update_cycle_resource_labor_capacity_reduction_still_validated(
+def test_update_cycle_resource_labor_capacity_reduction_allowed(
     client, db, optimization_cycle, test_resources,
 ):
     """
-    Labor is exempt from the positive-unit-price rule (it may be 0 -
-    product labor cost is tracked separately via Product.labor_cost),
-    but it is NOT exempt from the capacity-integrity guard: it still
-    physically constrains production and the already-applied
-    allocation saturates it exactly (576/576 hours).
+    Labor was previously the one resource type still blocked on a
+    capacity-reducing edit even though it's exempt from the
+    positive-unit-price rule. The capacity-reduction guard is removed
+    entirely now, so this must succeed too.
     """
 
     optimize_response = client.post(
@@ -915,10 +938,8 @@ def test_update_cycle_resource_labor_capacity_reduction_still_validated(
         json={"available_quantity": 100, "unit_price": 0},
     )
 
-    assert response.status_code == 400
-    detail = response.json()["detail"]
-    assert "Labor" in detail
-    assert "576" in detail
+    assert response.status_code == 200
+    assert Decimal(response.json()["available_quantity"]) == Decimal("100")
 
 
 def test_update_cycle_resource_labor_zero_unit_price_still_valid(
@@ -980,3 +1001,38 @@ def test_update_cycle_resource_inactive_resource_capacity_reduction_not_blocked(
     finally:
         wood.is_active = True
         db.commit()
+
+
+def test_update_cycle_resource_allows_zero_available_quantity(
+    client, db, optimization_cycle, test_resources,
+):
+    """
+    0 is a valid non-negative available_quantity (a resource that is
+    completely out of stock this cycle) - the PATCH schema previously
+    rejected it with gt=0, independent of the capacity guard.
+    """
+
+    resources_by_name = {r.name: r for r in test_resources}
+    wood = resources_by_name["Test Wood"]
+
+    response = client.patch(
+        f"/api/production-cycles/{optimization_cycle.id}/resources/{wood.id}",
+        json={"available_quantity": 0},
+    )
+
+    assert response.status_code == 200
+    assert Decimal(response.json()["available_quantity"]) == Decimal("0")
+
+
+def test_update_cycle_resource_rejects_negative_available_quantity(
+    client, db, optimization_cycle, test_resources,
+):
+    resources_by_name = {r.name: r for r in test_resources}
+    wood = resources_by_name["Test Wood"]
+
+    response = client.patch(
+        f"/api/production-cycles/{optimization_cycle.id}/resources/{wood.id}",
+        json={"available_quantity": -1},
+    )
+
+    assert response.status_code == 422

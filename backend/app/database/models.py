@@ -316,6 +316,28 @@ class CycleResource(Base):
         nullable=False,
     )
 
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+    )
+
+    # Bumped on every available_quantity/unit_price edit
+    # (update_cycle_resource's plain `setattr` loop + SQLAlchemy's
+    # onupdate triggers this automatically, same as every other
+    # onupdate=datetime.utcnow column in this file) - this is the
+    # signal production_calculation.py::check_allocation_feasibility
+    # compares against ProductionAllocation.applied_at to decide
+    # needs_reoptimization. Resource.updated_at alone cannot stand in
+    # for this: a pure quantity/price edit never touches the
+    # `resources` table at all.
+    updated_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+        onupdate=datetime.utcnow,
+    )
+
     production_cycle: Mapped["ProductionCycle"] = relationship(
         back_populates="cycle_resources",
     )
@@ -354,6 +376,19 @@ class ProductionAllocation(Base):
     quantity: Mapped[Decimal] = mapped_column(
         Numeric(12, 4),
         nullable=False,
+    )
+
+    # Stamped by apply_optimization() at the instant this row was
+    # written - NULL only for rows inserted before this column existed
+    # (treated as "unknown, assume stale" by
+    # production_calculation.py::check_allocation_feasibility, never
+    # backfilled). apply_optimization() fully deletes and reinserts
+    # every row for a cycle on each call, so every row's applied_at is
+    # always exactly "when this specific allocation was committed" -
+    # never an update-in-place timestamp.
+    applied_at: Mapped[datetime | None] = mapped_column(
+        DateTime,
+        nullable=True,
     )
 
     production_cycle: Mapped["ProductionCycle"] = relationship(

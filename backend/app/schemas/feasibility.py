@@ -1,3 +1,4 @@
+from datetime import datetime
 from decimal import Decimal
 
 from pydantic import BaseModel
@@ -25,3 +26,5 @@ class ProductionFeasibilityResponse(BaseModel):
     is_feasible: bool
     resources: list[ResourceFeasibility]
     bottlenecks: list[ResourceBottleneck]
+    needs_reoptimization: bool
+    applied_at: datetime | None

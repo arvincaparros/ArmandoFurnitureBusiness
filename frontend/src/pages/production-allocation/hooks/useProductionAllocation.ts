@@ -8,6 +8,7 @@ import {
 
 import {
   applyOptimization,
+  fetchFeasibility,
   fetchOptimizationHistory,
   fetchProductionAllocations,
   fetchProductSummaries,
@@ -73,6 +74,20 @@ const useProductionAllocation = () => {
   const allocationsQuery = useQuery({
     queryKey: allocationsQueryKey,
     queryFn: () => fetchProductionAllocations(latestCycleId!),
+    enabled: latestCycleId !== null,
+  })
+
+  // Derives whether the committed allocation above has gone stale
+  // against the latest CycleResource availability (Task 4's backend
+  // endpoint) - e.g. a resource's available_quantity was edited after
+  // this allocation was applied. Shares the ['feasibility', cycleId]
+  // query key with useResources.ts::invalidateCycleResources, so a
+  // resource edit on that page correctly goes stale here too.
+  const feasibilityQueryKey = ['feasibility', latestCycleId]
+
+  const feasibilityQuery = useQuery({
+    queryKey: feasibilityQueryKey,
+    queryFn: () => fetchFeasibility(latestCycleId!),
     enabled: latestCycleId !== null,
   })
 
@@ -191,6 +206,10 @@ const useProductionAllocation = () => {
       queryClient.invalidateQueries({
         queryKey: ['resource-utilization-history'],
       })
+
+      queryClient.invalidateQueries({
+        queryKey: feasibilityQueryKey,
+      })
     },
   })
 
@@ -223,6 +242,14 @@ const useProductionAllocation = () => {
     applyToProduction: () => applyMutation.mutateAsync(),
     isApplying: applyMutation.isPending,
     applyError: applyMutation.error,
+
+    needsReoptimization: feasibilityQuery.data?.needs_reoptimization ?? false,
+    isAllocationInfeasible: feasibilityQuery.data?.is_feasible === false,
+    bottlenecks: (feasibilityQuery.data?.bottlenecks ?? []).map((b) => ({
+      resourceName: b.resource_name,
+      unit: b.unit,
+      shortageQuantity: Number(b.shortage_quantity),
+    })),
   }
 }
 

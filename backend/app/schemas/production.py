@@ -70,7 +70,7 @@ class CycleResourceCreate(BaseModel):
 class CycleResourceUpdate(BaseModel):
     available_quantity: Decimal | None = Field(
         default=None,
-        gt=0,
+        ge=0,
         decimal_places=4,
         max_digits=12,
     )

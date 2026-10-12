@@ -90,6 +90,18 @@ const useResources = () => {
       queryKey: RESOURCES_QUERY_KEY,
     })
 
+  // Production Allocation's "Needs Re-optimization" banner
+  // (useProductionAllocation.ts's feasibilityQueryKey) is derived from
+  // this cycle's CycleResource rows AND from the underlying Resource
+  // catalog (e.g. deactivating a resource via delete) - so this is
+  // called both from invalidateCycleResources below (the pricing
+  // write path) and directly from the catalog mutations' onSuccess
+  // callbacks, not just nested inside invalidateCycleResources.
+  const invalidateFeasibility = () =>
+    queryClient.invalidateQueries({
+      queryKey: ['feasibility', latestCycleId],
+    })
+
   const invalidateCycleResources = () => {
     queryClient.invalidateQueries({
       queryKey: ['cycle-resources', latestCycleId],
@@ -103,6 +115,8 @@ const useResources = () => {
     queryClient.invalidateQueries({
       queryKey: ['resource-utilization', latestCycleId],
     })
+
+    invalidateFeasibility()
   }
 
   // Create/update/delete all change the shared resource catalog that
@@ -125,6 +139,7 @@ const useResources = () => {
     onSuccess: () => {
       invalidateResources()
       invalidateResourcesCatalog()
+      invalidateFeasibility()
     },
   })
 
@@ -139,6 +154,7 @@ const useResources = () => {
     onSuccess: () => {
       invalidateResources()
       invalidateResourcesCatalog()
+      invalidateFeasibility()
     },
   })
 
@@ -147,6 +163,7 @@ const useResources = () => {
     onSuccess: () => {
       invalidateResources()
       invalidateResourcesCatalog()
+      invalidateFeasibility()
     },
   })
 

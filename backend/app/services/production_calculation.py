@@ -93,7 +93,31 @@ def check_allocation_feasibility(
 ) -> dict:
     """
     Compare calculated resource consumption against
-    the resources available in a production cycle.
+    the resources available in a production cycle, and derive whether
+    the currently applied allocation needs re-optimization.
+
+    An inactive resource is treated as zero available capacity here,
+    matching add_resource_constraints/find_resource_capacity_shortages -
+    never its stale available_quantity, so a deactivated resource the
+    allocation depends on correctly shows up as infeasible with a real
+    shortage rather than silently appearing fine.
+
+    needs_reoptimization is intentionally broader than is_feasible: an
+    allocation that's still fully feasible (e.g. a resource's capacity
+    was INCREASED) may no longer be optimal, so it's also flagged any
+    time a CycleResource row (available_quantity or unit_price) was
+    edited after the allocation's own applied_at - deliberately NOT a
+    plain Resource row edit, since that would also flag a pure cosmetic
+    rename/unit-label change the spec says must stay silent. A cycle
+    with no applied allocation at all has nothing to re-optimize, so
+    it's always False there regardless of feasibility. If multiple
+    ProductionAllocation rows disagree on applied_at (reachable only via
+    the manual-allocation API, never the optimizer's own apply path,
+    which always stamps every row with the same instant),
+    needs_reoptimization is forced True only when NONE of the rows have
+    a known applied_at at all; otherwise the earliest non-null
+    applied_at among them is used as the conservative staleness anchor,
+    even if some other row's applied_at is unknown.
     """
 
     consumption = calculate_resource_consumption(
@@ -116,6 +140,8 @@ def check_allocation_feasibility(
         ).first()
 
         if cycle_resource is None:
+            available_quantity = Decimal("0")
+        elif not cycle_resource.resource.is_active:
             available_quantity = Decimal("0")
         else:
             available_quantity = (
@@ -162,11 +188,48 @@ def check_allocation_feasibility(
         if not resource["is_feasible"]
     ]
 
+    allocation_rows = db.scalars(
+        select(ProductionAllocation).where(
+            ProductionAllocation.production_cycle_id == cycle_id
+        ).order_by(ProductionAllocation.id)
+    ).all()
+
+    needs_reoptimization = False
+    applied_at = None
+
+    if allocation_rows:
+        applied_at_values = [row.applied_at for row in allocation_rows]
+        known_applied_at_values = [
+            value for value in applied_at_values if value is not None
+        ]
+
+        applied_at = (
+            min(known_applied_at_values)
+            if known_applied_at_values
+            else None
+        )
+
+        if applied_at is None or not is_feasible:
+            needs_reoptimization = True
+        else:
+            cycle_resources = db.scalars(
+                select(CycleResource).where(
+                    CycleResource.production_cycle_id == cycle_id
+                )
+            ).all()
+
+            needs_reoptimization = any(
+                cycle_resource.updated_at > applied_at
+                for cycle_resource in cycle_resources
+            )
+
     return {
         "cycle_id": cycle_id,
         "is_feasible": is_feasible,
         "resources": resources,
         "bottlenecks": bottlenecks,
+        "needs_reoptimization": needs_reoptimization,
+        "applied_at": applied_at,
     }
 
 
@@ -184,8 +247,7 @@ def check_allocation_feasibility(
 # check_allocation_feasibility's return shape for a purpose neither
 # was designed for - so this shares the same aggregation approach
 # (join through ProductResourceRequirement/Resource, sum per
-# resource_id) without sharing the same function body, and
-# check_allocation_feasibility itself is untouched.
+# resource_id) without sharing the same function body.
 
 
 def calculate_resource_requirements_for_quantities(
@@ -330,8 +392,8 @@ def format_capacity_shortage_message(
 ) -> str:
     """
     Shared error-message formatting for every capacity-integrity guard
-    (manual allocation create/update, apply revalidation, capacity/
-    requirement edits) - always names the resource(s), the required
+    (manual allocation create/update, apply revalidation, requirement
+    edits) - always names the resource(s), the required
     and available amounts, and the shortage.
     """
 

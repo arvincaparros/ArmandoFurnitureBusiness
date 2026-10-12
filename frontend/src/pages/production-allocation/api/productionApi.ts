@@ -4,6 +4,7 @@ import type {
   OptimizationHistoryResponse,
   OptimizationResponse,
   ProductionAllocationResponse,
+  ProductionFeasibilityResponse,
   ProductSummary,
 } from './productionTypes'
 
@@ -69,6 +70,16 @@ export async function fetchProductionAllocations(
   const response = await apiClient.get<
     ProductionAllocationResponse[]
   >(`/api/production-cycles/${cycleId}/allocations`)
+
+  return response.data
+}
+
+export async function fetchFeasibility(
+  cycleId: number,
+): Promise<ProductionFeasibilityResponse> {
+  const response = await apiClient.get<ProductionFeasibilityResponse>(
+    `/api/production-cycles/${cycleId}/feasibility`,
+  )
 
   return response.data
 }

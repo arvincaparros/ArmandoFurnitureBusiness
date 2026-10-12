@@ -190,7 +190,8 @@ const AddResourceModal = ({
     unit.trim() !== '' &&
     (!isReactivating || selectedInactiveId !== null) &&
     (!hasCycle ||
-      (availableQuantity > 0 && (isLabor || unitPrice > 0)))
+      ((isAddMode ? availableQuantity > 0 : availableQuantity >= 0) &&
+        (isLabor || unitPrice > 0)))
 
   const handleSave = async () => {
     if (!isValid || isSubmitting) {

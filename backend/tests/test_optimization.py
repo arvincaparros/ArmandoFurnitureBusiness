@@ -1,3 +1,5 @@
+import pytest
+
 from datetime import datetime
 from decimal import Decimal
 
@@ -1920,3 +1922,406 @@ def test_optimize_production_respects_forecast(
             db.delete(allocation)
 
         db.commit()
+
+def test_apply_optimization_stamps_applied_at(
+    client, db, optimization_cycle,
+):
+    optimize_response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize",
+        json={"objective": "MAX_PROFIT"},
+    )
+    assert optimize_response.status_code == 200
+
+    before = datetime.utcnow()
+
+    apply_response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize/apply"
+    )
+    assert apply_response.status_code == 200
+
+    after = datetime.utcnow()
+
+    allocations = db.query(ProductionAllocation).filter(
+        ProductionAllocation.production_cycle_id == optimization_cycle.id
+    ).all()
+    assert allocations
+
+    for allocation in allocations:
+        assert allocation.applied_at is not None
+        assert before <= allocation.applied_at <= after
+
+
+def test_reapply_refreshes_applied_at(
+    client, db, optimization_cycle,
+):
+    optimize_response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize",
+        json={"objective": "MAX_PROFIT"},
+    )
+    assert optimize_response.status_code == 200
+
+    first_apply = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize/apply"
+    )
+    assert first_apply.status_code == 200
+
+    first_applied_at = db.query(ProductionAllocation).filter(
+        ProductionAllocation.production_cycle_id == optimization_cycle.id
+    ).first().applied_at
+
+    second_apply = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize/apply"
+    )
+    assert second_apply.status_code == 200
+
+    second_applied_at = db.query(ProductionAllocation).filter(
+        ProductionAllocation.production_cycle_id == optimization_cycle.id
+    ).first().applied_at
+
+    assert second_applied_at > first_applied_at
+
+
+def test_feasibility_needs_reoptimization_false_before_any_apply(
+    client, optimization_cycle,
+):
+    response = client.get(
+        f"/api/production-cycles/{optimization_cycle.id}/feasibility"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["needs_reoptimization"] is False
+
+
+def test_feasibility_needs_reoptimization_false_immediately_after_apply(
+    client, optimization_cycle,
+):
+    optimize_response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize",
+        json={"objective": "MAX_PROFIT"},
+    )
+    assert optimize_response.status_code == 200
+
+    apply_response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize/apply"
+    )
+    assert apply_response.status_code == 200
+
+    response = client.get(
+        f"/api/production-cycles/{optimization_cycle.id}/feasibility"
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["needs_reoptimization"] is False
+    assert body["is_feasible"] is True
+
+
+def test_feasibility_needs_reoptimization_true_after_capacity_increase(
+    client, db, optimization_cycle, test_resources,
+):
+    """
+    Scenario A: increasing a resource's capacity keeps the applied
+    allocation feasible, but it may no longer be optimal - the status
+    must still flip to needs_reoptimization=True.
+    """
+
+    optimize_response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize",
+        json={"objective": "MAX_PROFIT"},
+    )
+    assert optimize_response.status_code == 200
+
+    apply_response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize/apply"
+    )
+    assert apply_response.status_code == 200
+
+    resources_by_name = {r.name: r for r in test_resources}
+    wood = resources_by_name["Test Wood"]
+
+    patch_response = client.patch(
+        f"/api/production-cycles/{optimization_cycle.id}/resources/{wood.id}",
+        json={"available_quantity": 2000},
+    )
+    assert patch_response.status_code == 200
+
+    response = client.get(
+        f"/api/production-cycles/{optimization_cycle.id}/feasibility"
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["needs_reoptimization"] is True
+    assert body["is_feasible"] is True
+
+
+def test_feasibility_needs_reoptimization_true_and_shortage_shown_after_reduction(
+    client, db, optimization_cycle, test_resources,
+):
+    """
+    Scenario B: reducing Wood below the 804 units the applied
+    allocation consumes must surface both needs_reoptimization=True
+    and an explicit bottleneck naming the 304-unit shortage (500
+    available - 804 required).
+    """
+
+    optimize_response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize",
+        json={"objective": "MAX_PROFIT"},
+    )
+    assert optimize_response.status_code == 200
+
+    apply_response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize/apply"
+    )
+    assert apply_response.status_code == 200
+
+    resources_by_name = {r.name: r for r in test_resources}
+    wood = resources_by_name["Test Wood"]
+
+    patch_response = client.patch(
+        f"/api/production-cycles/{optimization_cycle.id}/resources/{wood.id}",
+        json={"available_quantity": 500},
+    )
+    assert patch_response.status_code == 200
+
+    response = client.get(
+        f"/api/production-cycles/{optimization_cycle.id}/feasibility"
+    )
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["needs_reoptimization"] is True
+    assert body["is_feasible"] is False
+
+    wood_bottleneck = next(
+        b for b in body["bottlenecks"] if b["resource_name"] == "Test Wood"
+    )
+    assert Decimal(wood_bottleneck["shortage_quantity"]) == Decimal("304")
+
+
+def test_feasibility_needs_reoptimization_false_after_reapply(
+    client, db, optimization_cycle, test_resources,
+):
+    optimize_response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize",
+        json={"objective": "MAX_PROFIT"},
+    )
+    assert optimize_response.status_code == 200
+
+    apply_response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize/apply"
+    )
+    assert apply_response.status_code == 200
+
+    resources_by_name = {r.name: r for r in test_resources}
+    wood = resources_by_name["Test Wood"]
+
+    patch_response = client.patch(
+        f"/api/production-cycles/{optimization_cycle.id}/resources/{wood.id}",
+        json={"available_quantity": 2000},
+    )
+    assert patch_response.status_code == 200
+
+    reoptimize_response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize",
+        json={"objective": "MAX_PROFIT"},
+    )
+    assert reoptimize_response.status_code == 200
+
+    reapply_response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize/apply"
+    )
+    assert reapply_response.status_code == 200
+
+    response = client.get(
+        f"/api/production-cycles/{optimization_cycle.id}/feasibility"
+    )
+
+    assert response.status_code == 200
+    assert response.json()["needs_reoptimization"] is False
+
+
+def test_optimize_uses_resource_quantities_edited_after_first_generation(
+    client, db, optimization_cycle, test_resources,
+):
+    """
+    Section 4: a /optimize call must reflect whatever was most
+    recently saved to CycleResource, not whatever was true the last
+    time /optimize ran for this cycle.
+    """
+
+    first_response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize",
+        json={"objective": "MAX_PROFIT"},
+    )
+    assert first_response.status_code == 200
+
+    resources_by_name = {r.name: r for r in test_resources}
+    wood = resources_by_name["Test Wood"]
+
+    patch_response = client.patch(
+        f"/api/production-cycles/{optimization_cycle.id}/resources/{wood.id}",
+        json={"available_quantity": 60},
+    )
+    assert patch_response.status_code == 200
+
+    second_response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize",
+        json={"objective": "MAX_PROFIT"},
+    )
+    assert second_response.status_code == 200
+
+    wood_usage = next(
+        item
+        for item in second_response.json()["resource_usage"]
+        if item["resource_name"] == "Test Wood"
+    )
+    assert Decimal(wood_usage["available_quantity"]) == Decimal("60")
+    assert Decimal(wood_usage["required_quantity"]) <= Decimal("60")
+
+
+def test_apply_optimization_rolls_back_on_mid_transaction_failure(
+    client, db, optimization_cycle, monkeypatch,
+):
+    """
+    Section 5: the Apply transaction (delete old allocations, insert
+    new ones, snapshot resource utilization, commit) must be all-or-
+    nothing. Forcing a failure after the delete+insert (inside the
+    same try block, before commit) must leave the PRE-apply allocation
+    exactly as it was - not empty, not partially written.
+
+    NOTE on TestClient behavior (confirmed by running this test, not
+    assumed ahead of time): the route in app/routers/production.py
+    only catches ValueError and converts it to HTTP 400 - a
+    RuntimeError raised inside apply_optimization's try/except is
+    re-raised as-is (after db.rollback()) and nothing downstream
+    catches it either. This project's `client` fixture in
+    conftest.py constructs a plain `TestClient(app)` without
+    overriding `raise_server_exceptions`, which defaults to True - so
+    an unhandled server-side exception propagates as a raised
+    Python exception in the test process rather than becoming an
+    HTTP 500 response. Running the test with
+    `assert second_apply.status_code == 500` confirmed this: the
+    `client.post(...)` call itself raised RuntimeError instead of
+    returning a response object, so the assertion is on the raise,
+    per the brief's Step 3 guidance.
+
+    NOTE on the oracle (added after code review): comparing only
+    `{product_id: quantity}` dicts before and after is insufficient.
+    The CBC solver is deterministic for unchanged inputs, so calling
+    /optimize twice in a row on an unchanged cycle produces numerically
+    identical plans. That means if a real atomicity bug let the second
+    apply's delete+insert actually commit (e.g. if `db.commit()` were
+    accidentally moved to fire before `save_resource_utilization_history()`
+    instead of after), the quantity-dict comparison would still pass,
+    because the second plan's quantities happen to coincide with the
+    first plan's quantities - it can't tell "nothing was touched" apart
+    from "the same values got silently re-committed". To close that gap,
+    this test also captures each allocation row's `applied_at` (set by
+    `apply_optimization()` via its own `datetime.utcnow()` call at apply
+    time) before and after the simulated failure. A genuine rollback
+    leaves `applied_at` exactly as the FIRST apply set it. A bug that let
+    the second apply's delete+insert commit would stamp those rows with
+    a NEW, strictly later `applied_at` from that apply's own call -
+    regardless of whether the quantities happen to match - so this
+    signal is immune to the "two plans happen to coincide" problem.
+    """
+
+    first_optimize = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize",
+        json={"objective": "MAX_PROFIT"},
+    )
+    assert first_optimize.status_code == 200
+
+    first_apply = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize/apply"
+    )
+    assert first_apply.status_code == 200
+
+    original_allocations = {
+        allocation.product_id: allocation.quantity
+        for allocation in db.query(ProductionAllocation).filter(
+            ProductionAllocation.production_cycle_id == optimization_cycle.id
+        ).all()
+    }
+    assert original_allocations
+
+    original_applied_at = {
+        allocation.product_id: allocation.applied_at
+        for allocation in db.query(ProductionAllocation).filter(
+            ProductionAllocation.production_cycle_id == optimization_cycle.id
+        ).all()
+    }
+    assert all(ts is not None for ts in original_applied_at.values())
+
+    second_optimize = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize",
+        json={"objective": "MAX_PROFIT"},
+    )
+    assert second_optimize.status_code == 200
+
+    def _boom(*args, **kwargs):
+        raise RuntimeError("simulated failure during apply")
+
+    monkeypatch.setattr(
+        "app.services.optimization.save_resource_utilization_history",
+        _boom,
+    )
+
+    with pytest.raises(RuntimeError):
+        client.post(
+            f"/api/production-cycles/{optimization_cycle.id}/optimize/apply"
+        )
+
+    db.rollback()
+
+    after_allocations = {
+        allocation.product_id: allocation.quantity
+        for allocation in db.query(ProductionAllocation).filter(
+            ProductionAllocation.production_cycle_id == optimization_cycle.id
+        ).all()
+    }
+    assert after_allocations == original_allocations
+
+    after_applied_at = {
+        allocation.product_id: allocation.applied_at
+        for allocation in db.query(ProductionAllocation).filter(
+            ProductionAllocation.production_cycle_id == optimization_cycle.id
+        ).all()
+    }
+    assert after_applied_at == original_applied_at
+
+
+def test_resource_edit_never_touches_optimization_history(
+    client, db, optimization_cycle, test_resources,
+):
+    """
+    Section 7: editing a CycleResource must never delete or modify any
+    OptimizationRun/OptimizationResult row.
+    """
+
+    optimize_response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize",
+        json={"objective": "MAX_PROFIT"},
+    )
+    assert optimize_response.status_code == 200
+
+    before_count = db.query(OptimizationRun).filter(
+        OptimizationRun.production_cycle_id == optimization_cycle.id
+    ).count()
+    assert before_count > 0
+
+    resources_by_name = {r.name: r for r in test_resources}
+    wood = resources_by_name["Test Wood"]
+
+    patch_response = client.patch(
+        f"/api/production-cycles/{optimization_cycle.id}/resources/{wood.id}",
+        json={"available_quantity": 1},
+    )
+    assert patch_response.status_code == 200
+
+    after_count = db.query(OptimizationRun).filter(
+        OptimizationRun.production_cycle_id == optimization_cycle.id
+    ).count()
+    assert after_count == before_count

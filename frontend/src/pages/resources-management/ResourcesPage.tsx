@@ -78,6 +78,7 @@ const ResourcesPage = () => {
     pricing: { available_quantity: number; unit_price: number } | null,
   ) => {
     let resourceId: number
+    let notifyAction: () => void
 
     if (selectedResource) {
       await updateResource({
@@ -87,7 +88,29 @@ const ResourcesPage = () => {
 
       resourceId = selectedResource.id
 
-      notify.updated(payload.name ?? selectedResource.name)
+      const quantityChanged =
+        pricing !== null &&
+        pricing.available_quantity !== selectedResource.availableQuantity
+
+      const unitPriceChanged =
+        pricing !== null &&
+        pricing.unit_price !== selectedResource.unitPrice
+
+      const optimizationRelevantFieldChanged =
+        ('resource_type' in payload &&
+          payload.resource_type !== undefined &&
+          payload.resource_type !== selectedResource.resourceType) ||
+        ('is_active' in payload &&
+          payload.is_active !== undefined &&
+          payload.is_active !== selectedResource.isActive)
+
+      notifyAction =
+        quantityChanged || unitPriceChanged || optimizationRelevantFieldChanged
+          ? () =>
+              notify.resourceNeedsReoptimization(
+                payload.name ?? selectedResource.name,
+              )
+          : () => notify.updated(payload.name ?? selectedResource.name)
     } else {
       const created = await createResource(
         payload as ResourceCreateRequest,
@@ -95,17 +118,22 @@ const ResourcesPage = () => {
 
       resourceId = created.id
 
-      notify.added(payload.name ?? '')
+      notifyAction = () => notify.added(payload.name ?? '')
     }
 
     // Availability/price are a second write against CycleResource
     // (see useResources.ts) - only attempted when the modal actually
     // collected them (a production cycle exists), so creating a
     // resource with no cycle yet still succeeds for its global
-    // fields.
+    // fields. The success notification is deliberately deferred until
+    // after this write (or skipped entirely, if there's none) - firing
+    // it any earlier would tell the user the save succeeded even if
+    // this part then fails.
     if (pricing) {
       await savePricing({ resourceId, data: pricing })
     }
+
+    notifyAction()
 
     setSelectedResource(null)
     setOpened(false)
