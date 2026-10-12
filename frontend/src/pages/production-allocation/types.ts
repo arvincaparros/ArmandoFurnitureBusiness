@@ -16,6 +16,15 @@ export interface ProductionPlan {
   totalRevenue: number
   totalCost: number | null
   totalProfit: number | null
+
+  // Adaptive minimum demand (v2 plan). null for Current Production
+  // Allocation rows (fromAllocations) - the backend's applied-
+  // allocation endpoint (ProductionAllocationFinancialsResponse)
+  // genuinely has no minimum_demand/shortfall fields at all, unlike
+  // the fresh-optimize and history endpoints, which both already
+  // carry them. Never fabricated as 0 for that row shape.
+  minimumDemand: number | null
+  shortfall: number | null
 }
 
 export interface OptimizationSummary {

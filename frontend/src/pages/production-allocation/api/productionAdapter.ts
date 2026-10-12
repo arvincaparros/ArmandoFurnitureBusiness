@@ -101,6 +101,8 @@ export function fromOptimizeResponse(
         totalRevenue,
         totalCost,
         totalProfit,
+        minimumDemand: parseDecimal(allocation.minimum_demand),
+        shortfall: parseDecimal(allocation.shortfall),
       }
     },
   )
@@ -161,6 +163,8 @@ export function fromHistoryRun(
       totalRevenue,
       totalCost,
       totalProfit,
+      minimumDemand: parseDecimal(result.minimum_demand),
+      shortfall: parseDecimal(result.shortfall),
     }
   })
 
@@ -223,5 +227,11 @@ export function fromAllocations(
     totalRevenue: parseDecimal(allocation.total_revenue),
     totalCost: parseNullableDecimal(allocation.total_cost),
     totalProfit: parseNullableDecimal(allocation.total_profit),
+    // ProductionAllocationFinancialsResponse has no minimum_demand/
+    // shortfall at all (unlike the fresh-optimize and history
+    // endpoints) - null here is a real "not available for this row
+    // shape", never a fabricated 0.
+    minimumDemand: null,
+    shortfall: null,
   }))
 }

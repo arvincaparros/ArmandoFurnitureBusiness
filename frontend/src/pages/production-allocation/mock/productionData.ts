@@ -11,6 +11,8 @@ export const productionPlans: ProductionPlan[] = [
     totalRevenue: 84000,
     totalCost: 54000,
     totalProfit: 30000,
+    minimumDemand: null,
+    shortfall: null,
   },
   {
     id: 2,
@@ -19,6 +21,8 @@ export const productionPlans: ProductionPlan[] = [
     totalRevenue: 66000,
     totalCost: 42000,
     totalProfit: 24000,
+    minimumDemand: null,
+    shortfall: null,
   },
   {
     id: 3,
@@ -27,6 +31,8 @@ export const productionPlans: ProductionPlan[] = [
     totalRevenue: 78000,
     totalCost: 51000,
     totalProfit: 27000,
+    minimumDemand: null,
+    shortfall: null,
   },
   {
     id: 4,
@@ -35,6 +41,8 @@ export const productionPlans: ProductionPlan[] = [
     totalRevenue: 57400,
     totalCost: 41680,
     totalProfit: 15720,
+    minimumDemand: null,
+    shortfall: null,
   },
 ]
 

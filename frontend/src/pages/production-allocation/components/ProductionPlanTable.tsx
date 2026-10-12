@@ -102,6 +102,28 @@ const ProductionPlanTable = ({
       textAlign: 'center',
     },
     {
+      accessor: 'shortfall',
+      title: 'Unmet Demand',
+      textAlign: 'center',
+      // Adaptive minimum demand (v2 plan): shortfall is null for
+      // Current Production Allocation rows (no backend field at all
+      // for that endpoint - see types.ts), and 0 for a fully-satisfied
+      // or zero-minimum product - only a real, positive shortfall
+      // gets a visible, non-"—" value, so the common case stays quiet.
+      render: (row) =>
+        row.shortfall === null || row.shortfall <= 0 ? (
+          '—'
+        ) : (
+          <Tooltip
+            label={`Minimum demand ${row.minimumDemand ?? row.shortfall} - resources could not fully satisfy it this cycle.`}
+          >
+            <Badge color="orange" variant="light" size="sm">
+              {row.shortfall} short
+            </Badge>
+          </Tooltip>
+        ),
+    },
+    {
       accessor: 'totalCost',
       title: 'Total Cost',
       textAlign: 'right',

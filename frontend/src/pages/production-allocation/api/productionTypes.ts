@@ -18,6 +18,8 @@ export interface OptimizationAllocation {
   quantity: number
   unit_profit: string
   total_profit: string
+  minimum_demand: string
+  shortfall: string
 }
 
 export interface OptimizationResponse {
@@ -41,6 +43,8 @@ export interface OptimizationHistoryResult {
   recommended_quantity: string
   unit_profit: string
   total_profit: string
+  minimum_demand: string
+  shortfall: string
 }
 
 export interface OptimizationHistoryResponse {

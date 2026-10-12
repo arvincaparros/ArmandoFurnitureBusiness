@@ -54,6 +54,18 @@ const ProductionAllocationPage = () => {
 
   const [applyModalOpened, setApplyModalOpened] = useState(false)
 
+  // Adaptive minimum demand (v2 plan): a nonzero shortfall on a
+  // freshly-generated preview row means the optimizer had to deviate
+  // from the original minimum vector - surfaced once here rather than
+  // relying on the reader to notice individual "Unmet Demand" cells.
+  // Scoped to `plans` (the preview) only, not `currentAllocation` (the
+  // applied plan) - that table renders its own Unmet Demand cells
+  // regardless, so an already-applied adaptive plan is never hidden,
+  // just not re-announced here on a later page visit.
+  const hasAdaptiveShortfall = plans.some(
+    (plan) => (plan.shortfall ?? 0) > 0,
+  )
+
   const handleConfirmApply = async () => {
     await applyToProduction()
     notify.applied()
@@ -118,6 +130,22 @@ const ProductionAllocationPage = () => {
             generateError,
             'Unable to generate a production plan. Please try again.',
           )}
+        </Alert>
+      )}
+
+      {hasAdaptiveShortfall && (
+        <Alert
+          color="orange"
+          icon={<AlertCircle size={18} />}
+          mt="md"
+          title="Adaptive optimization applied"
+        >
+          Resources this cycle could not fully satisfy every product's
+          minimum demand, so production targets were automatically
+          adjusted to stay within capacity while covering as many
+          furniture types as possible. See "Unmet Demand" below for
+          which products are affected - original minimum demand values
+          are unchanged.
         </Alert>
       )}
 
