@@ -28,3 +28,35 @@ export async function fetchProductionAllocations(
 
   return response.data
 }
+
+// GET /api/production-cycles/{cycle_id}/feasibility - local, minimal
+// duplicate of production-allocation/api/productionApi.ts's
+// ProductionFeasibilityResponse/fetchFeasibility, same convention as
+// ProductionAllocationResponse/fetchProductionAllocations above. Used
+// here only to tell whether the last APPLIED allocation still fits
+// current resource capacity, never the Adaptive Optimization preview
+// (that preview is never persisted and has no applied_at).
+export interface ResourceFeasibilityBottleneck {
+  resource_id: number
+  resource_name: string
+  unit: string
+  shortage_quantity: string
+}
+
+export interface ProductionFeasibilityResponse {
+  cycle_id: number
+  is_feasible: boolean
+  bottlenecks: ResourceFeasibilityBottleneck[]
+  needs_reoptimization: boolean
+  applied_at: string | null
+}
+
+export async function fetchFeasibility(
+  cycleId: number,
+): Promise<ProductionFeasibilityResponse> {
+  const response = await apiClient.get<ProductionFeasibilityResponse>(
+    `/api/production-cycles/${cycleId}/feasibility`,
+  )
+
+  return response.data
+}

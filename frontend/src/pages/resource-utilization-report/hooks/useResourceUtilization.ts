@@ -2,7 +2,10 @@ import { useMemo } from 'react'
 import { useQuery } from '@tanstack/react-query'
 
 import { fetchResourceUtilization } from '../api/utilizationApi'
-import { fetchProductionAllocations } from '../api/productionAllocationApi'
+import {
+  fetchFeasibility,
+  fetchProductionAllocations,
+} from '../api/productionAllocationApi'
 
 import {
   toUiAtRiskResources,
@@ -48,6 +51,32 @@ const useResourceUtilization = () => {
   })
 
   const hasAppliedAllocation = (allocationsQuery.data ?? []).length > 0
+
+  // Same ['feasibility', cycleId] query key as
+  // production-allocation/hooks/useProductionAllocation.ts - shared
+  // verbatim so this dedupes with that page's own fetch rather than
+  // issuing a second request, same convention as the
+  // 'production-allocations' query above. Tells whether the last
+  // APPLIED allocation (never the Adaptive Optimization preview,
+  // which has no applied_at) still fits current resource capacity.
+  const feasibilityQuery = useQuery({
+    queryKey: ['feasibility', latestCycleId],
+    queryFn: () => fetchFeasibility(latestCycleId!),
+    enabled: latestCycleId !== null,
+  })
+
+  const needsReoptimization =
+    feasibilityQuery.data?.needs_reoptimization ?? false
+  const isAllocationInfeasible =
+    feasibilityQuery.data?.is_feasible === false
+  const appliedAt = feasibilityQuery.data?.applied_at ?? null
+  const feasibilityBottlenecks = (
+    feasibilityQuery.data?.bottlenecks ?? []
+  ).map((bottleneck) => ({
+    resourceName: bottleneck.resource_name,
+    unit: bottleneck.unit,
+    shortageQuantity: Number(bottleneck.shortage_quantity),
+  }))
 
   const summary = useMemo(
     () =>
@@ -99,6 +128,13 @@ const useResourceUtilization = () => {
       isCycleError
       || utilizationQuery.isError
       || allocationsQuery.isError,
+
+    needsReoptimization,
+    isAllocationInfeasible,
+    appliedAt,
+    feasibilityBottlenecks,
+    isFeasibilityLoading: feasibilityQuery.isLoading,
+    isFeasibilityError: feasibilityQuery.isError,
   }
 }
 
