@@ -47,10 +47,12 @@ export function toUiOptimizationHistory(
     id: run.id,
     optimizationId: toOptimizationId(run.id),
     dateGenerated: toDisplayDate(run.started_at),
-    // duration_ms is nullable in the schema, but every existing
-    // write path (save_optimization_history) always computes it -
-    // this is a defensive fallback, not evidence of a real gap.
-    duration: run.duration_ms ?? 0,
+    // duration_ms is what the backend persists (save_optimization_
+    // history derives it from the run's own start/end timestamps), but
+    // this page mirrors a source spreadsheet that records seconds -
+    // converted for display only, never rounded, so 599400 ms shows as
+    // exactly 599.4 s.
+    duration: (run.duration_ms ?? 0) / 1000,
     totalProfit: parseDecimal(run.total_profit),
     // A solve-time snapshot from the backend (build_optimization_
     // result()'s own total_cost, persisted the moment this run was
@@ -59,16 +61,21 @@ export function toUiOptimizationHistory(
     // fabricated 0 or a value derived from current prices.
     // OptimizationHistoryTable renders null as an explained dash.
     totalProductionCost: parseNullableDecimal(run.total_cost),
-    // Not provided by the backend as a count; the closest honest,
-    // non-fabricated equivalent is the total recommended quantity
-    // across this run's results - a display-only sum of real values
-    // already returned by this same run, not a recalculation of the
-    // optimization algorithm itself.
-    productsProduced: run.results.reduce(
-      (total, result) =>
-        total + parseDecimal(result.recommended_quantity),
-      0,
-    ),
+    // An imported historical record stores this aggregate directly,
+    // because it deliberately carries no per-product results to sum
+    // (is_summary_only) - showing the stored figure is what keeps this
+    // page matching the source spreadsheet instead of reading 0.
+    // Native runs leave products_produced null and keep the derived
+    // sum: a display-only total of real values already returned by
+    // this same run, not a recalculation of the optimization itself.
+    productsProduced:
+      run.products_produced !== null
+        ? run.products_produced
+        : run.results.reduce(
+            (total, result) =>
+              total + parseDecimal(result.recommended_quantity),
+            0,
+          ),
   }))
 }
 

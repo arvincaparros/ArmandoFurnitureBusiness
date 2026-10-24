@@ -41,9 +41,12 @@ function formatTime(iso: string): string {
 
 // /api/optimization/history is ordered newest-first (verified in
 // backend/app/services/optimization_history.py, same as the
-// Dashboard integration's finding). Only an OPTIMAL run represents a
-// usable plan - a failed/infeasible run is treated as "no plan yet"
-// rather than displayed.
+// Dashboard integration's finding). Only an OPTIMAL run with real
+// product-level results represents a usable plan - a
+// failed/infeasible run is treated as "no plan yet" rather than
+// displayed, and a summary-only imported record is never a plan at
+// all: it has no results to preview, and the backend rejects applying
+// it before touching the current allocation.
 export function findLatestOptimalRun(
   history: OptimizationHistoryResponse[] | undefined,
 ): OptimizationHistoryResponse | null {
@@ -51,7 +54,14 @@ export function findLatestOptimalRun(
     return null
   }
 
-  return history.find((run) => run.status === 'OPTIMAL') ?? null
+  return (
+    history.find(
+      (run) =>
+        run.status === 'OPTIMAL' &&
+        !run.is_summary_only &&
+        run.results.length > 0,
+    ) ?? null
+  )
 }
 
 interface ProductionResult {

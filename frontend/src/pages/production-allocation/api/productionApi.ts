@@ -13,12 +13,25 @@ import type {
 // /api/production-cycles/latest) instead of fetching the whole list
 // here - see the Production Cycle Selection Consistency Audit.
 
+// include_hidden=true is this page's own choice: a page that
+// previews and applies the live plan must never be blinded if a run
+// is hidden from Optimization History. The approved cleanup leaves
+// every row visible, so it has no effect today. The backend still
+// resolves "latest" itself on Apply, so the flag only affects which
+// runs this page can see. Summary-only records are filtered out in
+// productionAdapter.ts::findLatestOptimalRun.
 export async function fetchOptimizationHistory(
   cycleId: number,
+  includeHidden = false,
 ): Promise<OptimizationHistoryResponse[]> {
   const response = await apiClient.get<OptimizationHistoryResponse[]>(
     '/api/optimization/history',
-    { params: { cycle_id: cycleId } },
+    {
+      params: {
+        cycle_id: cycleId,
+        ...(includeHidden ? { include_hidden: true } : {}),
+      },
+    },
   )
 
   return response.data

@@ -49,6 +49,17 @@ def save_optimization_history(
             for allocation in result["allocations"]
         ),
         total_cost=total_cost,
+        # Summed from this run's own allocations - the same quantities
+        # persisted as OptimizationResult rows just below, so a native
+        # run's stored count and its derived sum always agree.
+        products_produced=int(
+            sum(
+                allocation["quantity"]
+                for allocation in result["allocations"]
+            )
+        ),
+        is_history_visible=True,
+        is_summary_only=False,
     )
 
     db.add(optimization_run)
@@ -75,7 +86,16 @@ def save_optimization_history(
 def get_optimization_history(
     db: Session,
     cycle_id: int | None = None,
+    include_hidden: bool = False,
 ):
+    """
+    Newest-first history. A run marked is_history_visible=false is
+    left out by default; include_hidden=true exposes it for a caller
+    that must operate on the live plan rather than browse history.
+    The approved cleanup imports only visible records and native runs
+    are always saved visible, so no row is hidden today.
+    """
+
     statement = (
         select(OptimizationRun)
         # OptimizationHistoryResponse serializes every result's
@@ -89,9 +109,17 @@ def get_optimization_history(
             )
         )
         .order_by(
-            OptimizationRun.started_at.desc()
+            OptimizationRun.started_at.desc(),
+            # Tie-break for two runs saved in the same clock tick: the
+            # same newest-first rule the "latest run" lookups use.
+            OptimizationRun.id.desc(),
         )
     )
+
+    if not include_hidden:
+        statement = statement.where(
+            OptimizationRun.is_history_visible.is_(True)
+        )
 
     if cycle_id is not None:
         statement = statement.where(
@@ -150,6 +178,11 @@ def get_latest_optimal_run(
     reused here so the dashboard summary's latest_optimization_profit
     always refers to the same run as the dashboard's Expected Revenue,
     never a different cycle's or a non-OPTIMAL run.
+
+    Summary-only imported records are excluded: they carry no
+    per-product results, so their total_profit must never stand in for
+    a plan the dashboard could recommend from - and the frontend's own
+    findLatestOptimalRun skips them for exactly the same reason.
     """
 
     statement = (
@@ -158,6 +191,7 @@ def get_latest_optimal_run(
             OptimizationRun.production_cycle_id
             == cycle_id,
             OptimizationRun.status == "OPTIMAL",
+            OptimizationRun.is_summary_only.is_(False),
         )
         .order_by(
             OptimizationRun.started_at.desc(),

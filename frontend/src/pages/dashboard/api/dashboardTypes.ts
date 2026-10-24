@@ -37,7 +37,31 @@ export interface OptimizationHistoryResponse {
   status: string
   objective_value: string | null
   total_profit: string | null
+  // Set only on an imported summary-only record (no per-product
+  // results); null for a native run.
+  products_produced: number | null
+  // True = aggregate figures only, so Expected Revenue and the
+  // recommendations table must not be built from it - see
+  // dashboardAdapter.ts::findLatestOptimalRun.
+  is_summary_only: boolean
   results: OptimizationHistoryResult[]
+}
+
+// GET /api/production-cycles/{cycle_id}/allocations - the committed
+// allocation, priced by the backend from current cycle data. The
+// Dashboard's financial stat cards fall back to this once no usable
+// optimization run exists (see dashboardAdapter.ts::
+// summarizeAppliedAllocation). total_revenue is always present;
+// total_cost/total_profit are null when a required resource is
+// currently inactive or unpriced for this cycle.
+export interface ProductionAllocationFinancials {
+  id: number
+  production_cycle_id: number
+  product_id: number
+  quantity: string
+  total_revenue: string
+  total_cost: string | null
+  total_profit: string | null
 }
 
 export interface ResourceUtilizationItem {

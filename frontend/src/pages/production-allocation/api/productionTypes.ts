@@ -56,6 +56,12 @@ export interface OptimizationHistoryResponse {
   status: string
   objective_value: string | null
   total_profit: string | null
+  // Set only on an imported summary-only record (no per-product
+  // results); null for a native run.
+  products_produced: number | null
+  // True = aggregate figures only. Never an applyable plan - see
+  // productionAdapter.ts::findLatestOptimalRun.
+  is_summary_only: boolean
   results: OptimizationHistoryResult[]
 }
 

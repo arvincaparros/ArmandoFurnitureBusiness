@@ -39,7 +39,7 @@ const OptimizationHistoryTable = ({
     },
     {
       accessor: 'duration',
-      title: 'Duration (ms)',
+      title: 'Duration (s)',
       textAlign: 'center',
     },
     {

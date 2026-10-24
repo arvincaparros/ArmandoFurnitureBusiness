@@ -6,6 +6,7 @@ import {
   fetchLatestResourceUtilization,
   fetchOptimizationHistory,
   fetchProductSummaries,
+  fetchProductionAllocations,
 } from '../api/dashboardApi'
 
 import {
@@ -13,6 +14,7 @@ import {
   buildDashboardResourceUtilization,
   buildDashboardStats,
   findLatestOptimalRun,
+  summarizeAppliedAllocation,
 } from '../api/dashboardAdapter'
 
 import useLatestProductionCycle from '../../../hooks/useLatestProductionCycle'
@@ -37,7 +39,13 @@ const useDashboard = () => {
 
   const optimizationHistoryQuery = useQuery({
     queryKey: ['optimization-history', cycleId],
-    queryFn: () => fetchOptimizationHistory(cycleId!),
+    // include_hidden: a caller that must operate on the live plan
+    // should never be blinded by a hidden run. The approved
+    // Optimization History cleanup leaves every row visible, so this
+    // has no effect today; it stays as the defensive option. Shares
+    // this key with useProductionAllocation, which asks for the same
+    // flag, so both pages stay on one cached copy.
+    queryFn: () => fetchOptimizationHistory(cycleId!, true),
     enabled: cycleId !== null,
   })
 
@@ -60,14 +68,42 @@ const useDashboard = () => {
     [optimizationHistoryQuery.data],
   )
 
+  // Fallback source for the financial stat cards once no usable run
+  // exists (e.g. right after the approved Optimization History
+  // cleanup deleted the old test runs): the committed allocation is
+  // preserved independently of any run and priced by the backend
+  // from current cycle data. Same query key as useProductionAllocation,
+  // so both pages read one cache entry and an Apply there refreshes
+  // it here. Only fetched when history resolved without a usable run,
+  // so normal operation costs no extra request.
+  const appliedAllocationQuery = useQuery({
+    queryKey: ['production-allocations', cycleId],
+    queryFn: () => fetchProductionAllocations(cycleId!),
+    enabled:
+      cycleId !== null &&
+      optimizationHistoryQuery.isSuccess &&
+      latestOptimalRun === null,
+  })
+
+  const appliedAllocation = useMemo(
+    () => summarizeAppliedAllocation(appliedAllocationQuery.data),
+    [appliedAllocationQuery.data],
+  )
+
   const stats = useMemo(
     () =>
       buildDashboardStats(
         summaryQuery.data,
         latestOptimalRun,
         productsQuery.data,
+        appliedAllocation,
       ),
-    [summaryQuery.data, latestOptimalRun, productsQuery.data],
+    [
+      summaryQuery.data,
+      latestOptimalRun,
+      productsQuery.data,
+      appliedAllocation,
+    ],
   )
 
   const recommendations = useMemo(
@@ -96,19 +132,24 @@ const useDashboard = () => {
 
   return {
     // Stat cards draw on summary + cycle resolution + optimization
-    // history + products (Expected Revenue needs all of them), so
+    // history + products (Expected Revenue needs all of them, and
+    // the committed-allocation fallback adds one more query), so
     // the row loads/errors as one unit rather than four
-    // independently-timed cards.
+    // independently-timed cards. The allocations query is disabled
+    // whenever a usable run exists, so it only contributes here in
+    // the fallback case.
     stats,
     isStatsLoading:
       summaryQuery.isLoading ||
       isOptimizationHistoryPending ||
-      productsQuery.isLoading,
+      productsQuery.isLoading ||
+      appliedAllocationQuery.isLoading,
     isStatsError:
       summaryQuery.isError ||
       isCycleError ||
       optimizationHistoryQuery.isError ||
-      productsQuery.isError,
+      productsQuery.isError ||
+      appliedAllocationQuery.isError,
 
     recommendations,
     isRecommendationsLoading:

@@ -12,8 +12,6 @@ from app.database.models import (
     ProductResourceRequirement,
     ProductionAllocation,
     Resource,
-    OptimizationResult,
-    OptimizationRun,
 )
 from app.services.optimization_history import (
     get_latest_optimization_history_run,
@@ -1648,6 +1646,23 @@ def apply_optimization(
             "Only an optimal optimization result can be applied."
         )
 
+    # Both guards run BEFORE the ProductionAllocation delete further
+    # down: a summary-only imported record (or any run that somehow has
+    # no per-product rows) would otherwise clear every current
+    # allocation, insert none, and commit a zero-utilization snapshot
+    # as if it were a real applied plan.
+    if optimization_run.is_summary_only:
+        raise ValueError(
+            "This optimization record is summary-only and cannot be "
+            "applied. Generate a new production plan instead."
+        )
+
+    if not optimization_run.results:
+        raise ValueError(
+            "This optimization record has no product-level results and "
+            "cannot be applied. Generate a new production plan instead."
+        )
+
     allocations = []
 
     for result in optimization_run.results:
@@ -1679,6 +1694,15 @@ def apply_optimization(
                     minimum_demand - Decimal(str(quantity)),
                 ),
             }
+        )
+
+    if not any(
+        allocation["quantity"] > 0
+        for allocation in allocations
+    ):
+        raise ValueError(
+            "This optimization record has no applicable product-level "
+            "results. Generate a new production plan instead."
         )
 
     # Revalidate the ENTIRE proposed allocation against current
@@ -1774,25 +1798,6 @@ def apply_optimization(
         allocations,
         optimization_run.status,
     )
-
-def get_latest_optimization_history_run(
-    db: Session,
-    cycle_id: int,
-) -> OptimizationRun | None:
-    statement = (
-        select(OptimizationRun)
-        .where(
-            OptimizationRun.production_cycle_id
-            == cycle_id
-        )
-        .order_by(
-            OptimizationRun.started_at.desc(),
-            OptimizationRun.id.desc(),
-        )
-        .limit(1)
-    )
-
-    return db.scalar(statement)
 
 def add_forecast_constraints(
     problem: pulp.LpProblem,

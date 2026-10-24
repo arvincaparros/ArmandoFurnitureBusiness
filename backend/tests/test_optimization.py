@@ -21,6 +21,7 @@ from app.database.models import (
     Product,
     ProductResourceRequirement,
     Resource,
+    ResourceUtilizationRun,
     SalesTransaction,
 )
 
@@ -1326,6 +1327,12 @@ def test_save_optimization_history(
         Decimal("31428.0000")
     )
 
+    # Aggregated from this same run's allocations, and explicitly
+    # marked as a native, visible (never summary-only) run.
+    assert optimization_run.products_produced == 12
+    assert optimization_run.is_history_visible is True
+    assert optimization_run.is_summary_only is False
+
     assert optimization_run.objective_value == (
         Decimal("63372.0000")
     )
@@ -1589,6 +1596,302 @@ def test_get_optimization_history_detail_not_found(
     assert response.json()["detail"] == (
         "Optimization run not found"
     )
+
+# --- Imported summary-only history records ---------------------------
+
+
+def _make_summary_only_run(
+    db,
+    cycle_id,
+    started_at,
+    total_profit,
+    products_produced,
+    is_history_visible=True,
+):
+    """
+    The shape an imported historical record has: aggregate figures
+    only, never any OptimizationResult rows.
+    """
+
+    run = OptimizationRun(
+        production_cycle_id=cycle_id,
+        started_at=started_at,
+        completed_at=started_at,
+        duration_ms=0,
+        status="OPTIMAL",
+        objective_value=total_profit,
+        total_profit=total_profit,
+        total_cost=Decimal("100.0000"),
+        products_produced=products_produced,
+        is_history_visible=is_history_visible,
+        is_summary_only=True,
+    )
+
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+
+    return run
+
+
+def test_get_optimization_history_excludes_hidden_runs_by_default(
+    client,
+    db,
+    optimization_cycle,
+):
+    """
+    The default read returns only visible runs; include_hidden
+    exposes a hidden one. Native runs are always saved visible, so
+    this is the defensive contract for a caller that must operate on
+    the live plan.
+    """
+
+    visible_run = _make_summary_only_run(
+        db,
+        optimization_cycle.id,
+        datetime(2026, 8, 10, 10, 0, 0),
+        Decimal("500.0000"),
+        7,
+    )
+
+    hidden_run = _make_summary_only_run(
+        db,
+        optimization_cycle.id,
+        datetime(2026, 8, 10, 11, 0, 0),
+        Decimal("900.0000"),
+        11,
+        is_history_visible=False,
+    )
+
+    try:
+        default_response = client.get(
+            "/api/optimization/history",
+            params={"cycle_id": optimization_cycle.id},
+        )
+
+        assert default_response.status_code == 200
+
+        assert [
+            run["id"] for run in default_response.json()
+        ] == [visible_run.id]
+
+        include_hidden_response = client.get(
+            "/api/optimization/history",
+            params={
+                "cycle_id": optimization_cycle.id,
+                "include_hidden": True,
+            },
+        )
+
+        assert include_hidden_response.status_code == 200
+
+        assert {
+            run["id"]
+            for run in include_hidden_response.json()
+        } == {visible_run.id, hidden_run.id}
+
+    finally:
+        db.query(OptimizationRun).filter(
+            OptimizationRun.production_cycle_id
+            == optimization_cycle.id
+        ).delete(synchronize_session=False)
+
+        db.commit()
+
+
+def test_get_optimization_history_reports_products_produced(
+    client,
+    db,
+    optimization_cycle,
+):
+    """
+    An imported record reports its stored aggregate, its
+    summary-only flag, and no invented per-product results.
+    """
+
+    run = _make_summary_only_run(
+        db,
+        optimization_cycle.id,
+        datetime(2026, 8, 16, 15, 40, 18),
+        Decimal("102236.8100"),
+        45,
+    )
+
+    try:
+        response = client.get(
+            "/api/optimization/history",
+            params={"cycle_id": optimization_cycle.id},
+        )
+
+        assert response.status_code == 200
+
+        history = next(
+            entry
+            for entry in response.json()
+            if entry["id"] == run.id
+        )
+
+        assert history["products_produced"] == 45
+        assert history["is_summary_only"] is True
+        assert history["results"] == []
+
+    finally:
+        db.delete(run)
+        db.commit()
+
+
+def test_apply_optimization_rejects_summary_only_run(
+    client,
+    db,
+    optimization_cycle,
+    test_products,
+):
+    """
+    A summary-only record is the cycle's latest run. Apply must reject
+    it BEFORE the allocation delete: the committed allocation stays
+    exactly as it was and no utilization snapshot is written.
+    """
+
+    allocation = ProductionAllocation(
+        production_cycle_id=optimization_cycle.id,
+        product_id=test_products[0].id,
+        quantity=Decimal("5.0000"),
+    )
+
+    db.add(allocation)
+    db.commit()
+    db.refresh(allocation)
+
+    _make_summary_only_run(
+        db,
+        optimization_cycle.id,
+        datetime.now(),
+        Decimal("1234.0000"),
+        31,
+    )
+
+    utilization_before = (
+        db.query(ResourceUtilizationRun)
+        .filter(
+            ResourceUtilizationRun.production_cycle_id
+            == optimization_cycle.id
+        )
+        .count()
+    )
+
+    try:
+        response = client.post(
+            f"/api/production-cycles/{optimization_cycle.id}"
+            "/optimize/apply",
+        )
+
+        assert response.status_code == 400
+
+        assert response.json()["detail"] == (
+            "This optimization record is summary-only and cannot be "
+            "applied. Generate a new production plan instead."
+        )
+
+        remaining = (
+            db.query(ProductionAllocation)
+            .filter(
+                ProductionAllocation.production_cycle_id
+                == optimization_cycle.id
+            )
+            .all()
+        )
+
+        assert len(remaining) == 1
+        assert remaining[0].product_id == test_products[0].id
+        assert remaining[0].quantity == Decimal("5.0000")
+
+        utilization_after = (
+            db.query(ResourceUtilizationRun)
+            .filter(
+                ResourceUtilizationRun.production_cycle_id
+                == optimization_cycle.id
+            )
+            .count()
+        )
+
+        assert utilization_after == utilization_before
+
+    finally:
+        db.query(OptimizationRun).filter(
+            OptimizationRun.production_cycle_id
+            == optimization_cycle.id
+        ).delete(synchronize_session=False)
+
+        db.delete(allocation)
+        db.commit()
+
+
+def test_apply_optimization_rejects_optimal_run_without_results(
+    client,
+    db,
+    optimization_cycle,
+    test_products,
+):
+    """
+    The second guard: an OPTIMAL run that is not flagged
+    summary-only but still has no per-product rows (a legacy/corrupt
+    record) is rejected the same way, before touching anything.
+    """
+
+    allocation = ProductionAllocation(
+        production_cycle_id=optimization_cycle.id,
+        product_id=test_products[0].id,
+        quantity=Decimal("3.0000"),
+    )
+
+    db.add(allocation)
+    db.commit()
+    db.refresh(allocation)
+
+    run = OptimizationRun(
+        production_cycle_id=optimization_cycle.id,
+        started_at=datetime.now(),
+        completed_at=datetime.now(),
+        duration_ms=1000,
+        status="OPTIMAL",
+        objective_value=Decimal("99.0000"),
+        total_profit=Decimal("99.0000"),
+        is_summary_only=False,
+    )
+
+    db.add(run)
+    db.commit()
+
+    try:
+        response = client.post(
+            f"/api/production-cycles/{optimization_cycle.id}"
+            "/optimize/apply",
+        )
+
+        assert response.status_code == 400
+
+        assert response.json()["detail"] == (
+            "This optimization record has no product-level results and "
+            "cannot be applied. Generate a new production plan instead."
+        )
+
+        assert db.query(ProductionAllocation).filter(
+            ProductionAllocation.production_cycle_id
+            == optimization_cycle.id,
+            ProductionAllocation.product_id
+            == test_products[0].id,
+            ProductionAllocation.quantity == Decimal("3.0000"),
+        ).count() == 1
+
+    finally:
+        db.query(OptimizationRun).filter(
+            OptimizationRun.production_cycle_id
+            == optimization_cycle.id
+        ).delete(synchronize_session=False)
+
+        db.delete(allocation)
+        db.commit()
+
 
 def test_apply_optimization_without_history_returns_400(
     client,

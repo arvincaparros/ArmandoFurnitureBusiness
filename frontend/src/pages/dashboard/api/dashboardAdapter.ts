@@ -9,6 +9,7 @@ import type {
   DashboardSummaryResponse,
   OptimizationHistoryResponse,
   ProductSummary,
+  ProductionAllocationFinancials,
   ResourceUtilizationResponse,
 } from './dashboardTypes'
 
@@ -38,6 +39,11 @@ function formatQuantity(value: number): string {
 
 const NO_RUN_YET = 'No optimization run yet'
 
+// Distinct from NO_RUN_YET: the committed allocation exists, but its
+// profit cannot be priced because a required resource is currently
+// inactive or unpriced. Showing a number there would understate it.
+const PROFIT_UNAVAILABLE = 'Not available'
+
 export interface DashboardRecommendation {
   id: number
   name: string
@@ -59,6 +65,10 @@ export interface DashboardResourceUtilizationBar {
 // shared by both the recommendations table and the Expected Revenue
 // stat, so they can never disagree about which run "latest" means -
 // same run the summary endpoint uses for latest_optimization_profit.
+// A summary-only imported record is skipped for the same reason the
+// backend's get_latest_optimal_run excludes it: it has no
+// product-level results, so it could neither price Expected Revenue
+// nor produce a recommendation row.
 
 export function findLatestOptimalRun(
   history: OptimizationHistoryResponse[] | undefined,
@@ -67,7 +77,14 @@ export function findLatestOptimalRun(
     return null
   }
 
-  return history.find((run) => run.status === 'OPTIMAL') ?? null
+  return (
+    history.find(
+      (run) =>
+        run.status === 'OPTIMAL' &&
+        !run.is_summary_only &&
+        run.results.length > 0,
+    ) ?? null
+  )
 }
 
 // --- Stat cards ------------------------------------------------------
@@ -95,19 +112,77 @@ function calculateExpectedRevenue(
   }, 0)
 }
 
+// --- Committed allocation fallback -----------------------------------
+//
+// The committed allocation is stored independently of any
+// OptimizationRun, so it survives the approved Optimization History
+// cleanup that deletes every old test run. The backend prices it
+// from current cycle data (GET /api/production-cycles/{id}/
+// allocations), which is exactly what the Dashboard shows once no
+// usable run remains: real committed figures instead of two blank
+// cards. Revenue always sums cleanly; profit falls back to
+// unavailable as a whole the moment ANY row's profit is null - the
+// same rule as ProductionPlanTable's overall total, so the card
+// never silently understates it.
+
+export interface AppliedAllocationSummary {
+  revenue: number
+  profit: number | null
+}
+
+export function summarizeAppliedAllocation(
+  allocations: ProductionAllocationFinancials[] | undefined,
+): AppliedAllocationSummary | null {
+  if (!allocations || allocations.length === 0) {
+    return null
+  }
+
+  const revenue = allocations.reduce(
+    (total, allocation) =>
+      total + (parseDecimal(allocation.total_revenue) ?? 0),
+    0,
+  )
+
+  const profit = allocations.some(
+    (allocation) => allocation.total_profit === null,
+  )
+    ? null
+    : allocations.reduce(
+        (total, allocation) =>
+          total + (parseDecimal(allocation.total_profit) ?? 0),
+        0,
+      )
+
+  return { revenue, profit }
+}
+
 export function buildDashboardStats(
   summary: DashboardSummaryResponse | undefined,
   latestOptimalRun: OptimizationHistoryResponse | null,
   products: ProductSummary[] | undefined,
+  appliedAllocation?: AppliedAllocationSummary | null,
 ): DashboardStat[] {
-  const expectedProfit = summary
-    ? parseDecimal(summary.latest_optimization_profit)
-    : null
+  // A usable run always wins, so normal operation is unchanged. Only
+  // when there is none (e.g. immediately after the cleanup deleted
+  // the old runs) do the financial cards switch to the committed
+  // allocation - which those deletions never touch.
+  const usingAppliedAllocation =
+    latestOptimalRun === null && appliedAllocation != null
 
-  const expectedRevenue = calculateExpectedRevenue(
-    latestOptimalRun,
-    products,
-  )
+  const expectedRevenue = latestOptimalRun
+    ? calculateExpectedRevenue(latestOptimalRun, products)
+    : (appliedAllocation?.revenue ?? null)
+
+  const expectedProfit = latestOptimalRun
+    ? summary
+      ? parseDecimal(summary.latest_optimization_profit)
+      : null
+    : (appliedAllocation?.profit ?? null)
+
+  const committedProfitUnavailable =
+    latestOptimalRun === null &&
+    appliedAllocation != null &&
+    appliedAllocation.profit === null
 
   return [
     {
@@ -125,19 +200,25 @@ export function buildDashboardStats(
         expectedRevenue === null
           ? NO_RUN_YET
           : formatCurrency(expectedRevenue),
-      description:
-        'Recommended quantity × selling price, latest optimal plan',
+      description: usingAppliedAllocation
+        ? 'Committed allocation × selling price'
+        : 'Recommended quantity × selling price, latest optimal plan',
       icon: DollarSign,
       color: 'green',
     },
     {
       id: 'expected-profit',
       title: 'Expected Profit',
-      value:
-        expectedProfit === null
+      value: committedProfitUnavailable
+        ? PROFIT_UNAVAILABLE
+        : expectedProfit === null
           ? NO_RUN_YET
           : formatCurrency(expectedProfit),
-      description: 'From the latest optimal production plan',
+      description: committedProfitUnavailable
+        ? 'Committed allocation has a required resource that is inactive or unpriced'
+        : usingAppliedAllocation
+          ? 'From the committed production allocation'
+          : 'From the latest optimal production plan',
       icon: TrendingUp,
       color: 'orange',
     },

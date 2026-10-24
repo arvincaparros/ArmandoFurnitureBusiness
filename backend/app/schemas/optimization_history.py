@@ -29,4 +29,12 @@ class OptimizationHistoryResponse(BaseModel):
     # Null forever for any run saved before this field existed - never
     # backfilled from current prices (see OptimizationRun.total_cost).
     total_cost: Decimal | None
+    # The imported aggregate unit count, set only on a summary-only
+    # record; null for a native run, whose Products Produced is derived
+    # client-side from the results below.
+    products_produced: int | None
+    # True when this run carries aggregate figures only and has no
+    # per-product results - the client must never treat it as an
+    # applyable plan, and the backend rejects it on Apply.
+    is_summary_only: bool
     results: list[OptimizationHistoryResult]

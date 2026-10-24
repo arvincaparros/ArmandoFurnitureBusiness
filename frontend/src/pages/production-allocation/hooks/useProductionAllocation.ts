@@ -50,7 +50,13 @@ const useProductionAllocation = () => {
 
   const historyQuery = useQuery({
     queryKey: historyQueryKey,
-    queryFn: () => fetchOptimizationHistory(latestCycleId!),
+    // include_hidden: a page that previews and applies the live plan
+    // must never be blinded by a hidden run. The approved
+    // Optimization History cleanup leaves every row visible, so this
+    // has no effect today; it stays as the defensive option.
+    // Summary-only records are still filtered out by
+    // findLatestOptimalRun below.
+    queryFn: () => fetchOptimizationHistory(latestCycleId!, true),
     enabled: latestCycleId !== null,
   })
 

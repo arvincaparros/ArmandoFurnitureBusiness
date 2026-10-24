@@ -25,11 +25,16 @@ router = APIRouter(
 )
 def list_optimization_history(
     cycle_id: int | None = None,
+    # Opt-in for the two callers that operate on the live plan
+    # (Production Allocation, Dashboard). Optimization History omits it
+    # so the page only ever shows visible records.
+    include_hidden: bool = False,
     db: Session = Depends(get_db),
 ):
     return get_optimization_history(
         db,
         cycle_id,
+        include_hidden,
     )
 
 

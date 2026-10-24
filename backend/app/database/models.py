@@ -468,6 +468,41 @@ class OptimizationRun(Base):
         nullable=True,
     )
 
+    # Aggregate unit count shown as Optimization History's "Products
+    # Produced". Null for native runs, where that column is instead
+    # derived by summing the run's own OptimizationResult quantities
+    # (see frontend optimizationHistoryAdapter.ts); set explicitly only
+    # for an imported historical record that has no per-product rows to
+    # sum (is_summary_only below) - never a substitute for them.
+    products_produced: Mapped[int | None] = mapped_column(
+        Integer,
+        nullable=True,
+    )
+
+    # Defensive visibility flag: false would hide a run from
+    # Optimization History while still letting a caller that must
+    # operate on the live plan (Production Allocation, Dashboard)
+    # resolve it via include_hidden=true. The approved cleanup
+    # deletes every old run and imports only visible records, and
+    # save_optimization_history always stores native runs visible -
+    # so no row is hidden today.
+    is_history_visible: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=True,
+    )
+
+    # True for an imported historical record carrying aggregate figures
+    # only, with no OptimizationResult rows. apply_optimization() rejects
+    # such a run outright: applying it would otherwise delete every
+    # current ProductionAllocation row, insert none, and persist a
+    # zero-utilization snapshot.
+    is_summary_only: Mapped[bool] = mapped_column(
+        Boolean,
+        nullable=False,
+        default=False,
+    )
+
     production_cycle: Mapped["ProductionCycle"] = relationship(
         back_populates="optimization_runs",
     )

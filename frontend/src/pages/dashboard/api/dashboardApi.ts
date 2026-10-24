@@ -4,6 +4,7 @@ import type {
   DashboardSummaryResponse,
   OptimizationHistoryResponse,
   ProductSummary,
+  ProductionAllocationFinancials,
   ResourceUtilizationResponse,
 } from './dashboardTypes'
 
@@ -22,13 +23,23 @@ export async function fetchDashboardSummary(): Promise<DashboardSummaryResponse>
 // the Dashboard Latest-Cycle Optimization Scoping report. /history
 // is ordered newest-first even within one cycle (verified in
 // backend/app/services/optimization_history.py), so the caller
-// still picks the first OPTIMAL entry itself. See dashboardAdapter.ts.
+// still picks the first OPTIMAL entry itself. include_hidden stays
+// as a defensive option so a caller that must operate on the live
+// plan is never blinded by a hidden run; the approved Optimization
+// History cleanup leaves every row visible, so it has no effect
+// today. See dashboardAdapter.ts.
 export async function fetchOptimizationHistory(
   cycleId: number,
+  includeHidden = false,
 ): Promise<OptimizationHistoryResponse[]> {
   const response = await apiClient.get<OptimizationHistoryResponse[]>(
     '/api/optimization/history',
-    { params: { cycle_id: cycleId } },
+    {
+      params: {
+        cycle_id: cycleId,
+        ...(includeHidden ? { include_hidden: true } : {}),
+      },
+    },
   )
 
   return response.data
@@ -70,6 +81,22 @@ export async function fetchProductSummaries(): Promise<
   const response = await apiClient.get<ProductSummary[]>(
     '/api/products',
   )
+
+  return response.data
+}
+
+// The committed production allocation for a cycle - the Dashboard's
+// fallback source for the two financial stat cards when no usable
+// optimization run exists (e.g. right after the approved Optimization
+// History cleanup deletes the old test runs). Shares its query key
+// with useProductionAllocation, so both pages read one cached copy
+// and an Apply there refreshes this one too.
+export async function fetchProductionAllocations(
+  cycleId: number,
+): Promise<ProductionAllocationFinancials[]> {
+  const response = await apiClient.get<
+    ProductionAllocationFinancials[]
+  >(`/api/production-cycles/${cycleId}/allocations`)
 
   return response.data
 }

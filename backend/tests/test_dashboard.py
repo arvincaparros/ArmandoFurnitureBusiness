@@ -298,11 +298,76 @@ def test_dashboard_summary_profit_uses_newest_run_within_latest_cycle(
         db.commit()
 
 
+def test_dashboard_summary_ignores_summary_only_run(
+    client,
+    db,
+    optimization_cycle,
+):
+    """
+    The newest OPTIMAL run for the latest cycle is an imported,
+    summary-only record with no product-level results. The dashboard
+    must keep reporting the previous real plan's profit rather than
+    presenting the summary's aggregate as if it were a plan, matching
+    the frontend's findLatestOptimalRun filter.
+    """
+
+    _make_optimal_run(
+        db,
+        optimization_cycle.id,
+        datetime(2026, 8, 9, 9, 0),
+        Decimal("75.0000"),
+    )
+
+    summary_run = OptimizationRun(
+        production_cycle_id=optimization_cycle.id,
+        started_at=datetime(2026, 8, 9, 10, 0),
+        completed_at=datetime(2026, 8, 9, 10, 0),
+        duration_ms=0,
+        status="OPTIMAL",
+        objective_value=Decimal("999.0000"),
+        total_profit=Decimal("999.0000"),
+        products_produced=31,
+        is_summary_only=True,
+    )
+
+    db.add(summary_run)
+    db.commit()
+
+    try:
+        response = client.get("/api/dashboard/summary")
+
+        assert response.status_code == 200
+
+        data = response.json()
+
+        assert Decimal(
+            data["latest_optimization_profit"]
+        ) == Decimal("75.0000")
+
+    finally:
+        db.query(OptimizationRun).filter(
+            OptimizationRun.production_cycle_id
+            == optimization_cycle.id
+        ).delete(synchronize_session=False)
+
+        db.commit()
+
+
 def test_dashboard_summary_sales_totals(
     client,
     db,
     test_products,
 ):
+    # This suite runs against a database that can already hold real
+    # sales (the target dataset has one), so the totals are asserted as
+    # the delta these two transactions add rather than as an absolute
+    # figure that only holds on an empty table.
+    baseline_response = client.get("/api/dashboard/summary")
+
+    assert baseline_response.status_code == 200
+
+    baseline = baseline_response.json()
+
     transactions = [
         SalesTransaction(
             transaction_number="TRX-TEST-001",
@@ -340,8 +405,17 @@ def test_dashboard_summary_sales_totals(
 
         data = response.json()
 
-        assert Decimal(data["total_sales"]) == Decimal("22000.00")
-        assert Decimal(data["total_sales_profit"]) == Decimal("5498.0000")
+        assert Decimal(
+            data["total_sales"]
+        ) - Decimal(
+            baseline["total_sales"]
+        ) == Decimal("22000.00")
+
+        assert Decimal(
+            data["total_sales_profit"]
+        ) - Decimal(
+            baseline["total_sales_profit"]
+        ) == Decimal("5498.0000")
 
     finally:
         for transaction in transactions:
