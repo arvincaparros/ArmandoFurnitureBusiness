@@ -54,6 +54,27 @@ const ForecastChart = ({
     )
   }
 
+  // A product with no recorded sales still gets exactly one forecast
+  // point (a flat 0-unit projection) from GET /api/forecast/timeseries,
+  // which otherwise renders as an empty-looking chart. There is no
+  // historical demand to plot until sales transactions exist, so say
+  // that explicitly rather than drawing a lone zero dot.
+  const hasHistoricalPoints = data.some(
+    (point) => point.historicalDemand !== undefined,
+  )
+
+  if (!hasHistoricalPoints) {
+    return (
+      <Center h={280}>
+        <Text c="dimmed" ta="center">
+          No sales history for this product yet. Record sales
+          transactions and run the demand forecast to see historical
+          and forecasted demand.
+        </Text>
+      </Center>
+    )
+  }
+
   return (
     <LineChart
       h={280}

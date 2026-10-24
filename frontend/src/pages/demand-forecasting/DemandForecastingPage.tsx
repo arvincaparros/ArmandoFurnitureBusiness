@@ -1,7 +1,16 @@
 import { useState } from 'react'
+import { Link } from 'react-router-dom'
 
-import { ActionIcon, Alert, Box, Group, Select, Text } from '@mantine/core'
-import { AlertCircle, Bot, X } from 'lucide-react'
+import {
+  ActionIcon,
+  Alert,
+  Anchor,
+  Box,
+  Group,
+  Select,
+  Text,
+} from '@mantine/core'
+import { AlertCircle, Bot, Info, X } from 'lucide-react'
 
 import PageHeader from '../../components/common/PageHeader'
 import ChartCard from '../../components/cards/ChartCard'
@@ -24,6 +33,7 @@ const DemandForecastingPage = () => {
 
   const {
     forecastItems,
+    hasSalesHistory,
     isLoading,
     isError,
     runForecast,
@@ -77,6 +87,37 @@ const DemandForecastingPage = () => {
           )}
         </Alert>
       )}
+
+      {/* All-zero rows are the backend's normal NO_DATA result when no
+          sales have ever been recorded for any active product - not a
+          failed apply. Spell out the workflow instead of leaving the
+          table looking inexplicably empty. */}
+      {!isLoading &&
+        !isError &&
+        forecastItems.length > 0 &&
+        !hasSalesHistory && (
+          <Alert
+            color="blue"
+            icon={<Info size={18} />}
+            title="No sales history yet"
+            mb="md"
+          >
+            Demand forecasting is calculated from the sales
+            transactions you record - it does not read applied
+            production plans. Record the units you sold in{' '}
+            <Anchor
+              component={Link}
+              to="/history"
+              inherit
+            >
+              Transaction History
+            </Anchor>
+            , then select <strong>Run Demand Forecast</strong> to
+            recalculate. Applying an optimal plan only saves production
+            allocations and resource utilization, so this page keeps
+            showing zeros until at least one sales transaction exists.
+          </Alert>
+        )}
 
       <Box
         mt="md"

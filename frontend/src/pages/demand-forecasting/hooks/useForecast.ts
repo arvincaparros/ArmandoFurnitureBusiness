@@ -62,6 +62,16 @@ const useForecast = () => {
   const forecastItems = toUiForecastItems(forecastQuery.data)
   const products = toForecastProductOptions(forecastQuery.data)
 
+  // Authoritative "any recorded sales at all" signal for the page's
+  // empty-state guidance. forecast_status is NO_DATA only when a
+  // product has zero qualifying sales months (see
+  // app/services/forecasting.py::determine_forecast_status), so this
+  // doesn't mistake a product whose latest month happened to net 0
+  // units for one that has never sold.
+  const hasSalesHistory = forecastItems.some(
+    (item) => item.status !== 'NO_DATA',
+  )
+
   const [requestedProductId, setSelectedProductId] = useState<
     number | null
   >(null)
@@ -96,6 +106,7 @@ const useForecast = () => {
 
   return {
     forecastItems,
+    hasSalesHistory,
     isLoading: forecastQuery.isLoading,
     isError: forecastQuery.isError,
 

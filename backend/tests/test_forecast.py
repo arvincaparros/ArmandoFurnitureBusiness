@@ -5,6 +5,7 @@ from decimal import Decimal
 from app.database.models import (
     ForecastResult,
     ForecastRun,
+    ProductionAllocation,
     SalesTransaction,
 )
 
@@ -215,6 +216,102 @@ def test_forecast_marks_products_without_history(
         dining_table["confidence_level"]
     ) == Decimal("0.00")
     assert dining_table["forecast_status"] == "NO_DATA"
+
+def test_applied_allocations_do_not_feed_the_forecast(
+    client,
+    db,
+    optimization_cycle,
+    test_products,
+):
+    # Root-cause guard for "applied a plan, forecast page still
+    # empty": apply_optimization() only writes production_allocations
+    # (app/services/optimization.py) and never records sales, while
+    # get_forecast() reads only sales_transactions. An applied plan
+    # therefore must not change the forecast - every product stays
+    # NO_DATA until a real sales transaction exists.
+    allocations = [
+        ProductionAllocation(
+            production_cycle_id=optimization_cycle.id,
+            product_id=product.id,
+            quantity=Decimal("10.0000"),
+            applied_at=datetime(2026, 8, 9, 12, 0),
+        )
+        for product in test_products
+    ]
+
+    db.add_all(allocations)
+    db.commit()
+
+    transaction = None
+
+    try:
+        response = client.get("/api/forecast")
+
+        assert response.status_code == 200
+
+        products = {
+            item["product_name"]: item
+            for item in response.json()["products"]
+        }
+
+        for product in test_products:
+            item = products[product.name]
+
+            assert Decimal(item["historical_sales"]) == Decimal(
+                "0"
+            )
+            assert Decimal(item["predicted_demand"]) == Decimal(
+                "0"
+            )
+            assert item["forecast_status"] == "NO_DATA"
+
+        # The same product, with a sales transaction recorded, does
+        # feed the forecast - proving the data source is sales, not
+        # the applied allocation above.
+        transaction = SalesTransaction(
+            transaction_number="TRX-FORECAST-004",
+            product_id=test_products[1].id,
+            transaction_date=datetime(2026, 8, 9, 10, 0),
+            quantity_produced=Decimal("8.0000"),
+            quantity=Decimal("8.0000"),
+            unit_price=Decimal("3500.00"),
+            total_sales=Decimal("28000.00"),
+            production_cost=Decimal("20000.0000"),
+            unit_profit=Decimal("1000.0000"),
+            total_profit=Decimal("8000.0000"),
+        )
+
+        db.add(transaction)
+        db.commit()
+
+        response = client.get("/api/forecast")
+
+        assert response.status_code == 200
+
+        chair = {
+            item["product_name"]: item
+            for item in response.json()["products"]
+        }["Test Chair"]
+
+        assert Decimal(
+            chair["historical_sales"]
+        ) == Decimal("8.0000")
+
+        assert Decimal(
+            chair["predicted_demand"]
+        ) == Decimal("8.0000")
+
+        assert chair["forecast_status"] == "LOW_CONFIDENCE"
+
+    finally:
+        if transaction is not None:
+            db.delete(transaction)
+
+        for allocation in allocations:
+            db.delete(allocation)
+
+        db.commit()
+
 
 def test_generate_forecast_saves_history(
     client,

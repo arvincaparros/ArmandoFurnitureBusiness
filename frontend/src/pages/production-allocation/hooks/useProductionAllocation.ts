@@ -210,6 +210,23 @@ const useProductionAllocation = () => {
       queryClient.invalidateQueries({
         queryKey: feasibilityQueryKey,
       })
+
+      // Apply persists production allocations and the utilization
+      // snapshot only - it never records sales or a forecast run, so
+      // Demand Forecasting's numbers can't change here (see
+      // app/services/forecasting.py::get_forecast, which reads only
+      // sales_transactions). Invalidated anyway as a freshness guard:
+      // the global staleTime is 5 minutes with refetchOnWindowFocus
+      // off (app/providers.tsx), so a page opened before an apply
+      // would otherwise keep serving its cached view instead of
+      // refetching the current state.
+      queryClient.invalidateQueries({
+        queryKey: ['forecast'],
+      })
+
+      queryClient.invalidateQueries({
+        queryKey: ['forecast-timeseries'],
+      })
     },
   })
 
