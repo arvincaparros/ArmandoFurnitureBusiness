@@ -1,4 +1,10 @@
-import { Badge, ScrollArea, Tooltip } from '@mantine/core'
+import {
+  Badge,
+  Group,
+  ScrollArea,
+  Text,
+  Tooltip,
+} from '@mantine/core'
 import AppTable, {
   type Column,
 } from '../../../components/tables/AppTable'
@@ -26,9 +32,11 @@ interface ResourceTableProps {
   resources: Resource[]
   onEdit: (resource: Resource) => void
   onDelete: (resource: Resource) => void
+  onReactivate: (resource: Resource) => void
 
   isLoading: boolean
   isError: boolean
+  emptyMessage: string
 
   sortBy: keyof Resource | string
   reverse: boolean
@@ -41,8 +49,10 @@ const ResourceTable = ({
   resources,
   onEdit,
   onDelete,
+  onReactivate,
   isLoading,
   isError,
+  emptyMessage,
   sortBy,
   reverse,
   onSort,
@@ -53,6 +63,21 @@ const ResourceTable = ({
       accessor: 'name',
       title: 'Name',
       sortable: true,
+      render: (row) => (
+        <Group gap="xs" wrap="nowrap">
+          <Text>{row.name}</Text>
+
+          {!row.isActive && (
+            <Badge
+              color="gray"
+              variant="light"
+              size="sm"
+            >
+              Inactive
+            </Badge>
+          )}
+        </Group>
+      ),
     },
     {
       accessor: 'resourceType',
@@ -100,16 +125,17 @@ const ResourceTable = ({
             resource={row}
             onEdit={onEdit}
             onDelete={onDelete}
+            onReactivate={onReactivate}
         />
       ),
     },
   ]
 
-  const emptyMessage = isLoading
+  const resolvedEmptyMessage = isLoading
     ? 'Loading resources...'
     : isError
       ? 'Unable to load resources.'
-      : 'No resources found.'
+      : emptyMessage
 
   return (
     <ScrollArea
@@ -122,7 +148,7 @@ const ResourceTable = ({
           sortBy={sortBy}
           reverse={reverse}
           onSort={onSort}
-          emptyMessage={emptyMessage}
+          emptyMessage={resolvedEmptyMessage}
       />
     </ScrollArea>
   )

@@ -1,5 +1,6 @@
 import { notifications } from '@mantine/notifications'
 import {
+  ArchiveRestore,
   CheckCircle2,
   Pencil,
   Trash2,
@@ -51,6 +52,15 @@ export const notify = {
       title: 'Resource Deleted',
       message: `${name} was deleted successfully.`,
       icon: <Trash2 size={18} />,
+    })
+  },
+
+  reactivated(name: string) {
+    notifications.show({
+      color: 'green',
+      title: 'Resource Reactivated',
+      message: `${name} is now active again.`,
+      icon: <ArchiveRestore size={18} />,
     })
   },
 

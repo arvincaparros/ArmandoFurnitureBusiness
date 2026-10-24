@@ -70,8 +70,8 @@ const DeleteResourceModal = ({
         >
             This resource will no longer be available for new
             products or production cycles. Existing records that
-            reference it are kept, and re-adding the same name later
-            restores it.
+            reference it are kept, and its name stays reserved - a
+            new resource can&apos;t be created with the same name.
         </Alert>
 
         <Card

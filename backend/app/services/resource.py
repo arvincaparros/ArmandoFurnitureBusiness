@@ -7,6 +7,9 @@ from app.schemas.resource import ResourceCreate, ResourceUpdate
 
 
 DUPLICATE_NAME_ERROR = "A resource with this name already exists."
+DUPLICATE_INACTIVE_NAME_ERROR = (
+    "A resource with this name already exists and is inactive."
+)
 
 
 def _find_by_normalized_name(
@@ -19,8 +22,8 @@ def _find_by_normalized_name(
     (active and inactive) - the plain `UniqueConstraint("name")` on
     the table only rejects an exact-case duplicate at the DB layer,
     so callers that need to treat "Circular Saw" and "circular saw "
-    as the same resource (duplicate blocking, delete+re-add matching)
-    go through this instead of a raw Resource.name == name lookup.
+    as the same resource (create/update duplicate blocking) go
+    through this instead of a raw Resource.name == name lookup.
     """
     statement = select(Resource).where(
         func.lower(func.trim(Resource.name)) == name.strip().lower()
@@ -60,6 +63,13 @@ def create_resource(
     resource_data: ResourceCreate,
 ) -> Resource:
     """
+    A name matching an existing resource is always rejected, whether
+    that resource is active or soft-deleted (see delete_resource):
+    the row is kept - not removed - so its id and every historical
+    reference to it stay intact, and a create must never revive it
+    implicitly. Re-adding a deleted resource's name therefore returns
+    DUPLICATE_INACTIVE_NAME_ERROR instead of reactivating the old row.
+
     The `_find_by_normalized_name` lookup below is a SELECT-then-act
     check, not an atomic guarantee - two concurrent requests for
     case/whitespace-variant names (e.g. "Circular Saw" and
@@ -88,29 +98,11 @@ def create_resource(
 
         # A resource by this name was soft-deleted earlier (see
         # delete_resource - is_active is set to False, the row is
-        # never removed). Reactivate that same row instead of
-        # inserting a new one, so its id stays intact and any
-        # ProductResourceRequirement/CycleResource rows that already
-        # reference it keep pointing at a live resource rather than
-        # being orphaned onto a duplicate row.
-        existing.name = name
-        existing.resource_type = resource_data.resource_type
-        existing.unit = resource_data.unit
-        existing.is_active = True
-
-        try:
-            db.commit()
-            db.refresh(existing)
-
-            return existing
-
-        except IntegrityError as exc:
-            db.rollback()
-            raise ValueError(DUPLICATE_NAME_ERROR) from exc
-
-        except Exception:
-            db.rollback()
-            raise
+        # never removed). Creating it again would either silently
+        # reactivate it or insert a second row under the same name -
+        # neither is allowed, so the caller is told exactly what it
+        # collided with.
+        raise ValueError(DUPLICATE_INACTIVE_NAME_ERROR)
 
     resource = Resource(
         name=name,

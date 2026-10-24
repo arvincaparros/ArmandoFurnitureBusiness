@@ -5,7 +5,6 @@ import {
 } from '@tanstack/react-query'
 
 import {
-  createResource,
   deleteResource,
   fetchAllResourcesIncludingInactive,
   fetchResources,
@@ -23,7 +22,6 @@ import { toUiResources } from '../api/resourceAdapter'
 import useLatestProductionCycle from '../../../hooks/useLatestProductionCycle'
 
 import type {
-  ResourceCreateRequest,
   ResourceUpdateRequest,
 } from '../api/resourceTypes'
 import type { CycleResourceResponse } from '../api/cycleResourceTypes'
@@ -38,20 +36,17 @@ const useResources = () => {
     queryFn: fetchResources,
   })
 
-  // Powers the Add Resource form's "reactivate an existing inactive
-  // resource" dropdown (AddResourceModal.tsx) - deliberately the same
-  // ['resources-all'] query already invalidated by every mutation
-  // below (see invalidateResourcesCatalog), so a create/update/delete
-  // here keeps this list correct without a second, separate
-  // invalidation call.
+  // Every resource in the database, active and inactive - powers the
+  // Name select in the Add Resource form (AddResourceModal.tsx).
+  // Deliberately the same ['resources-all'] query already invalidated
+  // by every mutation below, so a create/update/delete here keeps
+  // this list correct without a second, separate invalidation call.
+  // It is also the query Product Resource Requirements already reads
+  // (fetchAllResourcesForPicker), so it introduces no new request.
   const allResourcesQuery = useQuery({
     queryKey: ['resources-all'],
     queryFn: fetchAllResourcesIncludingInactive,
   })
-
-  const inactiveResources = (allResourcesQuery.data ?? []).filter(
-    (resource) => !resource.is_active,
-  )
 
   // Canonical "latest production cycle" resolution (created_at DESC,
   // id DESC), shared with Production Allocation and Resource
@@ -133,16 +128,6 @@ const useResources = () => {
       queryKey: ['resources-all'],
     })
 
-  const createMutation = useMutation({
-    mutationFn: (data: ResourceCreateRequest) =>
-      createResource(data),
-    onSuccess: () => {
-      invalidateResources()
-      invalidateResourcesCatalog()
-      invalidateFeasibility()
-    },
-  })
-
   const updateMutation = useMutation({
     mutationFn: ({
       id,
@@ -164,6 +149,26 @@ const useResources = () => {
       invalidateResources()
       invalidateResourcesCatalog()
       invalidateFeasibility()
+    },
+  })
+
+  // Reactivation is a PATCH of is_active on the existing Resource row
+  // - the same endpoint the delete flow soft-deletes with. It never
+  // creates a row, rewrites category/unit, or touches CycleResource
+  // quantities/prices. Feasibility and Resource Utilization both
+  // filter the catalog by is_active, so they go stale when a resource
+  // comes back.
+  const reactivateMutation = useMutation({
+    mutationFn: (id: number) =>
+      updateResource(id, { is_active: true }),
+    onSuccess: () => {
+      invalidateResources()
+      invalidateResourcesCatalog()
+      invalidateFeasibility()
+
+      queryClient.invalidateQueries({
+        queryKey: ['resource-utilization', latestCycleId],
+      })
     },
   })
 
@@ -208,26 +213,45 @@ const useResources = () => {
     },
   })
 
+  const uiResources = toUiResources(
+    resourcesQuery.data ?? [],
+    cycleResourcesByResourceId,
+  )
+
+  // Active and inactive catalog rows with the latest cycle's
+  // availability/price resolved by resource id. Inactive resources
+  // keep their CycleResource row after a soft delete (see
+  // delete_resource), so their real values are shown rather than
+  // fabricated nulls - and reactivation never has to touch them.
+  const allUiResources = toUiResources(
+    allResourcesQuery.data ?? [],
+    cycleResourcesByResourceId,
+  )
+
+  const inactiveResources = allUiResources.filter(
+    (resource) => !resource.isActive,
+  )
+
   return {
-    resources: toUiResources(
-      resourcesQuery.data ?? [],
-      cycleResourcesByResourceId,
-    ),
+    resources: uiResources,
     inactiveResources,
+    selectableResources: allUiResources,
+    isExistingResourcesLoading: allResourcesQuery.isLoading,
+    isExistingResourcesError: allResourcesQuery.isError,
     isLoading:
       resourcesQuery.isLoading || cycleResourcesQuery.isLoading,
     isError: resourcesQuery.isError,
 
     hasCycle,
 
-    createResource: createMutation.mutateAsync,
-    isCreating: createMutation.isPending,
-
     updateResource: updateMutation.mutateAsync,
     isUpdating: updateMutation.isPending,
 
     deleteResource: deleteMutation.mutateAsync,
     isDeleting: deleteMutation.isPending,
+
+    reactivateResource: reactivateMutation.mutateAsync,
+    isReactivating: reactivateMutation.isPending,
 
     savePricing: pricingMutation.mutateAsync,
     isSavingPricing: pricingMutation.isPending,

@@ -10,12 +10,14 @@ import AddResourceModal from './components/AddResourceModal'
 import ResourceTable from './components/ResourceTable'
 import ResourceToolbar from './components/ResourceToolbar'
 import DeleteResourceModal from './components/DeleteResourceModal'
+import ReactivateResourceModal from './components/ReactivateResourceModal'
 
-import type { Resource } from './types'
 import type {
-  ResourceCreateRequest,
-  ResourceUpdateRequest,
-} from './api/resourceTypes'
+  Resource,
+  ResourceStatusFilter,
+  ResourceSubmission,
+} from './types'
+
 import useResources from './hooks/useResources'
 
 import { notify } from '../../utils/notify'
@@ -28,6 +30,12 @@ const ResourcesPage = () => {
 
   const [deleteOpened, setDeleteOpened] = useState(false)
 
+  const [reactivateOpened, setReactivateOpened] =
+    useState(false)
+
+  const [statusFilter, setStatusFilter] =
+    useState<ResourceStatusFilter>('active')
+
   const [search, setSearch] = useState('')
 
   const [sortBy, setSortBy] = useState<keyof Resource>('name')
@@ -37,16 +45,27 @@ const ResourcesPage = () => {
   const {
     resources,
     inactiveResources,
+    selectableResources,
+    isExistingResourcesLoading,
+    isExistingResourcesError,
     isLoading,
     isError,
     hasCycle,
-    createResource,
     updateResource,
     deleteResource,
+    reactivateResource,
     savePricing,
   } = useResources()
 
-  const filteredResources = resources.filter((resource) =>
+  // Both slices come from the catalog so the search and sort apply to
+  // whichever view is selected - inactive rows are never mixed into
+  // the active list.
+  const sourceResources =
+    statusFilter === 'inactive'
+      ? inactiveResources
+      : resources
+
+  const filteredResources = sourceResources.filter((resource) =>
     resource.name
       .toLowerCase()
       .includes(search.toLowerCase()),
@@ -74,63 +93,90 @@ const ResourcesPage = () => {
   )
 
   const handleSaveResource = async (
-    payload: ResourceCreateRequest | ResourceUpdateRequest,
-    pricing: { available_quantity: number; unit_price: number } | null,
+    submission: ResourceSubmission,
   ) => {
-    let resourceId: number
-    let notifyAction: () => void
-
-    if (selectedResource) {
-      await updateResource({
-        id: selectedResource.id,
-        data: payload,
+    if (submission.kind === 'inventory') {
+      // Add mode assigns an existing catalog resource to the latest
+      // production cycle. The only write is CycleResource
+      // availability/price (create or update in useResources.ts) -
+      // never POST /api/resources, so this form cannot create a
+      // duplicate catalog row.
+      await savePricing({
+        resourceId: submission.resourceId,
+        data: submission.pricing,
       })
 
-      resourceId = selectedResource.id
-
-      const quantityChanged =
-        pricing !== null &&
-        pricing.available_quantity !== selectedResource.availableQuantity
-
-      const unitPriceChanged =
-        pricing !== null &&
-        pricing.unit_price !== selectedResource.unitPrice
-
-      const optimizationRelevantFieldChanged =
-        ('resource_type' in payload &&
-          payload.resource_type !== undefined &&
-          payload.resource_type !== selectedResource.resourceType) ||
-        ('is_active' in payload &&
-          payload.is_active !== undefined &&
-          payload.is_active !== selectedResource.isActive)
-
-      notifyAction =
-        quantityChanged || unitPriceChanged || optimizationRelevantFieldChanged
-          ? () =>
-              notify.resourceNeedsReoptimization(
-                payload.name ?? selectedResource.name,
-              )
-          : () => notify.updated(payload.name ?? selectedResource.name)
-    } else {
-      const created = await createResource(
-        payload as ResourceCreateRequest,
+      const current = resources.find(
+        (candidate) =>
+          candidate.id === submission.resourceId,
       )
 
-      resourceId = created.id
+      if (!current || current.availableQuantity === null) {
+        notify.added(submission.resourceName)
+      } else if (
+        current.availableQuantity !==
+          submission.pricing.available_quantity ||
+        current.unitPrice !== submission.pricing.unit_price
+      ) {
+        notify.resourceNeedsReoptimization(
+          submission.resourceName,
+        )
+      } else {
+        notify.updated(submission.resourceName)
+      }
 
-      notifyAction = () => notify.added(payload.name ?? '')
+      setSelectedResource(null)
+      setOpened(false)
+
+      return
     }
+
+    await updateResource({
+      id: submission.resourceId,
+      data: submission.data,
+    })
+
+    const quantityChanged =
+      submission.pricing !== null &&
+      submission.pricing.available_quantity !==
+        selectedResource?.availableQuantity
+
+    const unitPriceChanged =
+      submission.pricing !== null &&
+      submission.pricing.unit_price !==
+        selectedResource?.unitPrice
+
+    const optimizationRelevantFieldChanged =
+      (submission.data.resource_type !== undefined &&
+        submission.data.resource_type !==
+          selectedResource?.resourceType) ||
+      (submission.data.is_active !== undefined &&
+        submission.data.is_active !==
+          selectedResource?.isActive)
+
+    const notifyAction =
+      quantityChanged ||
+      unitPriceChanged ||
+      optimizationRelevantFieldChanged
+        ? () =>
+            notify.resourceNeedsReoptimization(
+              submission.resourceName,
+            )
+        : () => notify.updated(submission.resourceName)
 
     // Availability/price are a second write against CycleResource
     // (see useResources.ts) - only attempted when the modal actually
-    // collected them (a production cycle exists), so creating a
+    // collected them (a production cycle exists), so editing a
     // resource with no cycle yet still succeeds for its global
     // fields. The success notification is deliberately deferred until
     // after this write (or skipped entirely, if there's none) - firing
     // it any earlier would tell the user the save succeeded even if
     // this part then fails.
-    if (pricing) {
-      await savePricing({ resourceId, data: pricing })
+    if (submission.pricing) {
+      await savePricing({
+        resourceId: submission.resourceId,
+        data: submission.pricing,
+      })
     }
 
     notifyAction()
@@ -153,6 +199,13 @@ const ResourcesPage = () => {
     setDeleteOpened(true)
   }
 
+  const handleReactivateResource = (
+    resource: Resource,
+  ) => {
+    setSelectedResource(resource)
+    setReactivateOpened(true)
+  }
+
   const handleOpenAdd = () => {
     setSelectedResource(null)
     setOpened(true)
@@ -166,6 +219,19 @@ const ResourcesPage = () => {
     notify.deleted(selectedResource.name)
 
     setDeleteOpened(false)
+    setSelectedResource(null)
+  }
+
+  const handleConfirmReactivate = async () => {
+    if (!selectedResource) return
+
+    // PATCH is_active on the SAME resource id - no create, no
+    // rewrite of category/unit, and no CycleResource write.
+    await reactivateResource(selectedResource.id)
+
+    notify.reactivated(selectedResource.name)
+
+    setReactivateOpened(false)
     setSelectedResource(null)
   }
 
@@ -189,11 +255,26 @@ const ResourcesPage = () => {
 
       <ResourceToolbar
         onAdd={handleOpenAdd}
+        statusFilter={statusFilter}
+        onStatusFilterChange={(value) => {
+          setStatusFilter(value)
+          setSearch('')
+        }}
+        activeCount={resources.length}
+        inactiveCount={inactiveResources.length}
       />
 
       <ChartCard
-        title="Resources"
-        subtitle={`Current inventory list • ${filteredResources.length} resource${filteredResources.length !== 1 ? 's' : ''}`}
+        title={
+          statusFilter === 'inactive'
+            ? 'Inactive Resources'
+            : 'Resources'
+        }
+        subtitle={
+          statusFilter === 'inactive'
+            ? `Not available for new products or production cycles • ${filteredResources.length} resource${filteredResources.length !== 1 ? 's' : ''}`
+            : `Current inventory list • ${filteredResources.length} resource${filteredResources.length !== 1 ? 's' : ''}`
+        }
         rightSection={
           <TextInput
             placeholder="Search resources..."
@@ -211,8 +292,22 @@ const ResourcesPage = () => {
           resources={sortedResources}
           onEdit={handleEditResource}
           onDelete={handleDeleteResource}
-          isLoading={isLoading}
-          isError={isError}
+          onReactivate={handleReactivateResource}
+          isLoading={
+            statusFilter === 'inactive'
+              ? isExistingResourcesLoading || isLoading
+              : isLoading
+          }
+          isError={
+            statusFilter === 'inactive'
+              ? isExistingResourcesError || isError
+              : isError
+          }
+          emptyMessage={
+            statusFilter === 'inactive'
+              ? 'No inactive resources.'
+              : 'No resources found.'
+          }
           sortBy={sortBy}
           reverse={reverse}
           onSort={handleSort}
@@ -222,7 +317,11 @@ const ResourcesPage = () => {
       <AddResourceModal
         opened={opened}
         resource={selectedResource}
-        inactiveResources={inactiveResources}
+        selectableResources={selectableResources}
+        isExistingResourcesLoading={
+          isExistingResourcesLoading || isLoading
+        }
+        isExistingResourcesError={isExistingResourcesError}
         hasCycle={hasCycle}
         onClose={() => {
           setSelectedResource(null)
@@ -239,6 +338,16 @@ const ResourcesPage = () => {
           setSelectedResource(null)
         }}
         onConfirm={handleConfirmDelete}
+      />
+
+      <ReactivateResourceModal
+        opened={reactivateOpened}
+        resource={selectedResource}
+        onClose={() => {
+          setReactivateOpened(false)
+          setSelectedResource(null)
+        }}
+        onConfirm={handleConfirmReactivate}
       />
     </>
   )

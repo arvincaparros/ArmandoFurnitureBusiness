@@ -9,6 +9,7 @@ from app.database.models import (
     ProductResourceRequirement,
     Resource,
 )
+from app.services.resource import DUPLICATE_INACTIVE_NAME_ERROR
 
 
 def test_list_resources_returns_only_active_by_default(client, test_resources, db):
@@ -379,9 +380,13 @@ def test_update_cycle_resource_rejects_explicit_null_available_quantity(
         _delete_cycle(db, cycle)
 
 
-def test_readd_deleted_resource_reactivates_same_id(client, test_resources):
+def test_readd_deleted_resource_is_rejected_without_reactivating(
+    client, db, test_resources,
+):
     deleted = test_resources[0]
     original_id = deleted.id
+    original_type = deleted.resource_type
+    original_unit = deleted.unit
 
     delete_response = client.delete(f"/api/resources/{original_id}")
     assert delete_response.status_code == 204
@@ -389,30 +394,38 @@ def test_readd_deleted_resource_reactivates_same_id(client, test_resources):
     recreate_response = client.post(
         "/api/resources",
         json={
-            "name": deleted.name,
+            "name": f"  {deleted.name.upper()}  ",
             "resource_type": "labor",
             "unit": "hrs",
         },
     )
 
-    assert recreate_response.status_code == 201
+    assert recreate_response.status_code == 409
+    assert (
+        recreate_response.json()["detail"]
+        == DUPLICATE_INACTIVE_NAME_ERROR
+    )
 
-    body = recreate_response.json()
+    # The soft-deleted row is left exactly as it was - no silent
+    # reactivation with the POSTed fields, and no second row under
+    # the same normalized name.
+    db.expire_all()
 
-    assert body["id"] == original_id
-    assert body["is_active"] is True
-    assert body["resource_type"] == "labor"
-    assert body["unit"] == "hrs"
-
-    active_names = [
-        item["name"]
-        for item in client.get("/api/resources").json()
+    matching = [
+        resource
+        for resource in db.query(Resource).all()
+        if resource.name.strip().lower()
+        == deleted.name.strip().lower()
     ]
 
-    assert active_names.count(deleted.name) == 1
+    assert len(matching) == 1
+    assert matching[0].id == original_id
+    assert matching[0].is_active is False
+    assert matching[0].resource_type == original_type
+    assert matching[0].unit == original_unit
 
 
-def test_readd_deleted_resource_preserves_product_requirements(
+def test_readd_deleted_resource_is_rejected_preserving_requirements(
     client,
     db,
     test_product_resource_requirements,
@@ -436,17 +449,126 @@ def test_readd_deleted_resource_preserves_product_requirements(
         "/api/resources",
         json={
             "name": wood.name,
-            "resource_type": "material",
-            "unit": "kg",
+            "resource_type": "machine",
+            "unit": "pcs",
         },
     )
 
-    assert recreate_response.status_code == 201
-    assert recreate_response.json()["id"] == original_id
+    assert recreate_response.status_code == 409
+    assert (
+        recreate_response.json()["detail"]
+        == DUPLICATE_INACTIVE_NAME_ERROR
+    )
 
+    # The requirement still points at the same (now inactive) row -
+    # nothing was recreated, re-pointed, or reactivated.
+    db.expire_all()
     db.refresh(requirement)
 
     assert requirement.resource_id == original_id
+    assert wood.is_active is False
+    assert wood.resource_type == "material"
+    assert wood.unit == "kg"
+
+
+def test_reactivate_resource_preserves_identity_relationships_and_cycle_values(
+    client,
+    db,
+    optimization_cycle,
+    test_product_resource_requirements,
+    test_resources,
+):
+    wood = next(r for r in test_resources if r.name == "Test Wood")
+    original_id = wood.id
+    original_name = wood.name
+    original_type = wood.resource_type
+    original_unit = wood.unit
+
+    requirement_snapshot = {
+        requirement.id: (
+            requirement.product_id,
+            requirement.resource_id,
+            requirement.quantity_required,
+        )
+        for requirement in db.query(ProductResourceRequirement)
+        .filter(ProductResourceRequirement.resource_id == original_id)
+        .all()
+    }
+    assert requirement_snapshot
+
+    cycle_resource = (
+        db.query(CycleResource)
+        .filter(
+            CycleResource.production_cycle_id == optimization_cycle.id,
+            CycleResource.resource_id == original_id,
+        )
+        .one()
+    )
+    cycle_snapshot = (
+        cycle_resource.available_quantity,
+        cycle_resource.unit_price,
+    )
+
+    delete_response = client.delete(f"/api/resources/{original_id}")
+    assert delete_response.status_code == 204
+
+    reactivate_response = client.patch(
+        f"/api/resources/{original_id}",
+        json={"is_active": True},
+    )
+    assert reactivate_response.status_code == 200
+
+    reactivated = reactivate_response.json()
+    assert reactivated["id"] == original_id
+    assert reactivated["name"] == original_name
+    assert reactivated["resource_type"] == original_type
+    assert reactivated["unit"] == original_unit
+    assert reactivated["is_active"] is True
+
+    db.expire_all()
+
+    # The same row came back - no second resource was created.
+    matching = [
+        resource
+        for resource in db.query(Resource).all()
+        if resource.name.strip().lower()
+        == original_name.strip().lower()
+    ]
+    assert len(matching) == 1
+    assert matching[0].id == original_id
+
+    # Product requirements still point at the same resource, with the
+    # same quantities - reactivation neither rewrites nor re-points
+    # them.
+    persisted_requirements = (
+        db.query(ProductResourceRequirement)
+        .filter(ProductResourceRequirement.resource_id == original_id)
+        .all()
+    )
+    assert {
+        requirement.id: (
+            requirement.product_id,
+            requirement.resource_id,
+            requirement.quantity_required,
+        )
+        for requirement in persisted_requirements
+    } == requirement_snapshot
+
+    # The production-cycle row is untouched: reactivation never
+    # changes capacity or price.
+    db.refresh(cycle_resource)
+    assert (
+        cycle_resource.available_quantity,
+        cycle_resource.unit_price,
+    ) == cycle_snapshot
+
+    # The reactivated resource is selectable through the normal
+    # active-only listing again.
+    active_resources = client.get("/api/resources")
+    assert active_resources.status_code == 200
+    assert original_id in [
+        item["id"] for item in active_resources.json()
+    ]
 
 
 def test_create_resource_case_and_whitespace_insensitive_duplicate(
@@ -589,9 +711,10 @@ def test_update_resource_normalized_conflict_with_inactive_other_row_blocks_rena
             json={"name": "Regression Circular Saw"},
         )
 
-        # Must BLOCK, not silently reactivate/merge into the inactive
-        # row - that reuse-on-name-match behavior belongs only to
-        # create_resource's delete+re-add path, never to update.
+        # Must BLOCK, not merge into the inactive row - update never
+        # reuses/reactivates an existing resource by name, it only
+        # rejects the conflict (as does create, since a soft-deleted
+        # name can no longer be re-added).
         assert response.status_code == 409
         assert response.json()["detail"] == (
             "A resource with this name already exists."
@@ -705,10 +828,10 @@ def _resource_row_count(db):
 def test_create_endpoint_rejects_every_case_and_whitespace_variant(client, db):
     """
     Full end-to-end regression for the actual POST /api/resources route
-    (not just the service function) - covers create-active-collision,
-    create-inactive-restore, and confirms the resources table's row
-    count never grows on a rejected duplicate, for every case/whitespace
-    variant of one name.
+    (not just the service function) - covers create-active-collision
+    and create-inactive-rejection, and confirms the resources table's
+    row count never grows on a rejected duplicate, for every
+    case/whitespace variant of one name.
     """
     original_count = _resource_row_count(db)
 
@@ -750,8 +873,9 @@ def test_create_endpoint_rejects_every_case_and_whitespace_variant(client, db):
                 f"row count changed after rejected create of {variant!r}"
             )
 
-        # Soft-delete, then re-add a case-variant name - must reactivate
-        # the SAME row, not insert a new one.
+        # Soft-delete, then try to re-add a case-variant name - the
+        # inactive row must be left untouched (not silently
+        # reactivated, no second row inserted).
         delete_response = client.delete(f"/api/resources/{resource_id}")
         assert delete_response.status_code == 204
 
@@ -766,19 +890,22 @@ def test_create_endpoint_rejects_every_case_and_whitespace_variant(client, db):
             },
         )
 
-        assert readd_response.status_code == 201
-        body = readd_response.json()
-        assert body["id"] == resource_id
-        assert body["is_active"] is True
+        assert readd_response.status_code == 409
+        assert readd_response.json()["detail"] == (
+            DUPLICATE_INACTIVE_NAME_ERROR
+        )
         assert _resource_row_count(db) == count_before_readd
 
-        # No lingering normalized-name duplicate group for this name.
+        # No lingering normalized-name duplicate group for this name,
+        # and no reactivation of the row that was just deactivated.
+        db.expire_all()
         matching = [
             r for r in db.query(Resource).all()
             if r.name.strip().lower() == "regression endpoint circular saw"
         ]
         assert len(matching) == 1
         assert matching[0].id == resource_id
+        assert matching[0].is_active is False
 
     finally:
         db.query(Resource).filter(Resource.id == resource_id).delete()

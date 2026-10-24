@@ -1,3 +1,5 @@
+import type { ResourceUpdateRequest } from './api/resourceTypes'
+
 export interface Resource {
   id: number
   name: string
@@ -13,3 +15,38 @@ export interface Resource {
   availableQuantity: number | null
   unitPrice: number | null
 }
+
+export interface ResourcePricing {
+  available_quantity: number
+  unit_price: number
+}
+
+// Add mode: the user picked an existing catalog resource, so the
+// only write is availability/price for the latest production cycle
+// (CycleResource, see useResources.ts) - never a new Resource row.
+// The resource itself already exists in the database.
+export interface ResourceInventorySubmission {
+  kind: 'inventory'
+  resourceId: number
+  resourceName: string
+  pricing: ResourcePricing
+}
+
+// Edit mode: existing behavior - update the global catalog fields
+// and, when a production cycle exists, availability/price.
+export interface ResourceUpdateSubmission {
+  kind: 'update'
+  resourceId: number
+  resourceName: string
+  data: ResourceUpdateRequest
+  pricing: ResourcePricing | null
+}
+
+export type ResourceSubmission =
+  | ResourceInventorySubmission
+  | ResourceUpdateSubmission
+
+// Which slice of the resource catalog the page's table is showing.
+// Inactive resources are soft-deleted rows that are kept (with their
+// id and every historical reference) and can be reactivated.
+export type ResourceStatusFilter = 'active' | 'inactive'
