@@ -67,33 +67,6 @@ const TransactionTable = ({
         `₱${row.salesAmount.toLocaleString()}`,
     },
     {
-      accessor: 'productionCost',
-      title: 'Production Cost',
-      sortable: true,
-      textAlign: 'left',
-      render: (row) =>
-        `₱${row.productionCost.toLocaleString()}`,
-    },
-    {
-      accessor: 'profitEarned',
-      title: 'Profit Earned',
-      sortable: true,
-      textAlign: 'left',
-      render: (row) => (
-        <span
-          style={{
-            color:
-              row.profitEarned >= 0
-                ? '#16a34a'
-                : '#dc2626',
-            fontWeight: 600,
-          }}
-        >
-          ₱{row.profitEarned.toLocaleString()}
-        </span>
-      ),
-    },
-    {
       accessor: 'actions',
       title: 'Actions',
       textAlign: 'center',

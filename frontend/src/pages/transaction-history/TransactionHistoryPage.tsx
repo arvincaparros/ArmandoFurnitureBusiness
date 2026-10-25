@@ -159,8 +159,6 @@ const TransactionHistoryPage = () => {
         'Quantity Produced': t.quantityProduced,
         'Quantity Sold': t.quantitySold,
         'Sales Amount': t.salesAmount,
-        'Production Cost': t.productionCost,
-        'Profit Earned': t.profitEarned,
       })),
     )
 
@@ -182,10 +180,6 @@ const TransactionHistoryPage = () => {
           t.quantitySold,
         'Sales Amount':
           t.salesAmount,
-        'Production Cost':
-          t.productionCost,
-        'Profit Earned':
-          t.profitEarned,
       })),
     )
 

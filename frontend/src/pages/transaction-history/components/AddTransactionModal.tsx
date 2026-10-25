@@ -50,14 +50,17 @@ interface AddTransactionModalProps {
 // transaction_number is server-generated (see transactionTypes.ts) -
 // there is no input for it here, unlike the old mock form. Sales
 // Amount is likewise not collected directly: the backend computes
-// total_sales as quantity (sold) * unit_price, and the stored/
-// returned production_cost as quantity_produced * "Production Cost /
-// Unit" (app/services/transaction.py::calculate_transaction_values) -
-// so Unit Price and Production Cost / Unit are the real per-unit
-// inputs, and the Transaction Summary card below is a read-only
-// client preview of what the backend will compute - the table always
-// displays the authoritative value from the API response, not this
-// preview.
+// total_sales as quantity (sold) * unit_price, so Unit Price is the
+// real per-unit input and the Transaction Summary card below is a
+// read-only client preview of that total - the table always displays
+// the authoritative value from the API response, not this preview.
+//
+// Production Cost / Unit is no longer collected here. The create
+// contract still requires it (app/schemas/transaction.py::
+// SalesTransactionCreate), so new transactions are submitted at 0;
+// edits omit it entirely so the backend reconstructs and preserves
+// the per-unit rate a transaction was saved with
+// (app/services/transaction.py::update_transaction).
 //
 // Edit mode (transaction prop set): the Product select is locked -
 // SalesTransactionUpdateRequest has no product_id field at all, the
@@ -90,11 +93,6 @@ const AddTransactionModal = ({
 
   const [unitPrice, setUnitPrice] = useState(0)
 
-  const [
-    productionCost,
-    setProductionCost,
-  ] = useState(0)
-
   const [isSubmitting, setIsSubmitting] =
     useState(false)
 
@@ -111,19 +109,6 @@ const AddTransactionModal = ({
       )
       setQuantitySold(transaction.quantitySold)
       setUnitPrice(transaction.unitPrice)
-      // transaction.productionCost is the stored TOTAL (Quantity
-      // Produced x per-unit rate - see app/schemas/transaction.py's
-      // SalesTransactionResponse.production_cost). This field is
-      // per-unit, so it's reconstructed the same way the backend
-      // reconstructs it when a PATCH omits production_cost
-      // (app/services/transaction.py::update_transaction) - dividing
-      // back by the quantity that produced it, not the raw total.
-      setProductionCost(
-        transaction.quantityProduced > 0
-          ? transaction.productionCost /
-              transaction.quantityProduced
-          : 0,
-      )
     } else {
       setProductId(null)
       setDate(
@@ -132,29 +117,21 @@ const AddTransactionModal = ({
       setQuantityProduced(0)
       setQuantitySold(0)
       setUnitPrice(0)
-      setProductionCost(0)
     }
 
     setError(null)
   }, [transaction, opened])
 
-  // Sales revenue is earned on units SOLD; production cost is
-  // incurred on units PRODUCED - these use different quantities on
-  // purpose (matches app/services/transaction.py::
-  // calculate_transaction_values exactly).
+  // Sales revenue is earned on units SOLD (matches
+  // app/services/transaction.py::calculate_transaction_values).
   const estimatedSales = quantitySold * unitPrice
-  const estimatedProductionCost =
-    quantityProduced * productionCost
-  const estimatedProfit =
-    estimatedSales - estimatedProductionCost
 
   const isValid =
     productId !== null &&
     date.trim() !== '' &&
     quantityProduced > 0 &&
     quantitySold > 0 &&
-    unitPrice > 0 &&
-    productionCost >= 0
+    unitPrice > 0
 
   const handleSave = async () => {
     if (!isValid || isSubmitting) {
@@ -166,21 +143,29 @@ const AddTransactionModal = ({
 
     try {
       if (isEditMode) {
+        // production_cost is deliberately omitted: the backend
+        // reconstructs the per-unit rate from the stored total
+        // (app/services/transaction.py::update_transaction), so a
+        // transaction keeps the cost it was saved with instead of
+        // being reset to zero.
         await onSave({
           transaction_date: `${date}T00:00:00`,
           quantity_produced: quantityProduced,
           quantity: quantitySold,
           unit_price: unitPrice,
-          production_cost: productionCost,
         })
       } else {
+        // The create contract still requires a per-unit production
+        // cost and this form no longer collects one, so new
+        // transactions are recorded at 0. Existing records are not
+        // touched.
         await onSave({
           product_id: productId as number,
           transaction_date: `${date}T00:00:00`,
           quantity_produced: quantityProduced,
           quantity: quantitySold,
           unit_price: unitPrice,
-          production_cost: productionCost,
+          production_cost: 0,
         })
       }
 
@@ -224,7 +209,7 @@ const AddTransactionModal = ({
       }}
     >
       <Stack gap="xs">
-        <SimpleGrid cols={2}>
+        <SimpleGrid cols={{ base: 1, sm: 2 }}>
           <TextInput
             radius="md"
             label="Date"
@@ -285,7 +270,7 @@ const AddTransactionModal = ({
           />
         </SimpleGrid>
 
-        <SimpleGrid cols={2}>
+        <SimpleGrid cols={{ base: 1, sm: 2 }}>
           <NumberInput
             radius="md"
             label="Quantity Produced"
@@ -311,31 +296,16 @@ const AddTransactionModal = ({
           />
         </SimpleGrid>
 
-        <SimpleGrid cols={2}>
-          <NumberInput
-            radius="md"
-            label="Unit Price"
-            prefix="₱ "
-            value={unitPrice}
-            onChange={(value) =>
-              setUnitPrice(Number(value))
-            }
-            min={0}
-          />
-
-          <NumberInput
-            radius="md"
-            label="Production Cost / Unit"
-            prefix="₱ "
-            value={productionCost}
-            onChange={(value) =>
-              setProductionCost(
-                Number(value),
-              )
-            }
-            min={0}
-          />
-        </SimpleGrid>
+        <NumberInput
+          radius="md"
+          label="Unit Price"
+          prefix="₱ "
+          value={unitPrice}
+          onChange={(value) =>
+            setUnitPrice(Number(value))
+          }
+          min={0}
+        />
 
         <Divider
           my={4}
@@ -356,35 +326,6 @@ const AddTransactionModal = ({
 
               <Text size="sm" fw={600}>
                 ₱{estimatedSales.toLocaleString()}
-              </Text>
-            </Group>
-
-            <Group justify="space-between">
-              <Text size="sm" c="dimmed">
-                Estimated Production Cost
-              </Text>
-
-              <Text size="sm" fw={600}>
-                ₱{estimatedProductionCost.toLocaleString()}
-              </Text>
-            </Group>
-
-            <Group justify="space-between">
-              <Text size="sm" c="dimmed">
-                Estimated Profit
-              </Text>
-
-              <Text
-                size="sm"
-                fw={600}
-                style={{
-                  color:
-                    estimatedProfit >= 0
-                      ? '#16a34a'
-                      : '#dc2626',
-                }}
-              >
-                ₱{estimatedProfit.toLocaleString()}
               </Text>
             </Group>
           </Stack>
