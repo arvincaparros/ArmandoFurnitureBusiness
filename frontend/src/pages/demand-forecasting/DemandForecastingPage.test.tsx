@@ -1,9 +1,10 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import userEvent from '@testing-library/user-event'
 import { MantineProvider } from '@mantine/core'
 import { Notifications } from '@mantine/notifications'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
 import { MemoryRouter } from 'react-router-dom'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 
 import DemandForecastingPage from './DemandForecastingPage'
 import { ThemeProvider } from '../../theme/ThemeContext'
@@ -200,5 +201,122 @@ describe('DemandForecastingPage no-sales-history state', () => {
     expect(
       screen.queryByText('No sales history yet'),
     ).toBeNull()
+  })
+})
+
+// jsdom's viewport is 1024px wide, so half of it is 512px.
+const setViewportWidth = (width: number) => {
+  Object.defineProperty(window, 'innerWidth', {
+    configurable: true,
+    writable: true,
+    value: width,
+  })
+}
+
+describe('DemandForecastingPage resizable AI Assistant', () => {
+  const openAssistant = async () => {
+    const user = userEvent.setup()
+
+    // The desktop launcher and the mobile toggle share one label; the
+    // first one is the desktop panel this feature resizes.
+    await user.click(
+      screen.getAllByRole('button', {
+        name: 'Open AI Assistant',
+      })[0],
+    )
+
+    return user
+  }
+
+  const getHandle = () =>
+    screen.getByRole('separator', { name: 'Resize AI Assistant' })
+
+  beforeEach(() => {
+    vi.mocked(fetchForecast).mockResolvedValue(noHistoryForecast)
+    vi.mocked(fetchForecastTimeseries).mockResolvedValue(
+      noHistoryTimeseries,
+    )
+  })
+
+  afterEach(() => {
+    setViewportWidth(1024)
+  })
+
+  it('renders a resize handle bounded by the panel minimum and half the viewport', async () => {
+    renderPage()
+
+    await openAssistant()
+
+    const handle = getHandle()
+
+    expect(handle).toHaveAttribute('aria-valuenow', '360')
+    expect(handle).toHaveAttribute('aria-valuemin', '360')
+    expect(handle).toHaveAttribute('aria-valuemax', '512')
+  })
+
+  it('follows a left drag, clamps at both limits, and stops tracking on mouse up', async () => {
+    renderPage()
+
+    const user = await openAssistant()
+
+    fireEvent.mouseDown(getHandle(), { clientX: 700 })
+    fireEvent.mouseMove(window, { clientX: 200 })
+
+    // 360 + (700 - 200) = 860 -> clamped to 1024 / 2.
+    expect(getHandle()).toHaveAttribute('aria-valuenow', '512')
+    expect(
+      document
+        .querySelector<HTMLElement>('[style*="--chat-width"]')
+        ?.style.getPropertyValue('--chat-width'),
+    ).toBe('512px')
+
+    // Dragging back to the right returns it to the original width.
+    fireEvent.mouseMove(window, { clientX: 900 })
+
+    expect(getHandle()).toHaveAttribute('aria-valuenow', '360')
+
+    fireEvent.mouseUp(window)
+
+    // No mousemove listener survives the drag.
+    fireEvent.mouseMove(window, { clientX: 0 })
+
+    expect(getHandle()).toHaveAttribute('aria-valuenow', '360')
+
+    // The resized panel is still a working chat panel.
+    expect(
+      screen.getAllByPlaceholderText(
+        'Ask about demand forecasts...',
+      ).length,
+    ).toBeGreaterThan(0)
+
+    await user.click(
+      screen.getAllByRole('button', {
+        name: 'Close AI Assistant',
+      })[0],
+    )
+
+    expect(
+      screen.queryByRole('separator', {
+        name: 'Resize AI Assistant',
+      }),
+    ).not.toBeInTheDocument()
+  })
+
+  it('clamps the panel back inside half the viewport when the window shrinks', async () => {
+    renderPage()
+
+    await openAssistant()
+
+    fireEvent.mouseDown(getHandle(), { clientX: 700 })
+    fireEvent.mouseMove(window, { clientX: 200 })
+    fireEvent.mouseUp(window)
+
+    expect(getHandle()).toHaveAttribute('aria-valuenow', '512')
+
+    setViewportWidth(800)
+    fireEvent(window, new Event('resize'))
+
+    expect(getHandle()).toHaveAttribute('aria-valuenow', '400')
+    expect(getHandle()).toHaveAttribute('aria-valuemax', '400')
   })
 })
