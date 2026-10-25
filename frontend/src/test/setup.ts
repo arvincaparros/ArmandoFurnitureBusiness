@@ -30,3 +30,16 @@ if (typeof globalThis.ResizeObserver === 'undefined') {
   globalThis.ResizeObserver =
     ResizeObserverStub as unknown as typeof ResizeObserver
 }
+
+// jsdom does not implement the CSS Font Loading API either. Mantine's
+// autosize Textarea subscribes to document.fonts "loadingdone" to
+// remeasure rows, so rendering one throws without this stub.
+if (typeof document !== 'undefined' && !document.fonts) {
+  Object.defineProperty(document, 'fonts', {
+    configurable: true,
+    value: {
+      addEventListener: () => {},
+      removeEventListener: () => {},
+    },
+  })
+}

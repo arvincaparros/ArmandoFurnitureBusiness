@@ -10,7 +10,7 @@ import {
   ScrollArea,
   Stack,
   Text,
-  TextInput,
+  Textarea,
   Tooltip,
 } from '@mantine/core'
 
@@ -273,7 +273,7 @@ const ForecastChatbot = ({
           gap="xs"
           align="flex-end"
         >
-          <TextInput
+          <Textarea
             placeholder={
               isListening
                 ? 'Listening...'
@@ -287,10 +287,19 @@ const ForecastChatbot = ({
               )
             }
             onKeyDown={(event) => {
-              if (event.key === 'Enter') {
+              // Enter sends; Shift+Enter keeps its default so the
+              // textarea inserts a line break instead of submitting.
+              if (event.key === 'Enter' && !event.shiftKey) {
+                event.preventDefault()
                 handleSend()
               }
             }}
+            // Grows with the message up to six lines, then scrolls
+            // internally instead of pushing the send row down.
+            autosize
+            minRows={1}
+            maxRows={6}
+            resize="none"
             style={{ flex: 1 }}
           />
 
