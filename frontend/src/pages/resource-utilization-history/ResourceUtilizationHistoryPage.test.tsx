@@ -176,3 +176,33 @@ describe('ResourceUtilizationHistoryPage pagination', () => {
     expect(screen.getByRole('button', { name: 'Next' })).toBeEnabled()
   })
 })
+
+describe('ResourceUtilizationHistoryPage columns', () => {
+  it('omits the Utilization ID column and keeps the other six', () => {
+    mockRows(makeRows(2))
+
+    renderPage()
+
+    expect(
+      screen.queryByRole('columnheader', {
+        name: 'Utilization ID',
+      }),
+    ).not.toBeInTheDocument()
+    expect(screen.queryByText(/^UT-\d+$/)).not.toBeInTheDocument()
+
+    const titles = [
+      'Date Generated',
+      'Resource',
+      'Consumed',
+      'Remaining',
+      'Utilization %',
+      'Status',
+    ]
+
+    for (const title of titles) {
+      expect(
+        screen.getByRole('columnheader', { name: title }),
+      ).toBeInTheDocument()
+    }
+  })
+})

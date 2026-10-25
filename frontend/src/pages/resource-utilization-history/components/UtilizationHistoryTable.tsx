@@ -27,10 +27,6 @@ const UtilizationHistoryTable = ({
 }: UtilizationHistoryTableProps) => {
   const columns: Column<UtilizationHistoryRow>[] = [
     {
-      accessor: 'utilizationNumber',
-      title: 'Utilization ID',
-    },
-    {
       accessor: 'generatedAt',
       title: 'Date Generated',
     },

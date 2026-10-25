@@ -30,10 +30,6 @@ const OptimizationHistoryTable = ({
 }: OptimizationHistoryTableProps) => {
   const columns: Column<OptimizationHistory>[] = [
     {
-      accessor: 'optimizationId',
-      title: 'Optimization ID',
-    },
-    {
       accessor: 'dateGenerated',
       title: 'Date Generated',
     },
