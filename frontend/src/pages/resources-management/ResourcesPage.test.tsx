@@ -16,7 +16,7 @@ vi.mock('../../hooks/useLatestProductionCycle', () => ({
   default: () => ({ cycleId: 1, hasCycle: true, isLoading: false, isError: false }),
 }))
 
-const { catalog, updateResourceMock } = vi.hoisted(() => {
+const { catalog, updateResourceMock, createResourceMock } = vi.hoisted(() => {
   const catalog = [
     { id: 1, name: 'Wood', resource_type: 'material', unit: 'board ft', is_active: true },
     { id: 2, name: 'Wood Glue', resource_type: 'material', unit: 'liter', is_active: true },
@@ -38,7 +38,30 @@ const { catalog, updateResourceMock } = vi.hoisted(() => {
     },
   )
 
-  return { catalog, updateResourceMock }
+  // POST /api/resources. Appends to the mock catalog so the
+  // invalidated 'resources-all' refetch really does include the new
+  // row - the same path the selector reads.
+  const createResourceMock = vi.fn(
+    async (data: {
+      name: string
+      resource_type: string
+      unit: string
+    }) => {
+      const created = {
+        id: 99,
+        name: data.name,
+        resource_type: data.resource_type,
+        unit: data.unit,
+        is_active: true,
+      }
+
+      catalog.push(created)
+
+      return created
+    },
+  )
+
+  return { catalog, updateResourceMock, createResourceMock }
 })
 
 vi.mock('./api/resourceApi', () => ({
@@ -46,6 +69,7 @@ vi.mock('./api/resourceApi', () => ({
     catalog.filter((resource) => resource.is_active),
   ),
   fetchAllResourcesIncludingInactive: vi.fn(async () => catalog),
+  createResource: createResourceMock,
   updateResource: updateResourceMock,
   deleteResource: vi.fn(),
 }))
@@ -231,6 +255,96 @@ describe('ResourcesPage resource-update notification', () => {
     await waitFor(() => {
       expect(screen.getByText('Resource Added')).toBeInTheDocument()
     })
+  })
+
+  it('creates a new catalog resource and makes it selectable for the cycle', async () => {
+    vi.mocked(createCycleResource).mockResolvedValueOnce({
+      id: 12,
+      production_cycle_id: 1,
+      resource_id: 99,
+      available_quantity: '300.0000',
+      unit_price: '5.0000',
+    })
+
+    renderPage()
+
+    await waitFor(() => screen.getByText('Wood'))
+
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Add Resource' }),
+    )
+
+    const dialog = await screen.findByRole('dialog')
+
+    await userEvent.click(
+      within(dialog).getByRole('radio', { name: 'Create New' }),
+    )
+
+    await userEvent.type(
+      within(dialog).getByLabelText('Name'),
+      'Sandpaper',
+    )
+
+    const quantityInput = within(dialog).getByLabelText(
+      'Available Quantity',
+    )
+    await userEvent.clear(quantityInput)
+    await userEvent.type(quantityInput, '300')
+
+    const priceInput = within(dialog).getByLabelText('Unit Price')
+    await userEvent.clear(priceInput)
+    await userEvent.type(priceInput, '5')
+
+    await userEvent.click(
+      within(dialog).getByRole('button', {
+        name: 'Create Resource',
+      }),
+    )
+
+    // The master catalog row is created once, with the entered fields.
+    await waitFor(() => {
+      expect(createResourceMock).toHaveBeenCalledWith({
+        name: 'Sandpaper',
+        resource_type: 'material',
+        unit: 'board ft',
+      })
+    })
+
+    // The cycle reuses the id the server assigned, so no second
+    // resource record is involved.
+    await waitFor(() => {
+      expect(createCycleResource).toHaveBeenCalledWith(1, {
+        resource_id: 99,
+        available_quantity: 300,
+        unit_price: 5,
+      })
+    })
+
+    await waitFor(() => {
+      expect(screen.getByText('Resource Added')).toBeInTheDocument()
+    })
+
+    // The invalidated catalog refetch offers it in the existing-
+    // resource selector, alongside the resources that were already
+    // there. Wait for the just-closed add modal to leave the DOM
+    // first - its footer button still carries the "Add Resource"
+    // label during the exit transition.
+    await waitFor(() => {
+      expect(screen.queryByRole('dialog')).not.toBeInTheDocument()
+    })
+
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Add Resource' }),
+    )
+
+    const reopened = await screen.findByRole('dialog')
+
+    await userEvent.click(
+      within(reopened).getByRole('combobox', { name: 'Name' }),
+    )
+
+    expect(findDropdownOption('Sandpaper')).toBeInTheDocument()
+    expect(findDropdownOption('Wood')).toBeInTheDocument()
   })
 
   it('updates cycle inventory when the selected resource already has it', async () => {

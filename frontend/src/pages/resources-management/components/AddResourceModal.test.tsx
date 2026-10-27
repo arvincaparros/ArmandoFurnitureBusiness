@@ -127,8 +127,14 @@ const fillCyclePricing = async (
   await userEvent.type(priceInput, price)
 }
 
+const switchToCreateMode = async () => {
+  await userEvent.click(
+    screen.getByRole('radio', { name: 'Create New' }),
+  )
+}
+
 describe('AddResourceModal', () => {
-  it('no longer renders the Reactivate Existing tab', async () => {
+  it('offers Use Existing and Create New modes but no Reactivate Existing tab', async () => {
     renderModal()
 
     await screen.findByRole('combobox', { name: 'Name' })
@@ -136,9 +142,15 @@ describe('AddResourceModal', () => {
     expect(
       screen.queryByText('Reactivate Existing'),
     ).not.toBeInTheDocument()
-    expect(screen.queryByText('New Resource')).not.toBeInTheDocument()
-    expect(screen.queryByRole('radiogroup')).not.toBeInTheDocument()
-    expect(screen.queryByRole('radio')).not.toBeInTheDocument()
+
+    // Selecting an existing resource is still the default - creating
+    // a catalog entry is the explicit alternative next to it.
+    expect(
+      screen.getByRole('radio', { name: 'Use Existing' }),
+    ).toBeChecked()
+    expect(
+      screen.getByRole('radio', { name: 'Create New' }),
+    ).not.toBeChecked()
   })
 
   it('lists existing resources with their Active and Inactive badges', async () => {
@@ -179,8 +191,13 @@ describe('AddResourceModal', () => {
     expect(screen.queryByText('Epoxy')).not.toBeInTheDocument()
     expect(screen.queryByText('Nails')).not.toBeInTheDocument()
 
-    // A selection-only component has no "create <typed name>" row.
-    expect(screen.queryByText(/create/i)).not.toBeInTheDocument()
+    // The one remaining entry is still the catalog option itself,
+    // badge included - the selector has no "create <typed name>"
+    // row. Creating a catalog entry is the separate Create New mode,
+    // covered by the tests below.
+    expect(
+      within(findOptionByText('Wood Glue')).getByText('Active'),
+    ).toBeInTheDocument()
   })
 
   it('cannot submit an arbitrary typed name', async () => {
@@ -365,6 +382,122 @@ describe('AddResourceModal', () => {
     expect(
       screen.getByRole('button', { name: 'Add Resource' }),
     ).toBeDisabled()
+  })
+
+  it('creates a new resource with its availability and price', async () => {
+    const { onSave } = renderModal()
+
+    await switchToCreateMode()
+
+    const nameInput = screen.getByLabelText('Name')
+    await userEvent.type(nameInput, '  Sandpaper  ')
+
+    await fillCyclePricing('300', '5')
+
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Create Resource' }),
+    )
+
+    await waitFor(() =>
+      expect(onSave).toHaveBeenCalledWith({
+        kind: 'create',
+        resourceName: 'Sandpaper',
+        data: {
+          name: 'Sandpaper',
+          resource_type: 'material',
+          unit: 'board ft',
+        },
+        pricing: {
+          available_quantity: 300,
+          unit_price: 5,
+        },
+      }),
+    )
+  })
+
+  it('creates a catalog resource even when no production cycle exists', async () => {
+    const { onSave } = renderModal({ hasCycle: false })
+
+    await switchToCreateMode()
+
+    await userEvent.type(screen.getByLabelText('Name'), 'Sandpaper')
+
+    // Only availability/price depend on a cycle - the catalog row
+    // itself does not.
+    expect(
+      screen.getByLabelText('Available Quantity'),
+    ).toBeDisabled()
+
+    const submit = screen.getByRole('button', {
+      name: 'Create Resource',
+    })
+
+    expect(submit).toBeEnabled()
+
+    await userEvent.click(submit)
+
+    await waitFor(() =>
+      expect(onSave).toHaveBeenCalledWith({
+        kind: 'create',
+        resourceName: 'Sandpaper',
+        data: {
+          name: 'Sandpaper',
+          resource_type: 'material',
+          unit: 'board ft',
+        },
+        pricing: null,
+      }),
+    )
+  })
+
+  it('blocks creating a resource whose name another resource already uses', async () => {
+    const { onSave } = renderModal()
+
+    await switchToCreateMode()
+
+    // Case/whitespace-insensitive, mirroring the backend's normalized
+    // name uniqueness rule.
+    await userEvent.type(screen.getByLabelText('Name'), ' wood glue ')
+
+    expect(
+      screen.getByText(
+        'Another resource already uses this name. Choose a different name.',
+      ),
+    ).toBeInTheDocument()
+
+    const submit = screen.getByRole('button', {
+      name: 'Create Resource',
+    })
+
+    expect(submit).toBeDisabled()
+
+    await userEvent.click(submit)
+
+    expect(onSave).not.toHaveBeenCalled()
+  })
+
+  it('returns to the existing-resource selector without leaking the typed name', async () => {
+    const { onSave } = renderModal()
+
+    await switchToCreateMode()
+    await userEvent.type(screen.getByLabelText('Name'), 'Sandpaper')
+
+    await userEvent.click(
+      screen.getByRole('radio', { name: 'Use Existing' }),
+    )
+
+    // The Select is back, nothing is selected, and the typed name did
+    // not survive the switch - so it can never be submitted as an
+    // existing-resource assignment.
+    const select = screen.getByRole('combobox', { name: 'Name' })
+    expect(select).toHaveValue('')
+
+    const submit = screen.getByRole('button', { name: 'Add Resource' })
+    expect(submit).toBeDisabled()
+
+    await userEvent.click(submit)
+
+    expect(onSave).not.toHaveBeenCalled()
   })
 
   it('does not flag the resource being edited as a duplicate of itself', async () => {

@@ -21,12 +21,11 @@ export async function fetchResources(): Promise<ResourceResponse[]> {
   return response.data
 }
 
-// Mirror of POST /api/resources. The Resources page itself no longer
-// creates catalog entries - its Add Resource form only assigns an
-// already-existing resource to the latest production cycle via
-// CycleResource (see AddResourceModal.tsx and useResources.ts). Kept
-// here as the faithful API mirror for any future admin workflow; no
-// current page imports it.
+// POST /api/resources - used by the Add Resource form's "Create New"
+// mode only (see AddResourceModal.tsx and useResources.ts). Its "Use
+// Existing" mode never calls this: that assigns an already-catalogued
+// resource to the latest production cycle via CycleResource, so an
+// existing resource keeps its own id and is never duplicated.
 export async function createResource(
   data: ResourceCreateRequest,
 ): Promise<ResourceResponse> {
@@ -66,11 +65,12 @@ export async function deleteResource(id: number): Promise<void> {
 // per-module convention - see that file's own comment), but sharing
 // the identical query key so a fetch made by either module's page
 // satisfies both, the same cache-sharing pattern already used for
-// 'cycle-resources'. Used by the Add Resource form's Name select
-// (see AddResourceModal.tsx), which lists every resource with an
-// Active/Inactive badge and never offers an unlisted/create-new
-// option - no filtering happens here, so this stays a plain mirror
-// of the backend response.
+// 'cycle-resources'. Used by the Add Resource form's "Use Existing"
+// Name select (see AddResourceModal.tsx), which lists every resource
+// with an Active/Inactive badge and never offers an unlisted/create-
+// new option there, and by its "Create New" mode to block a name that
+// another resource already has - no filtering happens here, so this
+// stays a plain mirror of the backend response.
 export async function fetchAllResourcesIncludingInactive(): Promise<
   ResourceResponse[]
 > {

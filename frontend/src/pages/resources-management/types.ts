@@ -1,4 +1,7 @@
-import type { ResourceUpdateRequest } from './api/resourceTypes'
+import type {
+  ResourceCreateRequest,
+  ResourceUpdateRequest,
+} from './api/resourceTypes'
 
 export interface Resource {
   id: number
@@ -21,15 +24,28 @@ export interface ResourcePricing {
   unit_price: number
 }
 
-// Add mode: the user picked an existing catalog resource, so the
-// only write is availability/price for the latest production cycle
-// (CycleResource, see useResources.ts) - never a new Resource row.
-// The resource itself already exists in the database.
+// Add mode, "Use Existing": the user picked an existing catalog
+// resource, so the only write is availability/price for the latest
+// production cycle (CycleResource, see useResources.ts) - never a
+// new Resource row. The resource itself already exists in the
+// database and keeps its id.
 export interface ResourceInventorySubmission {
   kind: 'inventory'
   resourceId: number
   resourceName: string
   pricing: ResourcePricing
+}
+
+// Add mode, "Create New": the only branch that writes a new global
+// Resource record (POST /api/resources). Pricing is the new row's
+// availability/price for the latest production cycle, collected
+// only when a cycle exists - null means the catalog row is created
+// on its own and can be priced later.
+export interface ResourceCreateSubmission {
+  kind: 'create'
+  resourceName: string
+  data: ResourceCreateRequest
+  pricing: ResourcePricing | null
 }
 
 // Edit mode: existing behavior - update the global catalog fields
@@ -44,6 +60,7 @@ export interface ResourceUpdateSubmission {
 
 export type ResourceSubmission =
   | ResourceInventorySubmission
+  | ResourceCreateSubmission
   | ResourceUpdateSubmission
 
 // Which slice of the resource catalog the page's table is showing.

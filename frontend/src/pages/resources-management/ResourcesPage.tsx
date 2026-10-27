@@ -52,6 +52,7 @@ const ResourcesPage = () => {
     isError,
     hasCycle,
     updateResource,
+    createResource,
     deleteResource,
     reactivateResource,
     savePricing,
@@ -95,6 +96,30 @@ const ResourcesPage = () => {
   const handleSaveResource = async (
     submission: ResourceSubmission,
   ) => {
+    if (submission.kind === 'create') {
+      // "Create New" in the Add Resource form: the only path that
+      // writes a new master Resource record. The row the server
+      // creates keeps its own id, and the optional availability/price
+      // below is written against that same id - so a resource is
+      // never duplicated, and it shows up in the catalog (and thus in
+      // the form's own selection list) immediately.
+      const created = await createResource(submission.data)
+
+      if (submission.pricing) {
+        await savePricing({
+          resourceId: created.id,
+          data: submission.pricing,
+        })
+      }
+
+      notify.added(created.name)
+
+      setSelectedResource(null)
+      setOpened(false)
+
+      return
+    }
+
     if (submission.kind === 'inventory') {
       // Add mode assigns an existing catalog resource to the latest
       // production cycle. The only write is CycleResource

@@ -5,6 +5,7 @@ import {
 } from '@tanstack/react-query'
 
 import {
+  createResource,
   deleteResource,
   fetchAllResourcesIncludingInactive,
   fetchResources,
@@ -22,6 +23,7 @@ import { toUiResources } from '../api/resourceAdapter'
 import useLatestProductionCycle from '../../../hooks/useLatestProductionCycle'
 
 import type {
+  ResourceCreateRequest,
   ResourceUpdateRequest,
 } from '../api/resourceTypes'
 import type { CycleResourceResponse } from '../api/cycleResourceTypes'
@@ -143,6 +145,24 @@ const useResources = () => {
     },
   })
 
+  // The only write path that inserts a global Resource row - used by
+  // the Add Resource form's "Create New" mode
+  // (AddResourceModal.tsx). Selecting an existing resource never
+  // reaches this: that flow writes CycleResource only, so an
+  // existing resource keeps its own id and is never duplicated.
+  // Invalidating 'resources-all' is what makes the new row show up
+  // in the selector (and in Product Resource Requirements) without a
+  // reload.
+  const createMutation = useMutation({
+    mutationFn: (data: ResourceCreateRequest) =>
+      createResource(data),
+    onSuccess: () => {
+      invalidateResources()
+      invalidateResourcesCatalog()
+      invalidateFeasibility()
+    },
+  })
+
   const deleteMutation = useMutation({
     mutationFn: (id: number) => deleteResource(id),
     onSuccess: () => {
@@ -246,6 +266,9 @@ const useResources = () => {
 
     updateResource: updateMutation.mutateAsync,
     isUpdating: updateMutation.isPending,
+
+    createResource: createMutation.mutateAsync,
+    isCreating: createMutation.isPending,
 
     deleteResource: deleteMutation.mutateAsync,
     isDeleting: deleteMutation.isPending,

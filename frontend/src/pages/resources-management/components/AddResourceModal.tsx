@@ -10,10 +10,12 @@ import {
   Loader,
   Modal,
   NumberInput,
+  SegmentedControl,
   Select,
   SimpleGrid,
   Stack,
   Text,
+  TextInput,
 } from '@mantine/core'
 
 import {
@@ -35,17 +37,21 @@ interface AddResourceModalProps {
   resource?: Resource | null
   // Every resource in the catalog, active and inactive, carrying the
   // latest cycle's availability/price where one is configured - see
-  // useResources.ts. The Name select lists all of them with a status
-  // badge: this form only ever assigns an already-existing resource
-  // to the current production cycle, it never creates a new Resource
-  // record, so an arbitrary typed name is not a submittable value.
+  // useResources.ts. The "Use Existing" Name select lists all of them
+  // with a status badge and assigns the selected one to the current
+  // production cycle; it never creates a Resource record, so an
+  // arbitrary typed name is not a submittable value there. Creating
+  // a catalog entry is the separate "Create New" mode, which also
+  // uses this list to block a name another resource already has.
   selectableResources: Resource[]
   isExistingResourcesLoading: boolean
   isExistingResourcesError: boolean
   // Availability/price (CycleResource) can only be saved once a
-  // production cycle exists - see useResources.ts. Adding an existing
-  // resource is exactly that write, so with no cycle this form has
-  // nothing it can save.
+  // production cycle exists - see useResources.ts. Assigning an
+  // existing resource is exactly that write, so with no cycle that
+  // mode has nothing it can save. Creating a catalog entry does not
+  // depend on a cycle: the resource is created either way, and only
+  // its availability/price has to wait for one.
   hasCycle: boolean
 }
 
@@ -112,6 +118,12 @@ const DUPLICATE_ACTIVE_MESSAGE =
 const DUPLICATE_INACTIVE_MESSAGE =
   'An inactive resource already uses this name. Choose a different name.'
 
+// Add mode covers two different writes; edit mode is neither. "Use
+// Existing" assigns an already-catalogued resource to the current
+// production cycle (CycleResource only), while "Create New" is the
+// one path that inserts a new global Resource record.
+type AddMode = 'existing' | 'create'
+
 const AddResourceModal = ({
   opened,
   onClose,
@@ -128,6 +140,8 @@ const AddResourceModal = ({
     string | null
   >(null)
 
+  const [addMode, setAddMode] = useState<AddMode>('existing')
+
   const [name, setName] = useState('')
   const [resourceType, setResourceType] = useState('material')
   const [unit, setUnit] = useState('board ft')
@@ -137,10 +151,12 @@ const AddResourceModal = ({
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
 
-  // Adding never creates a catalog entry, so the only add-mode write
-  // is the selected resource's CycleResource availability/price.
-  // Editing updates that one existing row.
+  // Adding either assigns an existing catalog entry (the only
+  // add-mode write then being its CycleResource availability/price)
+  // or creates a new catalog entry. Editing updates one existing row.
   const isAddMode = !resource
+
+  const isCreatingNew = isAddMode && addMode === 'create'
 
   useEffect(() => {
     if (resource) {
@@ -162,6 +178,7 @@ const AddResourceModal = ({
     }
 
     setSelectedResourceId(null)
+    setAddMode('existing')
     setError(null)
   }, [resource, opened])
 
@@ -171,11 +188,13 @@ const AddResourceModal = ({
     ) ?? null
 
   // The global category/unit come from the selected existing
-  // resource in add mode (they describe the catalog row, which this
-  // form does not modify) and from the editable fields in edit mode.
-  const effectiveResourceType = isAddMode
-    ? selectedCatalogResource?.resourceType ?? ''
-    : resourceType
+  // resource in "Use Existing" mode (they describe the catalog row,
+  // which that form does not modify) and from the editable fields
+  // otherwise - "Create New" and edit both own their own values.
+  const effectiveResourceType =
+    isAddMode && !isCreatingNew
+      ? selectedCatalogResource?.resourceType ?? ''
+      : resourceType
 
   // Labor's cost is tracked separately via Product.labor_cost (see
   // backend/app/services/cycle_resource.py's _requires_positive_unit_price,
@@ -183,16 +202,18 @@ const AddResourceModal = ({
   // CycleResource's unit_price is allowed to be 0.
   const isLabor = isLaborResourceType(effectiveResourceType)
 
-  const effectiveUnit = isAddMode
-    ? selectedCatalogResource?.unit ?? ''
-    : unit
+  const effectiveUnit =
+    isAddMode && !isCreatingNew
+      ? selectedCatalogResource?.unit ?? ''
+      : unit
 
-  // A name that another row already uses is never a valid rename,
-  // whether that resource is active or inactive. The resource being
-  // edited is excluded - mirroring the backend's exclude_id check in
-  // update_resource.
+  // A name that another row already uses is never a valid rename or a
+  // valid new resource, whether that resource is active or inactive.
+  // In edit mode the resource being edited is excluded - mirroring the
+  // backend's exclude_id check in update_resource. "Use Existing"
+  // assigns an already-catalogued row, so it checks nothing here.
   const duplicateResource =
-    isAddMode || name.trim() === ''
+    (isAddMode && !isCreatingNew) || name.trim() === ''
       ? null
       : selectableResources.find(
           (candidate) =>
@@ -207,13 +228,13 @@ const AddResourceModal = ({
       : DUPLICATE_INACTIVE_MESSAGE
     : null
 
-  // In add mode the modal writes only availability/price, so nothing
-  // can be submitted without an active selection and a production
-  // cycle. In edit mode the global fields can still be saved without
-  // a cycle, matching the previous behavior.
-  const canEditPricing = isAddMode
-    ? Boolean(selectedCatalogResource?.isActive) && hasCycle
-    : hasCycle
+  // Availability/price (CycleResource) need a production cycle
+  // whatever the mode. "Use Existing" also needs an active selection,
+  // since that write is the only thing it can submit.
+  const canEditPricing =
+    isAddMode && !isCreatingNew
+      ? Boolean(selectedCatalogResource?.isActive) && hasCycle
+      : hasCycle
 
   const isAddValid =
     selectedCatalogResource !== null &&
@@ -221,6 +242,17 @@ const AddResourceModal = ({
     hasCycle &&
     availableQuantity > 0 &&
     (isLabor || unitPrice > 0)
+
+  // Creating the catalog row does not depend on a cycle - only its
+  // availability/price does, so those are required (and editable) only
+  // when a cycle exists.
+  const isCreateValid =
+    name.trim() !== '' &&
+    duplicateResource === null &&
+    resourceType.trim() !== '' &&
+    unit.trim() !== '' &&
+    (!hasCycle ||
+      (availableQuantity > 0 && (isLabor || unitPrice > 0)))
 
   const isEditValid =
     name.trim() !== '' &&
@@ -230,7 +262,11 @@ const AddResourceModal = ({
     (!hasCycle ||
       (availableQuantity >= 0 && (isLabor || unitPrice > 0)))
 
-  const isValid = isAddMode ? isAddValid : isEditValid
+  const isValid = isAddMode
+    ? isCreatingNew
+      ? isCreateValid
+      : isAddValid
+    : isEditValid
 
   const hasCycleInventory =
     selectedCatalogResource !== null &&
@@ -239,9 +275,11 @@ const AddResourceModal = ({
   // An inactive selection is never submittable, so it keeps the
   // plain "Add Resource" label rather than suggesting a save.
   const submitLabel = isAddMode
-    ? selectedCatalogResource?.isActive && hasCycleInventory
-      ? 'Save Changes'
-      : 'Add Resource'
+    ? isCreatingNew
+      ? 'Create Resource'
+      : selectedCatalogResource?.isActive && hasCycleInventory
+        ? 'Save Changes'
+        : 'Add Resource'
     : 'Save Changes'
 
   const handleSelectResource = (value: string | null) => {
@@ -265,6 +303,24 @@ const AddResourceModal = ({
     )
   }
 
+  // Switching between the two add modes starts from a clean form: a
+  // typing-in-progress in one mode, or a quantity prefilled from a
+  // resource selected in the other, must never leak into the other
+  // mode's submission.
+  const handleModeChange = (value: string) => {
+    const nextMode: AddMode =
+      value === 'create' ? 'create' : 'existing'
+
+    setAddMode(nextMode)
+    setSelectedResourceId(null)
+    setName('')
+    setResourceType('material')
+    setUnit('board ft')
+    setAvailableQuantity(0)
+    setUnitPrice(0)
+    setError(null)
+  }
+
   const handleSave = async () => {
     if (!isValid || isSubmitting) {
       return
@@ -274,7 +330,30 @@ const AddResourceModal = ({
     setError(null)
 
     try {
-      if (isAddMode) {
+      if (isCreatingNew) {
+        // The one branch that inserts a new global Resource record
+        // (ResourcesPage.tsx's createResource -> POST /api/resources).
+        // Pricing is written afterwards against the id the server
+        // assigned, so the cycle reuses that id rather than creating
+        // a second catalog row.
+        await onSave({
+          kind: 'create',
+          resourceName: name.trim(),
+          data: {
+            // Trimmed here as well as server-side, so the name shown
+            // in the success notification is the one actually stored.
+            name: name.trim(),
+            resource_type: resourceType,
+            unit: unit,
+          },
+          pricing: hasCycle
+            ? {
+                available_quantity: availableQuantity,
+                unit_price: unitPrice,
+              }
+            : null,
+        })
+      } else if (isAddMode) {
         if (!selectedCatalogResource) {
           return
         }
@@ -331,6 +410,35 @@ const AddResourceModal = ({
       label: candidate.name,
     }))
 
+  // Category and Unit describe the catalog row itself, so the same two
+  // controls serve "Create New" and edit - the fields the resource
+  // form already had. "Use Existing" never edits them: they are read
+  // from the selected catalog row and shown read-only on its card.
+  const categoryField = (
+    <Select
+      label="Category"
+      data={resourceCategories}
+      value={resourceType}
+      onChange={(value) => {
+        const nextType = value ?? 'material'
+        setResourceType(nextType)
+
+        if (isLaborResourceType(nextType)) {
+          setUnitPrice(0)
+        }
+      }}
+    />
+  )
+
+  const unitField = (
+    <Select
+      label="Unit"
+      data={unitOptions(unit)}
+      value={unit}
+      onChange={(value) => setUnit(value ?? '')}
+    />
+  )
+
   return (
     <Modal
       opened={opened}
@@ -343,7 +451,42 @@ const AddResourceModal = ({
       centered
     >
       <Stack gap="md">
-        {isAddMode ? (
+        {isAddMode && (
+          // Two distinct writes behind one action: assigning an
+          // already-catalogued resource to the current cycle, or
+          // creating a new catalog resource. Defaults to "Use
+          // Existing", so the existing selection workflow is
+          // unchanged for anyone who doesn't switch.
+          <SegmentedControl
+            value={addMode}
+            onChange={handleModeChange}
+            data={[
+              { value: 'existing', label: 'Use Existing' },
+              { value: 'create', label: 'Create New' },
+            ]}
+            fullWidth
+          />
+        )}
+
+        {isCreatingNew ? (
+          <>
+            <TextInput
+              label="Name"
+              placeholder="e.g. Sandpaper"
+              description="Give the new resource a unique name."
+              value={name}
+              onChange={(event) => {
+                setName(event.currentTarget.value)
+                setError(null)
+              }}
+              maxLength={100}
+              error={duplicateMessage}
+            />
+
+            {categoryField}
+            {unitField}
+          </>
+        ) : isAddMode ? (
           <>
             <Select
               label="Name"
@@ -431,9 +574,8 @@ const AddResourceModal = ({
                   color="blue"
                   icon={<AlertCircle size={18} />}
                 >
-                  No resources exist in the catalog yet. A resource
-                  has to be created before it can be added to a
-                  production cycle.
+                  No resources exist in the catalog yet. Switch to
+                  Create New above to add the first one.
                 </Alert>
               )}
 
@@ -552,28 +694,8 @@ const AddResourceModal = ({
               </Alert>
             )}
 
-            <Select
-              label="Category"
-              data={resourceCategories}
-              value={resourceType}
-              onChange={(value) => {
-                const nextType = value ?? 'material'
-                setResourceType(nextType)
-
-                if (isLaborResourceType(nextType)) {
-                  setUnitPrice(0)
-                }
-              }}
-            />
-
-            <Select
-              label="Unit"
-              data={unitOptions(unit)}
-              value={unit}
-              onChange={(value) =>
-                setUnit(value ?? '')
-              }
-            />
+            {categoryField}
+            {unitField}
           </>
         )}
 
@@ -582,9 +704,11 @@ const AddResourceModal = ({
             color="yellow"
             icon={<AlertCircle size={18} />}
           >
-            {isAddMode
-              ? 'No production cycle exists yet, so a resource can’t be added right now.'
-              : 'No production cycle exists yet, so availability and unit price can’t be saved for this resource right now.'}
+            {isCreatingNew
+              ? 'No production cycle exists yet, so availability and unit price can’t be saved now. The resource will still be created in the catalog and can be added to a cycle once one exists.'
+              : isAddMode
+                ? 'No production cycle exists yet, so a resource can’t be added right now.'
+                : 'No production cycle exists yet, so availability and unit price can’t be saved for this resource right now.'}
           </Alert>
         )}
 
