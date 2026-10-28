@@ -44,49 +44,46 @@ export const forecastItems: ForecastItem[] = [
 ]
 
 // Static shape reference only (nothing imports this module any more):
-// matches ForecastChartData, whose x-axis field is `date` and whose
-// rows record whether they are historical or forecast.
+// matches ForecastChartData, whose x-axis field is the short `date`
+// label, whose tooltip date is `fullDate`, and whose rows record
+// whether they are historical or forecast.
 export const forecastChartData: ForecastChartData[] = [
   {
-    date: "Jan '26",
+    date: 'Jan 15',
+    fullDate: 'Jan 15, 2026',
     isForecast: false,
     historicalDemand: 55,
   },
   {
-    date: "Feb '26",
+    date: 'Feb 12',
+    fullDate: 'Feb 12, 2026',
     isForecast: false,
     historicalDemand: 100,
   },
   {
-    date: "Mar '26",
+    date: 'Mar 20',
+    fullDate: 'Mar 20, 2026',
     isForecast: false,
     historicalDemand: 160,
   },
   {
-    date: "Apr '26",
+    date: 'Apr 08',
+    fullDate: 'Apr 08, 2026',
     isForecast: false,
     historicalDemand: 210,
   },
   {
-    date: "May '26",
+    date: 'May 22',
+    fullDate: 'May 22, 2026',
     isForecast: false,
     historicalDemand: 220,
     forecastedDemand: 220,
   },
   {
-    date: "Jun '26",
+    date: 'Jun 01',
+    fullDate: 'Jun 01, 2026',
     isForecast: true,
     forecastedDemand: 255,
-  },
-  {
-    date: "Jul '26",
-    isForecast: true,
-    forecastedDemand: 285,
-  },
-  {
-    date: "Aug '26",
-    isForecast: true,
-    forecastedDemand: 315,
   },
 ]
 

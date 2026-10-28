@@ -80,18 +80,32 @@ describe('toUiForecastChartData', () => {
     expect(data).toHaveLength(10)
 
     // Every transaction keeps its own date on the x-axis, in
-    // chronological order, and nothing is grouped by month.
+    // chronological order, and nothing is grouped by month. The axis
+    // label is month + day; the year lives in `fullDate`.
     expect(data.map((point) => point.date)).toEqual([
-      "Aug 23 '26",
-      "Aug 27 '26",
-      "Aug 30 '26",
-      "Sep 06 '26",
-      "Sep 16 '26",
-      "Sep 20 '26",
-      "Sep 28 '26",
-      "Oct 06 '26",
-      "Oct 14 '26",
-      "Nov 01 '26",
+      'Aug 23',
+      'Aug 27',
+      'Aug 30',
+      'Sep 06',
+      'Sep 16',
+      'Sep 20',
+      'Sep 28',
+      'Oct 06',
+      'Oct 14',
+      'Nov 01',
+    ])
+
+    expect(data.map((point) => point.fullDate)).toEqual([
+      'Aug 23, 2026',
+      'Aug 27, 2026',
+      'Aug 30, 2026',
+      'Sep 06, 2026',
+      'Sep 16, 2026',
+      'Sep 20, 2026',
+      'Sep 28, 2026',
+      'Oct 06, 2026',
+      'Oct 14, 2026',
+      'Nov 01, 2026',
     ])
 
     expect(data.map((point) => point.historicalDemand)).toEqual([
@@ -127,7 +141,8 @@ describe('toUiForecastChartData', () => {
 
     expect(forecastPoints).toHaveLength(1)
     expect(forecastPoints[0]).toBe(data[data.length - 1])
-    expect(forecastPoints[0].date).toBe("Nov 01 '26")
+    expect(forecastPoints[0].date).toBe('Nov 01')
+    expect(forecastPoints[0].fullDate).toBe('Nov 01, 2026')
     expect(forecastPoints[0].forecastedDemand).toBe(9.5)
     expect(forecastPoints[0].historicalDemand).toBeUndefined()
   })
@@ -174,9 +189,14 @@ describe('toUiForecastChartData', () => {
 
     expect(sameDate).toHaveLength(3)
     expect(sameDate.map((point) => point.date)).toEqual([
-      "Aug 23 '26",
-      "Aug 23 '26",
-      "Nov 01 '26",
+      'Aug 23',
+      'Aug 23',
+      'Nov 01',
+    ])
+    expect(sameDate.map((point) => point.fullDate)).toEqual([
+      'Aug 23, 2026',
+      'Aug 23, 2026',
+      'Nov 01, 2026',
     ])
     expect(sameDate.map((point) => point.historicalDemand)).toEqual([
       1,
@@ -186,6 +206,51 @@ describe('toUiForecastChartData', () => {
     expect(sameDate[0].transactionNumber).not.toBe(
       sameDate[1].transactionNumber,
     )
+  })
+
+  it('formats the axis day exactly as the API sent it', () => {
+    const data = toUiForecastChartData({
+      products: [
+        {
+          product_id: 7,
+          product_name: 'Door (60x210)',
+          series: [
+            // Single-digit days keep their leading zero, and the day is
+            // never rounded to the month or shifted for spacing.
+            toSeriesPoint([
+              '101',
+              'TRX-000140',
+              '2026-09-06',
+              '1.0000',
+              '1.0000',
+            ]),
+            toSeriesPoint([
+              '102',
+              'TRX-000153',
+              '2026-12-31',
+              '2.0000',
+              '2.0000',
+            ]),
+            FORECAST_POINT,
+          ],
+        },
+      ],
+    })
+
+    expect(data.map((point) => point.date)).toEqual([
+      'Sep 06',
+      'Dec 31',
+      'Nov 01',
+    ])
+    expect(data.map((point) => point.fullDate)).toEqual([
+      'Sep 06, 2026',
+      'Dec 31, 2026',
+      'Nov 01, 2026',
+    ])
+
+    // The axis label is the concise form: no year, and the tooltip is
+    // the only place the year appears.
+    expect(data.every((point) => !point.date.includes('20'))).toBe(true)
   })
 
   it('returns no points when the product has no series yet', () => {

@@ -17,12 +17,16 @@ export interface ForecastItem {
 }
 
 export interface ForecastChartData {
-  // X-axis label for one graph point: the transaction date for a
+  // Short x-axis label for one graph point: the transaction date for a
   // historical record, the first day of the forecasted month for the
-  // forecast point. Several transactions can share a date, so this
-  // label is NOT guaranteed to be unique - each row is still its own
-  // point.
+  // forecast point - e.g. "Aug 23". The year is left to `fullDate` so
+  // a dense axis of one label per transaction stays legible. Several
+  // transactions can share a date, so this label is NOT guaranteed to
+  // be unique - each row is still its own point.
   date: string
+  // Full date for the tooltip - e.g. "Aug 23, 2026". Never rounded to
+  // a month boundary: it is the exact day the API returned.
+  fullDate: string
   // Records which side of the historical/forecast boundary this row
   // belongs to, so the tooltip never presents a forecast as a sale.
   isForecast: boolean

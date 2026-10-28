@@ -107,28 +107,58 @@ function parseNullableDecimal(
 
 // period is "YYYY-MM-DD": the transaction date for a historical
 // point, the first day of the forecasted month for the forecast
-// point. Presented the way the chart's mock data was styled
-// ("Aug 23 '26"), purely a display format - the date is never
-// shifted, rounded or spread to improve spacing.
-function formatDateLabel(period: string): string {
+// point. Both labels below are display-only - the date is never
+// shifted, rounded or spread to improve spacing, so a point always
+// sits on the day the API reported.
+interface PeriodParts {
+  year: number
+  month: string
+  day?: number
+}
+
+function parsePeriod(period: string): PeriodParts | null {
   const [year, month, day] = period.split('-').map(Number)
 
   if (!year || !month) {
+    return null
+  }
+
+  return {
+    year,
+    month: new Date(year, month - 1, day || 1).toLocaleString('en-US', {
+      month: 'short',
+    }),
+    day: day || undefined,
+  }
+}
+
+// Axis label: month and zero-padded day only ("Aug 23", "Sep 06").
+// The year is deliberately omitted to keep one label per transaction
+// readable; the tooltip shows the full date instead. The chart labels
+// the forecast point the same way, from its own API period ("Nov 01").
+function formatAxisLabel(period: string): string {
+  const parts = parsePeriod(period)
+
+  if (!parts) {
     return period
   }
 
-  const label = new Date(year, month - 1, day || 1).toLocaleString(
-    'en-US',
-    { month: 'short' },
-  )
+  return parts.day
+    ? `${parts.month} ${String(parts.day).padStart(2, '0')}`
+    : parts.month
+}
 
-  const shortYear = `'${String(year).slice(2)}`
+// Tooltip label: the full date, including the year ("Aug 23, 2026").
+function formatFullDate(period: string): string {
+  const parts = parsePeriod(period)
 
-  // Zero-padded day, matching the chart's design reference
-  // ("Sep 01 '26").
-  return day
-    ? `${label} ${String(day).padStart(2, '0')} ${shortYear}`
-    : `${label} ${shortYear}`
+  if (!parts) {
+    return period
+  }
+
+  return parts.day
+    ? `${parts.month} ${String(parts.day).padStart(2, '0')}, ${parts.year}`
+    : `${parts.month} ${parts.year}`
 }
 
 // is_forecast is the backend's authoritative historical/forecast
@@ -149,7 +179,8 @@ export function toUiForecastChartData(
   }
 
   return series.map((point) => ({
-    date: formatDateLabel(point.period),
+    date: formatAxisLabel(point.period),
+    fullDate: formatFullDate(point.period),
     isForecast: point.is_forecast,
     transactionNumber: point.transaction_number ?? undefined,
     quantityProduced: parseNullableDecimal(point.quantity_produced),

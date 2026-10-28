@@ -186,8 +186,8 @@ describe('useForecast product selection', () => {
       ),
     ).toHaveLength(1)
 
-    expect(result.current.chartData[0].date).toBe("Aug 23 '26")
-    expect(result.current.chartData[9].date).toBe("Nov 01 '26")
+    expect(result.current.chartData[0].date).toBe('Aug 23')
+    expect(result.current.chartData[9].date).toBe('Nov 01')
   })
 
   it('swaps to the newly selected product without showing the old one', async () => {
@@ -225,7 +225,8 @@ describe('useForecast product selection', () => {
     // series: one of its own sales, then its own forecast point.
     expect(result.current.chartData).toEqual([
       {
-        date: "May 04 '26",
+        date: 'May 04',
+        fullDate: 'May 04, 2026',
         isForecast: false,
         transactionNumber: 'TRX-CH-1',
         quantityProduced: 9,
@@ -233,7 +234,8 @@ describe('useForecast product selection', () => {
         forecastedDemand: undefined,
       },
       {
-        date: "Jun 01 '26",
+        date: 'Jun 01',
+        fullDate: 'Jun 01, 2026',
         isForecast: true,
         transactionNumber: undefined,
         quantityProduced: undefined,

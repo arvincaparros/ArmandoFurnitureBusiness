@@ -51,6 +51,16 @@ const renderForecastDot = (
   )
 }
 
+// Recharts treats the x-axis `dataKey` as a category domain, so two
+// rows sharing a value would collapse onto one x slot. Every row is
+// therefore given its own key and the tick text is cut back to the
+// short date, which keeps both transactions of a same-day pair
+// plotted and separately hoverable under repeated "Aug 23" labels.
+const AXIS_KEY_SEPARATOR = '#'
+
+const toAxisTickLabel = (value: unknown) =>
+  String(value ?? '').split(AXIS_KEY_SEPARATOR)[0]
+
 // Reads the hovered ROW rather than per-series values, so the row that
 // carries both a sale and the forecast line's starting value is still
 // reported as a sale, never as forecast demand.
@@ -64,7 +74,7 @@ const ForecastTooltip = ({ payload }: ChartTooltipProps) => {
   return (
     <Paper px="md" py="sm" withBorder shadow="md" radius="md">
       <Text fw={600} size="sm">
-        {row.date}
+        {row.fullDate}
       </Text>
 
       {row.isForecast ? (
@@ -171,11 +181,18 @@ const ForecastChart = ({
   // which is what makes the dashed segment connect to the history.
   // The row itself is unchanged - it is still one transaction, and the
   // forecast dot is suppressed there.
-  const chartData = data.map((point, index) =>
-    index === lastHistoricalIndex
-      ? { ...point, forecastedDemand: point.historicalDemand }
-      : point,
-  )
+  //
+  // Every row also gets a unique axis key: the short date stays the
+  // visible tick label, but the key keeps repeated dates on separate
+  // x slots. No row is filtered, merged or dropped here.
+  const chartData = data.map((point, index) => ({
+    ...point,
+    axisKey: `${point.date}${AXIS_KEY_SEPARATOR}${index}`,
+    forecastedDemand:
+      index === lastHistoricalIndex
+        ? point.historicalDemand
+        : point.forecastedDemand,
+  }))
 
   // The historical line uses the active theme's primary color, so the
   // forecast must not: blue on the wood theme (matching the supplied
@@ -191,7 +208,7 @@ const ForecastChart = ({
     <LineChart
       h={280}
       data={chartData}
-      dataKey="date"
+      dataKey="axisKey"
       series={[
         {
           name: HISTORICAL_SERIES,
@@ -208,6 +225,16 @@ const ForecastChart = ({
       withLegend
       withTooltip
       withDots
+      xAxisProps={{
+        // Mantine already defaults to this interval, which thins ticks
+        // that would collide while always keeping the first and last -
+        // so the forecast date stays labelled no matter how many
+        // transactions are plotted. The wider gap gives each short
+        // date room; nothing is removed from the plotted data.
+        interval: 'preserveStartEnd',
+        minTickGap: 12,
+        tickFormatter: toAxisTickLabel,
+      }}
       tooltipProps={{
         content: ({ payload }) => (
           <ForecastTooltip payload={payload} />
