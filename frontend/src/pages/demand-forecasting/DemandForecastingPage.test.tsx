@@ -54,8 +54,11 @@ const noHistoryTimeseries: ForecastTimeSeriesResponse = {
       product_name: 'Test Dining Table',
       series: [
         {
-          period: '2026-11',
+          period: '2026-11-01',
+          transaction_id: null,
+          transaction_number: null,
           historical_sales: null,
+          quantity_produced: null,
           predicted_demand: '0.0000',
           is_forecast: true,
         },
@@ -86,14 +89,20 @@ const withHistoryTimeseries: ForecastTimeSeriesResponse = {
       product_name: 'Test Chair',
       series: [
         {
-          period: '2026-09',
+          period: '2026-09-05',
+          transaction_id: 1,
+          transaction_number: 'TRX-TEST-1',
           historical_sales: '8.0000',
+          quantity_produced: '8.0000',
           predicted_demand: null,
           is_forecast: false,
         },
         {
-          period: '2026-10',
+          period: '2026-10-01',
+          transaction_id: null,
+          transaction_number: null,
           historical_sales: null,
+          quantity_produced: null,
           predicted_demand: '8.0000',
           is_forecast: true,
         },

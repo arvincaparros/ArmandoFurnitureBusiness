@@ -31,9 +31,21 @@ export interface ForecastResponse {
 // historical point always has historical_sales set and
 // predicted_demand null, the single forecast point always has the
 // reverse - never assume this from array position.
+//
+// A historical point is one qualifying SALES TRANSACTION: "period" is
+// that transaction's date (YYYY-MM-DD) and transaction_id/
+// transaction_number identify the row, so two sales on the same date
+// remain two points. The forecast point has no transaction, and its
+// "period" is the first day of the forecasted month.
+// quantity_produced is carried for display only - the plotted value
+// is historical_sales (quantity sold), the measure the forecast is
+// built from.
 export interface ForecastTimeSeriesPoint {
   period: string
+  transaction_id: number | null
+  transaction_number: string | null
   historical_sales: string | null
+  quantity_produced: string | null
   predicted_demand: string | null
   is_forecast: boolean
 }

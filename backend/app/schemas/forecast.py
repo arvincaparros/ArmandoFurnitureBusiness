@@ -50,8 +50,17 @@ ForecastHistoryRun.model_rebuild()
 
 
 class ForecastTimeSeriesPoint(BaseModel):
+    # Historical points are one per qualifying sales transaction:
+    # "period" is the transaction date (YYYY-MM-DD) and
+    # transaction_id/transaction_number identify the record, so
+    # transactions sharing a date stay independently identifiable.
+    # The trailing forecast point has no transaction, and its
+    # "period" is the first day of the forecasted month.
     period: str
+    transaction_id: int | None = None
+    transaction_number: str | None = None
     historical_sales: Decimal | None = None
+    quantity_produced: Decimal | None = None
     predicted_demand: Decimal | None = None
     is_forecast: bool
 

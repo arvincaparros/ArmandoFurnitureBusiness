@@ -17,7 +17,21 @@ export interface ForecastItem {
 }
 
 export interface ForecastChartData {
-  month: string
+  // X-axis label for one graph point: the transaction date for a
+  // historical record, the first day of the forecasted month for the
+  // forecast point. Several transactions can share a date, so this
+  // label is NOT guaranteed to be unique - each row is still its own
+  // point.
+  date: string
+  // Records which side of the historical/forecast boundary this row
+  // belongs to, so the tooltip never presents a forecast as a sale.
+  isForecast: boolean
+  // Tooltip-only context for a historical row.
+  transactionNumber?: string
+  quantityProduced?: number
+  // Exactly one of these is set per row. The chart additionally reuses
+  // the last historical row's value as the forecast line's start, so
+  // the dashed segment connects to the real history.
   historicalDemand?: number
   forecastedDemand?: number
 }

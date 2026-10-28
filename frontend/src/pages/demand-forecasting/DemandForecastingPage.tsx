@@ -335,9 +335,15 @@ const DemandForecastingPage = () => {
 
         {/* CHART */}
         <Box className={classes.chart}>
+          {/* Each historical point is one recorded sales transaction
+              (backend app/services/forecasting.py::
+              get_transaction_historical_demand), followed by exactly
+              one forecasted point that is still computed from monthly
+              totals. Stating the grain keeps the transaction count
+              from reading as aggregated data. */}
           <ChartCard
             title="Demand Forecast Graph"
-            subtitle="Historical and forecasted demand"
+            subtitle="Each point represents one transaction record. The last point is the forecasted demand."
             rightSection={
               <Group gap="xs" wrap="nowrap">
                 <Text size="sm" c="dimmed">

@@ -105,6 +105,73 @@ def get_monthly_historical_demand(
     return monthly_series
 
 
+def get_transaction_historical_demand(
+    db: Session,
+) -> dict[int, list[dict]]:
+    """
+    Return the qualifying sales transactions per active product at
+    full transaction granularity, in chronological order.
+
+    This is the chart's historical data layer - one graph point
+    per recorded transaction - and deliberately NOT the forecast
+    algorithm's input: calculate_forecast() keeps consuming
+    get_monthly_historical_demand()'s monthly totals, so the
+    forecast keeps its monthly meaning and scale.
+
+    Qualification matches the monthly layer exactly (active
+    product, quantity > 0) so a transaction can never appear in
+    one series and be missing from the other.
+
+    Returns, per product_id, a list of
+    {"period": "YYYY-MM-DD", "transaction_id": int,
+     "transaction_number": str, "quantity": Decimal,
+     "quantity_produced": Decimal} ordered by
+    (transaction_date, id), so transactions sharing a date stay
+    separate and keep a stable identity.
+    """
+
+    statement = (
+        select(
+            SalesTransaction.id,
+            SalesTransaction.transaction_number,
+            SalesTransaction.product_id,
+            SalesTransaction.transaction_date,
+            SalesTransaction.quantity,
+            SalesTransaction.quantity_produced,
+        )
+        .join(
+            Product,
+            Product.id == SalesTransaction.product_id,
+        )
+        .where(
+            Product.is_active.is_(True),
+            SalesTransaction.quantity > 0,
+        )
+        .order_by(
+            SalesTransaction.product_id,
+            SalesTransaction.transaction_date,
+            SalesTransaction.id,
+        )
+    )
+
+    transactions: dict[int, list[dict]] = defaultdict(list)
+
+    for row in db.execute(statement).all():
+        transactions[row.product_id].append(
+            {
+                "period": row.transaction_date.strftime(
+                    "%Y-%m-%d"
+                ),
+                "transaction_id": row.id,
+                "transaction_number": row.transaction_number,
+                "quantity": row.quantity,
+                "quantity_produced": row.quantity_produced,
+            }
+        )
+
+    return dict(transactions)
+
+
 def calculate_data_score(months: int) -> Decimal:
     """
     Data-volume component of confidence_level: rewards more
@@ -350,22 +417,31 @@ def get_forecast_timeseries(
     product_id: int | None = None,
 ) -> dict:
     """
-    Build a monthly chart series per product: one point per
-    historical month (reusing get_monthly_historical_demand()'s
-    already zero-filled series), followed by exactly one forecast
-    point (reusing calculate_forecast()'s predicted_demand for that
-    same product). No historical/forecast values are recalculated
-    here - both come straight from the shared Phase A/B/C functions.
+    Build a chart series per product with one historical point per
+    qualifying sales transaction
+    (get_transaction_historical_demand()), followed by exactly one
+    forecast point (calculate_forecast()'s predicted_demand for
+    that same product). No historical/forecast values are
+    recalculated here - both come straight from the shared data
+    layers.
 
-    The forecast point's period is the calendar month immediately
-    after the product's own last historical month. A product with
-    no history at all has no historical points, and its forecast
-    point falls on the month immediately after today (there is no
-    historical month to anchor to).
+    The two layers are intentionally different grains: the graph
+    shows every transaction, while the forecast is still computed
+    from monthly totals. The forecast value is never re-derived
+    from transaction quantities, and monthly totals are never
+    plotted as if they were single transactions.
+
+    The forecast point's period is the first day of the calendar
+    month immediately after the product's own latest transaction
+    month, so it always sorts after the last historical point. A
+    product with no history has no historical points, and its
+    forecast point falls on the month immediately after today
+    (there is no transaction date to anchor to).
     """
 
     monthly_historical_demand = get_monthly_historical_demand(db)
     forecasts = calculate_forecast(monthly_historical_demand)
+    historical_transactions = get_transaction_historical_demand(db)
 
     products_statement = (
         select(Product)
@@ -385,7 +461,7 @@ def get_forecast_timeseries(
     product_series = []
 
     for product in products:
-        history = monthly_historical_demand.get(product.id, [])
+        history = historical_transactions.get(product.id, [])
         forecast = forecasts.get(
             product.id,
             {"forecast_quantity": Decimal("0")},
@@ -394,7 +470,14 @@ def get_forecast_timeseries(
         points = [
             {
                 "period": item["period"],
+                "transaction_id": item["transaction_id"],
+                "transaction_number": item[
+                    "transaction_number"
+                ],
                 "historical_sales": item["quantity"],
+                "quantity_produced": item[
+                    "quantity_produced"
+                ],
                 "predicted_demand": None,
                 "is_forecast": False,
             }
@@ -404,7 +487,7 @@ def get_forecast_timeseries(
         if history:
             last_year, last_month = (
                 int(part)
-                for part in history[-1]["period"].split("-")
+                for part in history[-1]["period"].split("-")[:2]
             )
             forecast_year, forecast_month = _next_month(
                 last_year,
@@ -419,9 +502,12 @@ def get_forecast_timeseries(
         points.append(
             {
                 "period": (
-                    f"{forecast_year:04d}-{forecast_month:02d}"
+                    f"{forecast_year:04d}-{forecast_month:02d}-01"
                 ),
+                "transaction_id": None,
+                "transaction_number": None,
                 "historical_sales": None,
+                "quantity_produced": None,
                 "predicted_demand": forecast[
                     "forecast_quantity"
                 ],

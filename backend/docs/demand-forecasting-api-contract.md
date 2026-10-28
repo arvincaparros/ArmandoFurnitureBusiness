@@ -8,7 +8,7 @@ This document is the authoritative frontend integration contract for the Demand 
 
 - Implementation: Phases A–G complete.
 - Full test suite at the time this document was generated: **130 passed, 0 failed, 0 skipped, 0 regressions** (`pytest -q`).
-- Focused suites: `tests/test_forecast.py` — 37 passed. `tests/test_forecast_history.py` — 10 passed. `tests/test_forecast_timeseries.py` — 9 passed.
+- Focused suites: `tests/test_forecast.py` — 37 passed. `tests/test_forecast_history.py` — 10 passed. `tests/test_forecast_timeseries.py` — 11 passed.
 - Database: Alembic head `c4cebd8094aa`, live database confirmed in sync (`alembic_version` matches, `forecast_results` columns verified against both the migration and the live table).
 
 ## 3. Authentication
@@ -240,7 +240,9 @@ Returns one specific forecast run by its ID.
 ## 10. GET /api/forecast/timeseries
 
 ### Purpose
-Returns a monthly chart-ready series per product: one point per historical month plus exactly one trailing forecast point. Intended to feed a demand chart (historical bars/line + one projected point).
+Returns a chart-ready series per product: **one point per qualifying sales transaction** (actual transaction date on the x-axis, quantity sold on the y-axis) plus exactly one trailing forecast point. Intended to feed a demand chart (historical line, then one projected point).
+
+The chart grain and the forecast's input grain are deliberately different — see §13.
 
 ### Request
 
@@ -262,15 +264,30 @@ Returns a monthly chart-ready series per product: one point per historical month
       "product_name": "Chair",
       "series": [
         {
-          "period": "2026-01",
+          "period": "2026-01-10",
+          "transaction_id": 41,
+          "transaction_number": "TRX-000140",
           "historical_sales": "12.0000",
+          "quantity_produced": "12.0000",
           "predicted_demand": null,
           "is_forecast": false
         },
         {
-          "period": "2026-02",
+          "period": "2026-01-28",
+          "transaction_id": 42,
+          "transaction_number": "TRX-000153",
+          "historical_sales": "9.0000",
+          "quantity_produced": "9.0000",
+          "predicted_demand": null,
+          "is_forecast": false
+        },
+        {
+          "period": "2026-02-01",
+          "transaction_id": null,
+          "transaction_number": null,
           "historical_sales": null,
-          "predicted_demand": "12.0000",
+          "quantity_produced": null,
+          "predicted_demand": "10.5000",
           "is_forecast": true
         }
       ]
@@ -286,9 +303,12 @@ Returns a monthly chart-ready series per product: one point per historical month
 | `products` | array | no | One entry per matching active product, ordered by `Product.id` ascending. |
 | `products[].product_id` | int | no | |
 | `products[].product_name` | string | no | |
-| `products[].series` | array | no | Chronologically ordered historical points, followed by **exactly one** forecast point (always last). A zero-history product has a `series` of length 1 (forecast point only). |
-| `series[].period` | string, `"YYYY-MM"` | no | See §13 for exactly how this is computed — do not assume it is "next calendar month from today" for every point. |
-| `series[].historical_sales` | Decimal string or `null` | yes | Populated on historical points; **always `null` on the forecast point.** |
+| `products[].series` | array | no | One historical point per qualifying sales transaction, ordered by `(transaction_date, id)`, followed by **exactly one** forecast point (always last). A zero-history product has a `series` of length 1 (forecast point only). |
+| `series[].period` | string, `"YYYY-MM-DD"` | no | Historical point: that transaction's real date. Forecast point: the first day of the forecasted month. See §13 — do not assume it is "next calendar month from today" for every point. |
+| `series[].transaction_id` | int or `null` | yes | The `sales_transactions.id` behind a historical point; `null` on the forecast point. Stable identity for telling same-date transactions apart. |
+| `series[].transaction_number` | string or `null` | yes | The `TRX-…` reference behind a historical point; `null` on the forecast point. |
+| `series[].historical_sales` | Decimal string or `null` | yes | That transaction's **quantity sold**. Populated on historical points; **always `null` on the forecast point.** |
+| `series[].quantity_produced` | Decimal string or `null` | yes | That transaction's quantity produced, for display/tooltip only — **never** the plotted value. `null` on the forecast point. |
 | `series[].predicted_demand` | Decimal string or `null` | yes | `null` on every historical point; populated only on the forecast point. |
 | `series[].is_forecast` | boolean | no | `false` for every historical point, `true` for exactly one point per product (the last one). |
 
@@ -315,7 +335,8 @@ Returns only product `2`'s series.
 | `product_id` refers to an **inactive** product | `404 {"detail": "Product not found"}` (inactive products are excluded from the underlying active-product query, so they're indistinguishable from unknown IDs at the API level) |
 | `product_id` is not a valid integer (e.g. `?product_id=abc`) | `422`, FastAPI's standard validation error (see §11) |
 | Product has **zero** sales history | `series` has exactly one point: the forecast point, `historical_sales: null`, `predicted_demand: "0"`, `is_forecast: true`. |
-| Multiple products requested (no filter) | Each product's series is computed and returned independently; products themselves are ordered by `id`, but there is no cross-product period alignment — each series only contains that product's own relevant months. |
+| Two transactions share one date | Both appear, as two consecutive points with the same `period` but different `transaction_id`s. Nothing is grouped or deduplicated. |
+| Multiple products requested (no filter) | Each product's series is computed and returned independently; products themselves are ordered by `id`, but there is no cross-product period alignment — each series only contains that product's own transactions and forecast point. |
 
 ---
 
@@ -357,24 +378,36 @@ Do not present this value to end users as a prediction probability, an ML confid
 
 ## 13. Time-Series Semantics
 
-This section documents the **exact, verified** forecast-period computation in `get_forecast_timeseries()` (`app/services/forecasting.py`) — reported precisely, not simplified.
+This section documents the **exact, verified** point construction in `get_forecast_timeseries()` (`app/services/forecasting.py`) — reported precisely, not simplified.
 
-**For a product with at least one historical month:**
+**Historical points — one per sales transaction:**
 ```text
-forecast_point.period = the calendar month immediately AFTER
-                         that product's own LAST historical month
+source  = get_transaction_historical_demand()
+filter  = Product.is_active = true AND quantity > 0
+period  = that transaction's date  ("YYYY-MM-DD")
+value   = that transaction's quantity SOLD  (historical_sales)
+order   = (transaction_date, id) ascending
 ```
-This is computed per-product, from that product's own `get_monthly_historical_demand()` series — it is **not** a single global value shared across all products.
+Two transactions on the same date therefore produce two points with the same `period`, distinguished by `transaction_id` / `transaction_number`. They are never grouped, deduplicated or dropped. `quantity_produced` travels alongside for the tooltip only and is never plotted; the plotted value is quantity sold, the same field `GET /api/forecast` uses.
 
-**For a product with zero historical months:**
+**The forecast value is still computed from monthly totals.** `calculate_forecast()` consumes `get_monthly_historical_demand()` (quantity summed per calendar month, zero-filled between the product's first and last qualifying month) — the exact same function it used before transaction-level charting. The two grains are deliberately different: monthly totals are never plotted as if they were single sales, and the forecast is never re-derived from individual transaction quantities. A product with 9 transactions spread over 3 months therefore renders 9 historical points, while its forecast still comes from the 3 monthly totals.
+
+**For a product with at least one qualifying transaction:**
 ```text
-forecast_point.period = the calendar month immediately AFTER
-                         today's date (server clock at request time)
+forecast_point.period = the FIRST DAY of the calendar month immediately
+                         AFTER that product's own LAST transaction month
+```
+This is computed per-product, from that product's own last transaction date — it is **not** a single global value shared across all products.
+
+**For a product with zero transactions:**
+```text
+forecast_point.period = the FIRST DAY of the calendar month immediately
+                         AFTER today's date (server clock at request time)
 ```
 
-**Verified example** (captured live): on a server date of `2026-08-15`, a product with no sales history returns a forecast point with `"period": "2026-09"`.
+**Verified example** (captured live): on a server date of `2026-08-15`, a product with no sales history returns a forecast point with `"period": "2026-09-01"`.
 
-**Verified example with history**: a product with historical months `2026-01` through `2026-04` returns a forecast point with `"period": "2026-05"` — the month immediately following its own last historical month, regardless of what today's date actually is.
+**Verified example with history**: a product whose latest transaction is `2026-10-14` returns a forecast point with `"period": "2026-11-01"` — the month immediately following its own last transaction month, regardless of what today's date actually is.
 
 **This is a per-product-anchored design, not a single "next month from today" value applied uniformly.** The frontend must consume the backend-provided `period` string for each point as-is and must **not** attempt to recompute or infer forecast periods independently — different products in the same response can legitimately have different forecast-point periods if their sales histories end in different months.
 
@@ -422,9 +455,12 @@ This is **intentionally different** from the live contract. The rename applied i
 
 ### Time-Series API (`GET /api/forecast/timeseries`)
 ```text
-period
-historical_sales    (uses the live-API vocabulary, nullable — null on the forecast point)
-predicted_demand     (uses the live-API vocabulary, nullable — null on historical points)
+period                 ("YYYY-MM-DD": transaction date, or first day of the forecasted month)
+transaction_id         (nullable — null on the forecast point)
+transaction_number     (nullable — null on the forecast point)
+historical_sales       (uses the live-API vocabulary, nullable — null on the forecast point)
+quantity_produced      (nullable, display/tooltip only — never plotted)
+predicted_demand       (uses the live-API vocabulary, nullable — null on historical points)
 is_forecast
 ```
 Uses the **live** API's field vocabulary (`historical_sales`/`predicted_demand`), not the history API's (`historical_quantity`/`forecast_quantity`) — confirmed directly from `ForecastTimeSeriesPoint` in `app/schemas/forecast.py`.
@@ -467,10 +503,12 @@ GET /api/forecast/history/{run_id}
 Chart
     ↓
 GET /api/forecast/timeseries?product_id=<id>
-    → series[] with historical points (historical_sales set,
-      predicted_demand null, is_forecast=false) followed by
-      exactly one forecast point (predicted_demand set,
-      historical_sales null, is_forecast=true)
+    → series[] with one historical point per transaction
+      (period = transaction date, transaction_id/number set,
+      historical_sales set, is_forecast=false) followed by exactly
+      one forecast point (period = first day of the forecasted
+      month, predicted_demand set, historical_sales null,
+      transaction_id null, is_forecast=true)
 ```
 
 **Fields that are always present on the live forecast table** (`GET /api/forecast`): `product_id`, `product_name`, `historical_sales`, `predicted_demand`, `trend`, `confidence_level`, `forecast_status` — none of these are nullable on this endpoint.
@@ -489,7 +527,7 @@ GET /api/forecast/timeseries?product_id=<id>
 
 These are documented as-is, per instruction, without modifying any backend code:
 
-1. **`forecast_period` is a placeholder literal, not a computed calendar value, on the live and history endpoints.** `GET /api/forecast`, `POST /api/forecast/generate`, and every history endpoint always return the hardcoded string `"NEXT_CYCLE"` — this was never replaced with a real calendar month, unlike the time-series endpoint's per-point `period`, which is a real `"YYYY-MM"` value. This inconsistency (two different "what period is this forecast for" representations within the same feature) is a real, verified characteristic of the current backend, not a documentation gap.
+1. **`forecast_period` is a placeholder literal, not a computed calendar value, on the live and history endpoints.** `GET /api/forecast`, `POST /api/forecast/generate`, and every history endpoint always return the hardcoded string `"NEXT_CYCLE"` — this was never replaced with a real calendar month, unlike the time-series endpoint's per-point `period`, which is a real `"YYYY-MM-DD"` value. This inconsistency (two different "what period is this forecast for" representations within the same feature) is a real, verified characteristic of the current backend, not a documentation gap.
 
 2. **Decimal string precision is not uniform** — see §14 for the full verified breakdown. A frontend comparing a live-endpoint value against a history-endpoint value for what should be "the same number" must compare numerically, not as strings.
 
@@ -517,9 +555,9 @@ These are documented as-is, per instruction, without modifying any backend code:
 - Forecast values (`predicted_demand` / `forecast_quantity`)
 - Confidence level
 - Forecast status
-- Forecast period (both the live `"NEXT_CYCLE"` literal and the time-series endpoint's per-point `"YYYY-MM"` periods)
-- Historical demand aggregation (monthly, zero-filled)
-- Time-series point ordering
+- Forecast period (both the live `"NEXT_CYCLE"` literal and the time-series endpoint's per-point `"YYYY-MM-DD"` periods)
+- Historical demand aggregation (monthly, zero-filled) **for the forecast calculation**, and the per-transaction historical points **for the chart** — the two are separate layers (§13)
+- Time-series point ordering, transaction identity (`transaction_id` / `transaction_number`) and dates
 
 ### The frontend must NOT independently:
 - Recalculate forecast values from raw sales data

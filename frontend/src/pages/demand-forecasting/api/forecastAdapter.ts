@@ -105,29 +105,40 @@ function parseNullableDecimal(
   return parseDecimal(value)
 }
 
-// period is "YYYY-MM" (e.g. "2026-09") - presented the same way the
-// existing chart's mock data was styled ("Sep '26"), purely a display
-// format, no date fabrication.
-function formatPeriodLabel(period: string): string {
-  const [year, month] = period.split('-').map(Number)
+// period is "YYYY-MM-DD": the transaction date for a historical
+// point, the first day of the forecasted month for the forecast
+// point. Presented the way the chart's mock data was styled
+// ("Aug 23 '26"), purely a display format - the date is never
+// shifted, rounded or spread to improve spacing.
+function formatDateLabel(period: string): string {
+  const [year, month, day] = period.split('-').map(Number)
 
   if (!year || !month) {
     return period
   }
 
-  const label = new Date(year, month - 1, 1).toLocaleString(
+  const label = new Date(year, month - 1, day || 1).toLocaleString(
     'en-US',
     { month: 'short' },
   )
 
-  return `${label} '${String(year).slice(2)}`
+  const shortYear = `'${String(year).slice(2)}`
+
+  // Zero-padded day, matching the chart's design reference
+  // ("Sep 01 '26").
+  return day
+    ? `${label} ${String(day).padStart(2, '0')} ${shortYear}`
+    : `${label} ${shortYear}`
 }
 
 // is_forecast is the backend's authoritative historical/forecast
 // boundary marker (see forecastTypes.ts) - branched on directly rather
-// than inferred from which value happens to be non-null. No point
-// duplication or interpolation: a point contributes to exactly one of
-// historicalDemand/forecastedDemand, matching the real API response.
+// than inferred from which value happens to be non-null.
+//
+// One row per API point, in API order: every qualifying transaction
+// keeps its own row (two sales on the same date stay two points) and
+// the series ends with the backend's single forecast point. Nothing is
+// grouped, deduplicated or sliced here.
 export function toUiForecastChartData(
   timeseries: ForecastTimeSeriesResponse | undefined,
 ): ForecastChartData[] {
@@ -138,7 +149,10 @@ export function toUiForecastChartData(
   }
 
   return series.map((point) => ({
-    month: formatPeriodLabel(point.period),
+    date: formatDateLabel(point.period),
+    isForecast: point.is_forecast,
+    transactionNumber: point.transaction_number ?? undefined,
+    quantityProduced: parseNullableDecimal(point.quantity_produced),
     historicalDemand: point.is_forecast
       ? undefined
       : parseNullableDecimal(point.historical_sales),
