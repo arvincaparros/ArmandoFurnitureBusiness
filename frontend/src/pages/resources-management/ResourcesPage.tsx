@@ -11,6 +11,7 @@ import ResourceTable from './components/ResourceTable'
 import ResourceToolbar from './components/ResourceToolbar'
 import DeleteResourceModal from './components/DeleteResourceModal'
 import ReactivateResourceModal from './components/ReactivateResourceModal'
+import PermanentDeleteResourceModal from './components/PermanentDeleteResourceModal'
 
 import type {
   Resource,
@@ -31,6 +32,9 @@ const ResourcesPage = () => {
   const [deleteOpened, setDeleteOpened] = useState(false)
 
   const [reactivateOpened, setReactivateOpened] =
+    useState(false)
+
+  const [permanentDeleteOpened, setPermanentDeleteOpened] =
     useState(false)
 
   const [statusFilter, setStatusFilter] =
@@ -55,6 +59,7 @@ const ResourcesPage = () => {
     createResource,
     deleteResource,
     reactivateResource,
+    permanentlyDeleteResource,
     savePricing,
   } = useResources()
 
@@ -231,6 +236,13 @@ const ResourcesPage = () => {
     setReactivateOpened(true)
   }
 
+  const handlePermanentDeleteResource = (
+    resource: Resource,
+  ) => {
+    setSelectedResource(resource)
+    setPermanentDeleteOpened(true)
+  }
+
   const handleOpenAdd = () => {
     setSelectedResource(null)
     setOpened(true)
@@ -244,6 +256,25 @@ const ResourcesPage = () => {
     notify.deleted(selectedResource.name)
 
     setDeleteOpened(false)
+    setSelectedResource(null)
+  }
+
+  // Deliberately does NOT swallow the error: a blocked delete
+  // rejects with a 409, and PermanentDeleteResourceModal needs that
+  // rejection to surface the backend's specific reason and stay
+  // open. The notification and the state resets below therefore only
+  // run when the row was really removed. The list itself refreshes
+  // through the mutation's own query invalidation (useResources.ts).
+  const handleConfirmPermanentDelete = async () => {
+    if (!selectedResource) return
+
+    const { name } = selectedResource
+
+    await permanentlyDeleteResource(selectedResource.id)
+
+    notify.permanentlyDeleted(name)
+
+    setPermanentDeleteOpened(false)
     setSelectedResource(null)
   }
 
@@ -318,6 +349,7 @@ const ResourcesPage = () => {
           onEdit={handleEditResource}
           onDelete={handleDeleteResource}
           onReactivate={handleReactivateResource}
+          onPermanentDelete={handlePermanentDeleteResource}
           isLoading={
             statusFilter === 'inactive'
               ? isExistingResourcesLoading || isLoading
@@ -373,6 +405,16 @@ const ResourcesPage = () => {
           setSelectedResource(null)
         }}
         onConfirm={handleConfirmReactivate}
+      />
+
+      <PermanentDeleteResourceModal
+        opened={permanentDeleteOpened}
+        resource={selectedResource}
+        onClose={() => {
+          setPermanentDeleteOpened(false)
+          setSelectedResource(null)
+        }}
+        onConfirm={handleConfirmPermanentDelete}
       />
     </>
   )

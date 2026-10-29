@@ -58,6 +58,24 @@ export async function deleteResource(id: number): Promise<void> {
   await apiClient.delete(`/api/resources/${id}`)
 }
 
+// DELETE /api/resources/{id}/permanent - a DIFFERENT endpoint from
+// deleteResource above, which still soft-deletes. This one removes
+// the catalogue row outright and is irreversible.
+//
+// The backend refuses with 409 (never a silent partial delete) when
+// the resource is still active, or when a product resource
+// requirement or a production cycle's availability/pricing still
+// references it; the detail names exactly what is blocking, so
+// callers should surface it rather than a generic message (see
+// getApiErrorMessage). Resource utilization history never blocks:
+// those rows keep their own snapshotted resource name/type/unit and
+// survive the delete intact.
+export async function permanentlyDeleteResource(
+  id: number,
+): Promise<void> {
+  await apiClient.delete(`/api/resources/${id}/permanent`)
+}
+
 // Same GET /api/resources?include_inactive=true endpoint and
 // 'resources-all' query key already used by product-data-management/
 // api/productResourceApi.ts's fetchAllResourcesForPicker() - a local

@@ -9,6 +9,7 @@ import {
   deleteResource,
   fetchAllResourcesIncludingInactive,
   fetchResources,
+  permanentlyDeleteResource,
   updateResource,
 } from '../api/resourceApi'
 
@@ -172,6 +173,27 @@ const useResources = () => {
     },
   })
 
+  // Permanent deletion of an already-inactive row. Invalidates the
+  // same queries as the soft delete above - the row leaves BOTH the
+  // active list and the 'resources-all' catalogue that the Inactive
+  // view and the Add Resource selector read, so both have to refetch
+  // for it to disappear. Feasibility is included for the same reason
+  // the soft delete includes it: Production Allocation's
+  // re-optimization banner is derived from the resource catalogue,
+  // not just from CycleResource.
+  //
+  // A blocked delete rejects with a 409 and changes nothing, so
+  // onSuccess (and therefore every invalidation here) only runs when
+  // the row was actually removed.
+  const permanentDeleteMutation = useMutation({
+    mutationFn: (id: number) => permanentlyDeleteResource(id),
+    onSuccess: () => {
+      invalidateResources()
+      invalidateResourcesCatalog()
+      invalidateFeasibility()
+    },
+  })
+
   // Reactivation is a PATCH of is_active on the existing Resource row
   // - the same endpoint the delete flow soft-deletes with. It never
   // creates a row, rewrites category/unit, or touches CycleResource
@@ -272,6 +294,10 @@ const useResources = () => {
 
     deleteResource: deleteMutation.mutateAsync,
     isDeleting: deleteMutation.isPending,
+
+    permanentlyDeleteResource:
+      permanentDeleteMutation.mutateAsync,
+    isPermanentlyDeleting: permanentDeleteMutation.isPending,
 
     reactivateResource: reactivateMutation.mutateAsync,
     isReactivating: reactivateMutation.isPending,

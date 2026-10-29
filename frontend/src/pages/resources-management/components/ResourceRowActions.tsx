@@ -13,6 +13,7 @@ interface ResourceRowActionsProps {
   onEdit?: (resource: Resource) => void
   onDelete?: (resource: Resource) => void
   onReactivate?: (resource: Resource) => void
+  onPermanentDelete?: (resource: Resource) => void
 }
 
 const ResourceRowActions = ({
@@ -20,11 +21,16 @@ const ResourceRowActions = ({
   onEdit,
   onDelete,
   onReactivate,
+  onPermanentDelete,
 }: ResourceRowActionsProps) => {
-  // Inactive rows are soft-deleted records that only support
-  // reactivation (a PATCH of is_active on this same row). Editing a
-  // catalog entry while it is inactive is deliberately not offered
-  // here, and a second delete would be a no-op.
+  // Inactive rows are soft-deleted records. They support
+  // reactivation (a PATCH of is_active on this same row) and
+  // permanent deletion (DELETE /{id}/permanent, which removes the
+  // catalogue row outright) - two different endpoints, so the two
+  // actions are deliberately kept visually distinct. Editing a
+  // catalog entry while it is inactive is still not offered here,
+  // and the soft-delete action is not repeated: a second
+  // deactivation would be a no-op.
   if (!resource.isActive) {
     return (
       <Group
@@ -40,6 +46,15 @@ const ResourceRowActions = ({
           onClick={() => onReactivate?.(resource)}
         >
           <ArchiveRestore size={16} />
+        </ActionIcon>
+
+        <ActionIcon
+          variant="subtle"
+          color="red"
+          aria-label={`Delete ${resource.name} permanently`}
+          onClick={() => onPermanentDelete?.(resource)}
+        >
+          <Trash2 size={16} />
         </ActionIcon>
       </Group>
     )

@@ -8,6 +8,8 @@ from app.database.models import (
     ProductionCycle,
     ProductResourceRequirement,
     Resource,
+    ResourceUtilizationHistoryItem,
+    ResourceUtilizationRun,
 )
 from app.services.resource import DUPLICATE_INACTIVE_NAME_ERROR
 
@@ -1163,3 +1165,381 @@ def test_update_cycle_resource_rejects_negative_available_quantity(
     )
 
     assert response.status_code == 422
+
+
+# --- Permanent delete -------------------------------------------------
+#
+# DELETE /api/resources/{id}/permanent is a SEPARATE endpoint from
+# DELETE /api/resources/{id}, which keeps its existing soft-delete
+# meaning. These cover the three refusals (still active, still
+# referenced by a product requirement, still referenced by a cycle
+# resource) and the two things that must survive a successful delete:
+# resource utilization history, and nothing else in the catalog.
+#
+# The referenced-resource cases matter most: both of those FKs are
+# ON DELETE CASCADE in the database, so a missing guard would destroy
+# product BOM lines and cycle pricing silently rather than erroring.
+
+
+def test_permanent_delete_unknown_resource_returns_404(client):
+    response = client.delete("/api/resources/99999999/permanent")
+
+    assert response.status_code == 404
+    assert response.json()["detail"] == "Resource not found"
+
+
+def test_permanent_delete_rejects_active_resource(client, db):
+    """
+    An active resource must never be removed through this endpoint -
+    the caller has to deactivate it first, which keeps the
+    irreversible step a deliberate, separate decision.
+    """
+    original_count = _resource_row_count(db)
+
+    resource_id = _create_test_resource(
+        client, "Permanent Delete Active Guard",
+    )
+
+    response = client.delete(
+        f"/api/resources/{resource_id}/permanent"
+    )
+
+    assert response.status_code == 409
+    assert "still active" in response.json()["detail"].lower()
+    assert "deactivate" in response.json()["detail"].lower()
+
+    # Untouched: still present, still active.
+    get_response = client.get(f"/api/resources/{resource_id}")
+
+    assert get_response.status_code == 200
+    assert get_response.json()["is_active"] is True
+    assert _resource_row_count(db) == original_count + 1
+
+    db.query(Resource).filter(Resource.id == resource_id).delete()
+    db.commit()
+
+
+def test_permanent_delete_removes_unreferenced_inactive_resource(
+    client, db,
+):
+    original_count = _resource_row_count(db)
+
+    resource_id = _create_test_resource(
+        client, "Permanent Delete Happy Path",
+    )
+
+    assert client.delete(
+        f"/api/resources/{resource_id}"
+    ).status_code == 204
+
+    response = client.delete(
+        f"/api/resources/{resource_id}/permanent"
+    )
+
+    assert response.status_code == 204
+
+    # The row is really gone, not soft-deleted a second time.
+    assert client.get(
+        f"/api/resources/{resource_id}"
+    ).status_code == 404
+
+    assert (
+        db.query(Resource)
+        .filter(Resource.id == resource_id)
+        .count()
+    ) == 0
+
+    assert _resource_row_count(db) == original_count
+
+
+def test_permanent_delete_blocked_by_product_requirement_preserves_it(
+    client, db,
+):
+    """
+    The cascade regression that matters most: a bare
+    db.delete(resource) would take every referencing
+    ProductResourceRequirement row with it - a product BOM line - with
+    no error at all. The delete must be refused and the requirement
+    row must still be there afterwards.
+    """
+    resource_id = _create_test_resource(
+        client, "Permanent Delete Requirement Guard",
+    )
+
+    product = Product(
+        name="Permanent Delete Guard Product",
+        selling_price=Decimal("1000.00"),
+        labor_cost=Decimal("0.00"),
+        is_active=True,
+    )
+
+    db.add(product)
+    db.commit()
+    db.refresh(product)
+
+    requirement = ProductResourceRequirement(
+        product_id=product.id,
+        resource_id=resource_id,
+        quantity_required=Decimal("3.0000"),
+    )
+
+    db.add(requirement)
+    db.commit()
+    db.refresh(requirement)
+
+    requirement_id = requirement.id
+
+    assert client.delete(
+        f"/api/resources/{resource_id}"
+    ).status_code == 204
+
+    response = client.delete(
+        f"/api/resources/{resource_id}/permanent"
+    )
+
+    assert response.status_code == 409
+
+    detail = response.json()["detail"]
+
+    # Actionable: names the blocking product, and says the caller has
+    # to clear it rather than this endpoint doing it for them.
+    assert "Permanent Delete Guard Product" in detail
+    assert "resource requirements" in detail.lower()
+
+    # Nothing was destroyed - neither the BOM line nor the resource.
+    assert (
+        db.query(ProductResourceRequirement)
+        .filter(ProductResourceRequirement.id == requirement_id)
+        .count()
+    ) == 1
+
+    assert (
+        db.query(Resource)
+        .filter(Resource.id == resource_id)
+        .count()
+    ) == 1
+
+    db.query(ProductResourceRequirement).filter(
+        ProductResourceRequirement.id == requirement_id
+    ).delete(synchronize_session=False)
+    db.query(Product).filter(Product.id == product.id).delete()
+    db.query(Resource).filter(Resource.id == resource_id).delete()
+    db.commit()
+
+
+def test_permanent_delete_blocked_by_cycle_resource_preserves_it(
+    client, db,
+):
+    """
+    cycle_resources.resource_id is ON DELETE CASCADE too, so the same
+    guard has to cover a production cycle availability/pricing row.
+    """
+    resource_id = _create_test_resource(
+        client, "Permanent Delete Cycle Guard",
+    )
+
+    cycle = _create_cycle(db)
+
+    cycle_resource = CycleResource(
+        production_cycle_id=cycle.id,
+        resource_id=resource_id,
+        available_quantity=Decimal("100.0000"),
+        unit_price=Decimal("25.0000"),
+    )
+
+    db.add(cycle_resource)
+    db.commit()
+    db.refresh(cycle_resource)
+
+    cycle_resource_id = cycle_resource.id
+
+    assert client.delete(
+        f"/api/resources/{resource_id}"
+    ).status_code == 204
+
+    response = client.delete(
+        f"/api/resources/{resource_id}/permanent"
+    )
+
+    assert response.status_code == 409
+
+    detail = response.json()["detail"]
+
+    assert f"#{cycle.id}" in detail
+    assert "production cycle" in detail.lower()
+
+    assert (
+        db.query(CycleResource)
+        .filter(CycleResource.id == cycle_resource_id)
+        .count()
+    ) == 1
+
+    assert (
+        db.query(Resource)
+        .filter(Resource.id == resource_id)
+        .count()
+    ) == 1
+
+    _delete_cycle(db, cycle)
+
+    db.query(Resource).filter(Resource.id == resource_id).delete()
+    db.commit()
+
+
+def test_permanent_delete_preserves_utilization_history(client, db):
+    """
+    resource_utilization_history_items.resource_id is ON DELETE SET
+    NULL and every displayed field is snapshotted onto the row at
+    creation time, so utilization history must NOT block the delete
+    and must stay fully readable afterwards.
+    """
+    resource_id = _create_test_resource(
+        client, "Permanent Delete History Guard",
+    )
+
+    cycle = _create_cycle(db)
+
+    utilization_run = ResourceUtilizationRun(
+        utilization_number="UT-PDEL-01",
+        production_cycle_id=cycle.id,
+        generated_at=datetime(2026, 8, 9),
+    )
+
+    db.add(utilization_run)
+    db.commit()
+    db.refresh(utilization_run)
+
+    item = ResourceUtilizationHistoryItem(
+        utilization_run_id=utilization_run.id,
+        resource_id=resource_id,
+        resource_name="Permanent Delete History Guard",
+        resource_type="machine",
+        unit="hrs",
+        available_quantity=Decimal("100.0000"),
+        consumed_quantity=Decimal("40.0000"),
+        remaining_quantity=Decimal("60.0000"),
+        utilization_rate=Decimal("40.00"),
+        status="normal",
+    )
+
+    db.add(item)
+    db.commit()
+    db.refresh(item)
+
+    item_id = item.id
+
+    assert client.delete(
+        f"/api/resources/{resource_id}"
+    ).status_code == 204
+
+    # History alone does not block the delete.
+    response = client.delete(
+        f"/api/resources/{resource_id}/permanent"
+    )
+
+    assert response.status_code == 204
+
+    db.expire_all()
+
+    preserved = db.get(ResourceUtilizationHistoryItem, item_id)
+
+    assert preserved is not None
+
+    # The FK was nulled by the database, and every snapshotted field
+    # a history view renders is intact.
+    assert preserved.resource_id is None
+    assert preserved.resource_name == "Permanent Delete History Guard"
+    assert preserved.resource_type == "machine"
+    assert preserved.unit == "hrs"
+    assert preserved.available_quantity == Decimal("100.0000")
+    assert preserved.consumed_quantity == Decimal("40.0000")
+    assert preserved.remaining_quantity == Decimal("60.0000")
+    assert preserved.utilization_rate == Decimal("40.00")
+    assert preserved.status == "normal"
+
+    _delete_cycle(db, cycle)
+
+
+def test_permanent_delete_frees_the_name_for_reuse(client, db):
+    """
+    create_resource blocks a name held by ANY existing row, including
+    a soft-deleted one (DUPLICATE_INACTIVE_NAME_ERROR). That
+    reservation exists only because the soft-deleted row does, so a
+    permanent delete is expected to release it - while the
+    reservation itself stays intact for a merely-deactivated
+    resource, which is asserted first here.
+    """
+    name = "Permanent Delete Name Reuse"
+
+    resource_id = _create_test_resource(client, name)
+
+    assert client.delete(
+        f"/api/resources/{resource_id}"
+    ).status_code == 204
+
+    # Still reserved while the soft-deleted row exists - unchanged
+    # existing behavior.
+    blocked = client.post(
+        "/api/resources",
+        json={
+            "name": name,
+            "resource_type": "machine",
+            "unit": "hrs",
+        },
+    )
+
+    assert blocked.status_code == 409
+    assert blocked.json()["detail"] == DUPLICATE_INACTIVE_NAME_ERROR
+
+    assert client.delete(
+        f"/api/resources/{resource_id}/permanent"
+    ).status_code == 204
+
+    # Now free: a new resource can take the name, with a NEW id.
+    recreated = client.post(
+        "/api/resources",
+        json={
+            "name": name,
+            "resource_type": "machine",
+            "unit": "hrs",
+        },
+    )
+
+    assert recreated.status_code == 201
+    assert recreated.json()["id"] != resource_id
+    assert recreated.json()["is_active"] is True
+
+    db.query(Resource).filter(
+        Resource.id == recreated.json()["id"]
+    ).delete()
+    db.commit()
+
+
+def test_soft_delete_endpoint_still_only_deactivates(client, db):
+    """
+    Regression guard for the endpoint that already existed: adding the
+    permanent route must not turn DELETE /api/resources/{id} into a
+    real delete. Route ordering matters here - /{id}/permanent is
+    registered first - so this confirms /{id} still resolves to
+    deactivation.
+    """
+    original_count = _resource_row_count(db)
+
+    resource_id = _create_test_resource(
+        client, "Soft Delete Still Soft",
+    )
+
+    assert client.delete(
+        f"/api/resources/{resource_id}"
+    ).status_code == 204
+
+    get_response = client.get(f"/api/resources/{resource_id}")
+
+    assert get_response.status_code == 200
+    assert get_response.json()["is_active"] is False
+
+    # The row is kept, so the count still includes it.
+    assert _resource_row_count(db) == original_count + 1
+
+    db.query(Resource).filter(Resource.id == resource_id).delete()
+    db.commit()

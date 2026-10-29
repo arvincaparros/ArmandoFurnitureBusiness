@@ -33,6 +33,7 @@ interface ResourceTableProps {
   onEdit: (resource: Resource) => void
   onDelete: (resource: Resource) => void
   onReactivate: (resource: Resource) => void
+  onPermanentDelete: (resource: Resource) => void
 
   isLoading: boolean
   isError: boolean
@@ -50,6 +51,7 @@ const ResourceTable = ({
   onEdit,
   onDelete,
   onReactivate,
+  onPermanentDelete,
   isLoading,
   isError,
   emptyMessage,
@@ -126,6 +128,7 @@ const ResourceTable = ({
             onEdit={onEdit}
             onDelete={onDelete}
             onReactivate={onReactivate}
+            onPermanentDelete={onPermanentDelete}
         />
       ),
     },

@@ -55,6 +55,18 @@ export const notify = {
     })
   },
 
+  // Distinct from deleted() above, which reports the reversible
+  // soft delete - this one reports a row that is gone for good and
+  // says so, so the two outcomes are never confused in the UI.
+  permanentlyDeleted(name: string) {
+    notifications.show({
+      color: 'red',
+      title: 'Resource Permanently Deleted',
+      message: `${name} was removed from the resource catalog. This cannot be undone.`,
+      icon: <Trash2 size={18} />,
+    })
+  },
+
   reactivated(name: string) {
     notifications.show({
       color: 'green',

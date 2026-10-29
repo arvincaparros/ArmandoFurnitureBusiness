@@ -13,6 +13,7 @@ from app.services.resource import (
     delete_resource,
     get_resource,
     get_resources,
+    permanently_delete_resource,
     update_resource,
 )
 
@@ -111,6 +112,47 @@ def update_existing_resource(
             db,
             resource,
             resource_data,
+        )
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+
+
+@router.delete(
+    "/{resource_id}/permanent",
+    status_code=status.HTTP_204_NO_CONTENT,
+    summary="Permanently delete an inactive resource",
+)
+def permanently_delete_existing_resource(
+    resource_id: int,
+    db: Session = Depends(get_db),
+):
+    """
+    Deliberately a separate route from DELETE /{resource_id}, which
+    keeps its existing soft-delete meaning untouched. 409 covers both
+    refusals - the resource is still active, or it is still
+    referenced - and carries the specific reason as its detail so the
+    UI can show the caller what to fix rather than a generic failure.
+    """
+
+    resource = get_resource(
+        db,
+        resource_id,
+    )
+
+    if resource is None:
+        raise HTTPException(
+            status_code=status.HTTP_404_NOT_FOUND,
+            detail="Resource not found",
+        )
+
+    try:
+        permanently_delete_resource(
+            db,
+            resource,
         )
 
     except ValueError as exc:

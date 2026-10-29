@@ -3,6 +3,7 @@ import userEvent from '@testing-library/user-event'
 import { MantineProvider } from '@mantine/core'
 import { Notifications, notifications } from '@mantine/notifications'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import { AxiosError, AxiosHeaders } from 'axios'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ResourcesPage from './ResourcesPage'
@@ -16,7 +17,12 @@ vi.mock('../../hooks/useLatestProductionCycle', () => ({
   default: () => ({ cycleId: 1, hasCycle: true, isLoading: false, isError: false }),
 }))
 
-const { catalog, updateResourceMock, createResourceMock } = vi.hoisted(() => {
+const {
+  catalog,
+  updateResourceMock,
+  createResourceMock,
+  permanentlyDeleteResourceMock,
+} = vi.hoisted(() => {
   const catalog = [
     { id: 1, name: 'Wood', resource_type: 'material', unit: 'board ft', is_active: true },
     { id: 2, name: 'Wood Glue', resource_type: 'material', unit: 'liter', is_active: true },
@@ -61,7 +67,27 @@ const { catalog, updateResourceMock, createResourceMock } = vi.hoisted(() => {
     },
   )
 
-  return { catalog, updateResourceMock, createResourceMock }
+  // DELETE /api/resources/{id}/permanent. Removes the row from the
+  // mock catalog so the invalidated refetch really does drop it from
+  // both the Inactive view and the Add Resource selector - the same
+  // path a real permanent delete takes. The shared catalog is
+  // restored in beforeEach so this never leaks into other tests.
+  const permanentlyDeleteResourceMock = vi.fn(async (id: number) => {
+    const index = catalog.findIndex(
+      (candidate) => candidate.id === id,
+    )
+
+    if (index !== -1) {
+      catalog.splice(index, 1)
+    }
+  })
+
+  return {
+    catalog,
+    updateResourceMock,
+    createResourceMock,
+    permanentlyDeleteResourceMock,
+  }
 })
 
 vi.mock('./api/resourceApi', () => ({
@@ -72,6 +98,7 @@ vi.mock('./api/resourceApi', () => ({
   createResource: createResourceMock,
   updateResource: updateResourceMock,
   deleteResource: vi.fn(),
+  permanentlyDeleteResource: permanentlyDeleteResourceMock,
 }))
 
 vi.mock('./api/cycleResourceApi', () => ({
@@ -121,6 +148,17 @@ describe('ResourcesPage resource-update notification', () => {
 
     if (epoxy) {
       epoxy.is_active = false
+    } else {
+      // The permanent-delete tests really do remove id 3 from the
+      // shared catalog, so it is restored here rather than left
+      // missing for whichever test runs next.
+      catalog.push({
+        id: 3,
+        name: 'Epoxy',
+        resource_type: 'material',
+        unit: 'liter',
+        is_active: false,
+      })
     }
   })
 
@@ -595,5 +633,202 @@ describe('ResourcesPage resource-update notification', () => {
         screen.getByText('Resource Reactivated'),
       ).toBeInTheDocument()
     })
+  })
+
+  // --- Permanent delete -------------------------------------------
+  //
+  // A different endpoint from the soft delete (DELETE /{id}/
+  // permanent vs DELETE /{id}), offered only on inactive rows and
+  // irreversible - so these cover that it is reachable where it
+  // should be, unreachable where it shouldn't, gated behind a
+  // confirmation, and that a refused delete explains itself.
+
+  const openInactiveView = async () => {
+    renderPage()
+
+    await waitFor(() => screen.getByText('Wood'))
+
+    await userEvent.click(
+      screen.getByRole('radio', { name: /^inactive/i }),
+    )
+
+    await screen.findByText('Epoxy')
+  }
+
+  it('offers reactivate and permanent delete on an inactive resource', async () => {
+    await openInactiveView()
+
+    expect(
+      screen.getByLabelText(/reactivate epoxy/i),
+    ).toBeInTheDocument()
+
+    expect(
+      screen.getByLabelText(/delete epoxy permanently/i),
+    ).toBeInTheDocument()
+  })
+
+  it('does not offer permanent delete on an active resource', async () => {
+    renderPage()
+
+    await waitFor(() => screen.getByText('Wood'))
+
+    // The active row keeps its edit and (soft) delete actions, but
+    // permanent deletion must never be reachable for it - the
+    // backend refuses it with a 409 as well.
+    expect(screen.getByLabelText('Edit Wood')).toBeInTheDocument()
+
+    expect(
+      screen.queryByLabelText(/delete wood permanently/i),
+    ).not.toBeInTheDocument()
+  })
+
+  it('warns that deletion is irreversible and does nothing until confirmed', async () => {
+    await openInactiveView()
+
+    await userEvent.click(
+      screen.getByLabelText(/delete epoxy permanently/i),
+    )
+
+    const dialog = await screen.findByRole('dialog')
+
+    expect(
+      within(dialog).getByText(/this cannot be undone/i),
+    ).toBeInTheDocument()
+
+    expect(
+      within(dialog).getByText(
+        /cannot be reactivated afterwards/i,
+      ),
+    ).toBeInTheDocument()
+
+    expect(
+      within(dialog).getByText(
+        /utilization history is kept/i,
+      ),
+    ).toBeInTheDocument()
+
+    await userEvent.click(
+      within(dialog).getByRole('button', { name: 'Cancel' }),
+    )
+
+    expect(permanentlyDeleteResourceMock).not.toHaveBeenCalled()
+
+    // Still listed, still inactive - cancelling changed nothing.
+    expect(await screen.findByText('Epoxy')).toBeInTheDocument()
+  })
+
+  it('permanently deletes an inactive resource and refreshes the list', async () => {
+    await openInactiveView()
+
+    await userEvent.click(
+      screen.getByLabelText(/delete epoxy permanently/i),
+    )
+
+    const dialog = await screen.findByRole('dialog')
+
+    await userEvent.click(
+      within(dialog).getByRole('button', {
+        name: 'Delete Permanently',
+      }),
+    )
+
+    await waitFor(() => {
+      expect(permanentlyDeleteResourceMock).toHaveBeenCalledWith(3)
+    })
+
+    // Permanent delete only - the soft-delete endpoint and the
+    // is_active PATCH used by reactivation are never touched.
+    expect(updateResourceMock).not.toHaveBeenCalled()
+
+    await waitFor(() => {
+      expect(
+        screen.getByText('Resource Permanently Deleted'),
+      ).toBeInTheDocument()
+    })
+
+    // The list refetches and the row is gone from the Inactive view.
+    await waitFor(() => {
+      expect(
+        screen.getByText('No inactive resources.'),
+      ).toBeInTheDocument()
+    })
+
+    // Its name is free again, so it is no longer offered anywhere in
+    // the Add Resource selector.
+    await userEvent.click(
+      screen.getByRole('radio', { name: /^active/i }),
+    )
+
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Add Resource' }),
+    )
+
+    const nameCombobox = await screen.findByRole('combobox', {
+      name: 'Name',
+    })
+
+    await userEvent.click(nameCombobox)
+
+    expect(screen.queryByText('Epoxy')).not.toBeInTheDocument()
+  })
+
+  it('surfaces the backend reason and keeps the resource when deletion is blocked', async () => {
+    const detail =
+      "'Epoxy' cannot be deleted permanently because it is still used by resource requirements on Dining Table. Remove those first."
+
+    permanentlyDeleteResourceMock.mockRejectedValueOnce(
+      new AxiosError(
+        'Request failed with status code 409',
+        'ERR_BAD_REQUEST',
+        undefined,
+        undefined,
+        {
+          status: 409,
+          statusText: 'Conflict',
+          data: { detail },
+          headers: {},
+          config: {
+            headers: new AxiosHeaders(),
+          },
+        },
+      ),
+    )
+
+    await openInactiveView()
+
+    await userEvent.click(
+      screen.getByLabelText(/delete epoxy permanently/i),
+    )
+
+    const dialog = await screen.findByRole('dialog')
+
+    await userEvent.click(
+      within(dialog).getByRole('button', {
+        name: 'Delete Permanently',
+      }),
+    )
+
+    // The 409's own detail is shown, not a generic failure message,
+    // so the user knows exactly what to clear first.
+    expect(
+      await within(dialog).findByText(detail),
+    ).toBeInTheDocument()
+
+    expect(
+      within(dialog).getByText(/deletion blocked/i),
+    ).toBeInTheDocument()
+
+    // The modal stays open and the resource is untouched.
+    expect(
+      within(dialog).getByRole('button', {
+        name: 'Delete Permanently',
+      }),
+    ).toBeEnabled()
+
+    expect(
+      screen.queryByText('Resource Permanently Deleted'),
+    ).not.toBeInTheDocument()
+
+    expect(catalog.some((resource) => resource.id === 3)).toBe(true)
   })
 })
