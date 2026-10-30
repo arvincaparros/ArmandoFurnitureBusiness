@@ -15,6 +15,17 @@ export interface Product {
   // displayed - not deleted, just no longer rendered.
   resourceQuantities: Record<number, number>
 
+  // Minimum units the optimizer must produce for this product per
+  // production cycle (backend/app/database/models.py::
+  // Product.minimum_demand, read by the ILP as each decision
+  // variable's lowBound). A plain number, never null: the column is
+  // NOT NULL and 0 is a real, meaningful value ("no minimum"), so it
+  // is deliberately NOT part of the nullable cost breakdown below -
+  // an unpriced resource must never turn this into null or a dash.
+  // Whole units only (enforced by both the Edit Product modal and
+  // the API).
+  minimumDemand: number
+
   // materialCost/machineCost/totalCost/profit stay null when a
   // required material/machine resource has no configured
   // CycleResource price yet (see productAdapter.ts::calculateCosts).

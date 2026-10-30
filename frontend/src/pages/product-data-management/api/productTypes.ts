@@ -11,6 +11,12 @@ export interface ProductResponse {
   name: string
   selling_price: string
   labor_cost: string
+  // Always present - the column is NOT NULL and ProductResponse
+  // declares it required, so this is never optional on a response.
+  // Serialized as a Decimal string like "3.0000" even though only
+  // whole units are accepted on the way in (see productAdapter.ts,
+  // which parses it back to an integer).
+  minimum_demand: string
   is_active: boolean
 }
 
@@ -22,6 +28,10 @@ export interface ProductCreateRequest {
   name: string
   selling_price: number
   labor_cost: number
+  // Optional, defaulting to 0 server-side when omitted. Whole units
+  // only - the backend rejects negative, fractional, and
+  // above-1,000,000 values with a 422.
+  minimum_demand?: number
   is_active?: boolean
 }
 
@@ -29,5 +39,8 @@ export interface ProductUpdateRequest {
   name?: string
   selling_price?: number
   labor_cost?: number
+  // Omitted means "leave unchanged"; an explicit 0 is a real value
+  // ("no minimum") and IS persisted as 0.
+  minimum_demand?: number
   is_active?: boolean
 }

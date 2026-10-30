@@ -24,6 +24,11 @@ import type {
   ProductUpdateRequest,
 } from '../api/productTypes'
 
+// Matches the backend's own bounds exactly (schemas/product.py::
+// MinimumDemand) so the UI rejects what the API would 422 on, rather
+// than relying on the error path for ordinary input.
+const MINIMUM_DEMAND_MAX = 1_000_000
+
 interface AddProductModalProps {
   opened: boolean
   onClose: () => void
@@ -42,6 +47,15 @@ const AddProductModal = ({
   const [productName, setProductName] = useState('')
   const [sellingPrice, setSellingPrice] = useState(0)
   const [laborCost, setLaborCost] = useState(0)
+  // Held as the raw NumberInput value (number, or '' once cleared)
+  // rather than being funnelled through Number() on every keystroke:
+  // Number('') is 0, and 0 is a REAL value here ("no minimum", which
+  // drops the product out of the optimizer's positive-minimum
+  // partition). Coercing an empty field to 0 would silently save that
+  // meaning; keeping '' lets it be treated as invalid instead.
+  const [minimumDemand, setMinimumDemand] = useState<
+    number | string
+  >(0)
 
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
@@ -51,19 +65,38 @@ const AddProductModal = ({
       setProductName(product.productName)
       setSellingPrice(product.sellingPrice)
       setLaborCost(product.laborCost ?? 0)
+      // No `?? 0` fallback needed, unlike laborCost above: Product
+      // .minimumDemand is a plain number that is never null, so the
+      // real stored value always prefills - including a genuine 0.
+      setMinimumDemand(product.minimumDemand)
     } else {
       setProductName('')
       setSellingPrice(0)
       setLaborCost(0)
+      setMinimumDemand(0)
     }
 
     setError(null)
   }, [product, opened])
 
+  const minimumDemandValue = Number(minimumDemand)
+
+  // Mirrors schemas/product.py::MinimumDemand exactly: whole units,
+  // nonnegative, at most MINIMUM_DEMAND_MAX. The explicit '' check is
+  // what makes a cleared field block submission rather than being
+  // read as 0; the Number.isInteger check additionally rejects any
+  // NaN/fractional value that could reach the state.
+  const isMinimumDemandValid =
+    minimumDemand !== '' &&
+    Number.isInteger(minimumDemandValue) &&
+    minimumDemandValue >= 0 &&
+    minimumDemandValue <= MINIMUM_DEMAND_MAX
+
   const isValid =
     productName.trim() !== '' &&
     sellingPrice > 0 &&
-    laborCost >= 0
+    laborCost >= 0 &&
+    isMinimumDemandValid
 
   const handleSave = async () => {
     if (!isValid || isSubmitting) {
@@ -78,6 +111,7 @@ const AddProductModal = ({
         name: productName,
         selling_price: sellingPrice,
         labor_cost: laborCost,
+        minimum_demand: minimumDemandValue,
       })
     } catch (submitError) {
       setError(
@@ -166,6 +200,23 @@ const AddProductModal = ({
                 onChange={(value) =>
                   setLaborCost(Number(value))
                 }
+              />
+
+              {/* A unit count, not currency - no ₱ prefix, and whole
+                  units only (the backend rejects fractions with a
+                  422, see schemas/product.py::_require_whole_units). */}
+              <NumberInput
+                radius="md"
+                label="Minimum Demand"
+                description="Minimum units the optimizer must produce per production cycle. 0 means no minimum."
+                value={minimumDemand}
+                min={0}
+                max={MINIMUM_DEMAND_MAX}
+                step={1}
+                allowDecimal={false}
+                allowNegative={false}
+                thousandSeparator=","
+                onChange={setMinimumDemand}
               />
             </SimpleGrid>
 

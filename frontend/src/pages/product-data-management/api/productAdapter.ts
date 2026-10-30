@@ -221,6 +221,15 @@ export function toUiProduct(
 
     resourceQuantities,
 
+    // Mapped here, deliberately OUTSIDE the `...costs` spread below:
+    // minimum_demand is a real NOT NULL product field, not a derived
+    // cost, so it must stay a plain number regardless of whether this
+    // product's cost breakdown came back null for want of a
+    // CycleResource price. parseDecimal's 0 fallback is only reached
+    // for a malformed/absent value - a genuine 0 parses to 0 anyway,
+    // which is the correct "no minimum" reading either way.
+    minimumDemand: parseDecimal(product.minimum_demand),
+
     ...costs,
   }
 }

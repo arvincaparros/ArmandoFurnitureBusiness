@@ -117,6 +117,10 @@ def cleanup_test_data(db):
         "Test Dining Table",
         "Test Chair",
         "Test Bed Frame",
+        # Created by the minimum_demand create/update tests in
+        # test_products.py, which share one name so this cleanup can
+        # reclaim all of them.
+        "Test Minimum Demand Product",
     ]
 
     # Remove dependent cycle resources first

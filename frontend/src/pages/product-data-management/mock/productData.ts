@@ -8,6 +8,8 @@ export const productData: Product[] = [
 
     resourceQuantities: {},
 
+    minimumDemand: 1,
+
     sellingPrice: 18000,
 
     materialCost: 0,
@@ -22,6 +24,8 @@ export const productData: Product[] = [
     isActive: true,
 
     resourceQuantities: {},
+
+    minimumDemand: 0,
 
     sellingPrice: 6500,
 

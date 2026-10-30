@@ -102,6 +102,231 @@ def test_create_update_delete_product(client, cleanup_test_data):
     assert get_response.json()["is_active"] is False
 
 
+# --- minimum_demand through the Products API --------------------------
+#
+# The column, its migration (fa69029d2755) and the optimizer's use of
+# it already existed and are covered by tests/test_minimum_demand.py.
+# These tests cover only what the Product Data Management revision
+# added: writing it through create/update. Nothing here touches the
+# optimizer or optimization history.
+
+
+def test_create_product_with_minimum_demand(client, cleanup_test_data):
+    response = client.post(
+        "/api/products",
+        json={
+            "name": "Test Minimum Demand Product",
+            "selling_price": "5000.00",
+            "labor_cost": "250.00",
+            "minimum_demand": 4,
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.json()["minimum_demand"] == "4.0000"
+
+
+def test_create_product_without_minimum_demand_defaults_to_zero(
+    client,
+    cleanup_test_data,
+):
+    """
+    Regression guard for every existing caller (the frontend's own
+    create flow included) that omits the field - it must stay a 201
+    defaulting to 0, never a 422.
+    """
+
+    response = client.post(
+        "/api/products",
+        json={
+            "name": "Test Minimum Demand Product",
+            "selling_price": "5000.00",
+            "labor_cost": "250.00",
+        },
+    )
+
+    assert response.status_code == 201
+    assert response.json()["minimum_demand"] == "0.0000"
+
+
+def test_update_product_minimum_demand(client, cleanup_test_data):
+    create_response = client.post(
+        "/api/products",
+        json={
+            "name": "Test Minimum Demand Product",
+            "selling_price": "5000.00",
+            "labor_cost": "250.00",
+            "minimum_demand": 2,
+        },
+    )
+
+    assert create_response.status_code == 201
+
+    product_id = create_response.json()["id"]
+
+    update_response = client.patch(
+        f"/api/products/{product_id}",
+        json={"minimum_demand": 7},
+    )
+
+    assert update_response.status_code == 200
+    assert update_response.json()["minimum_demand"] == "7.0000"
+
+    get_response = client.get(f"/api/products/{product_id}")
+
+    assert get_response.json()["minimum_demand"] == "7.0000"
+
+
+def test_update_product_minimum_demand_to_zero(client, cleanup_test_data):
+    """
+    0 is a real value ("no minimum"), not an absent one - an explicit
+    0 must persist rather than being treated as unset and silently
+    leaving the previous minimum in place.
+    """
+
+    create_response = client.post(
+        "/api/products",
+        json={
+            "name": "Test Minimum Demand Product",
+            "selling_price": "5000.00",
+            "labor_cost": "250.00",
+            "minimum_demand": 5,
+        },
+    )
+
+    assert create_response.status_code == 201
+
+    product_id = create_response.json()["id"]
+
+    update_response = client.patch(
+        f"/api/products/{product_id}",
+        json={"minimum_demand": 0},
+    )
+
+    assert update_response.status_code == 200
+    assert update_response.json()["minimum_demand"] == "0.0000"
+
+
+def test_update_other_field_preserves_minimum_demand(
+    client,
+    cleanup_test_data,
+):
+    create_response = client.post(
+        "/api/products",
+        json={
+            "name": "Test Minimum Demand Product",
+            "selling_price": "5000.00",
+            "labor_cost": "250.00",
+            "minimum_demand": 3,
+        },
+    )
+
+    assert create_response.status_code == 201
+
+    product_id = create_response.json()["id"]
+
+    update_response = client.patch(
+        f"/api/products/{product_id}",
+        json={"selling_price": "5500.00"},
+    )
+
+    assert update_response.status_code == 200
+    assert update_response.json()["selling_price"] == "5500.00"
+    # Unset in the PATCH payload - must stay unchanged, not reset.
+    assert update_response.json()["minimum_demand"] == "3.0000"
+
+
+def test_create_product_rejects_negative_minimum_demand(
+    client,
+    cleanup_test_data,
+):
+    response = client.post(
+        "/api/products",
+        json={
+            "name": "Test Minimum Demand Product",
+            "selling_price": "5000.00",
+            "labor_cost": "250.00",
+            "minimum_demand": -1,
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_create_product_rejects_fractional_minimum_demand(
+    client,
+    cleanup_test_data,
+):
+    response = client.post(
+        "/api/products",
+        json={
+            "name": "Test Minimum Demand Product",
+            "selling_price": "5000.00",
+            "labor_cost": "250.00",
+            "minimum_demand": 2.5,
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_create_product_rejects_minimum_demand_above_maximum(
+    client,
+    cleanup_test_data,
+):
+    response = client.post(
+        "/api/products",
+        json={
+            "name": "Test Minimum Demand Product",
+            "selling_price": "5000.00",
+            "labor_cost": "250.00",
+            "minimum_demand": 1000001,
+        },
+    )
+
+    assert response.status_code == 422
+
+
+def test_update_product_rejects_negative_minimum_demand(
+    client,
+    test_products,
+    db,
+):
+    product = test_products[0]
+    original = product.minimum_demand
+
+    response = client.patch(
+        f"/api/products/{product.id}",
+        json={"minimum_demand": -5},
+    )
+
+    assert response.status_code == 422
+
+    db.refresh(product)
+
+    assert product.minimum_demand == original
+
+
+def test_update_product_rejects_fractional_minimum_demand(
+    client,
+    test_products,
+    db,
+):
+    product = test_products[0]
+    original = product.minimum_demand
+
+    response = client.patch(
+        f"/api/products/{product.id}",
+        json={"minimum_demand": 1.25},
+    )
+
+    assert response.status_code == 422
+
+    db.refresh(product)
+
+    assert product.minimum_demand == original
+
+
 def test_product_resource_requirements_endpoint(
     client,
     test_products,

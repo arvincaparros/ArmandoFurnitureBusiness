@@ -54,6 +54,15 @@ class Product(Base):
     # by array position/Product.id ordering (see the Revision #3
     # investigation report - that ordering is incidental, not a
     # business contract).
+    #
+    # Writable through the API since the Product Data Management
+    # revision (ProductCreate/ProductUpdate in schemas/product.py,
+    # surfaced as an editable column + Edit Product field in the
+    # frontend) - no longer set only by the migration backfill and
+    # direct DB access. The column stays Numeric(12, 4), but the API
+    # accepts whole units only (schemas/product.py::
+    # _require_whole_units); the optimizer itself is unchanged and
+    # still reads this value read-only.
     minimum_demand: Mapped[Decimal] = mapped_column(
         Numeric(12, 4),
         nullable=False,

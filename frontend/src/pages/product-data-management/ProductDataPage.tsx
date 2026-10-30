@@ -165,6 +165,10 @@ const ProductDataPage = () => {
       }
 
       row['Selling Price'] = product.sellingPrice
+      // Always a real number including 0 ("no minimum") - never
+      // blanked like the nullable cost columns below, since it is a
+      // stored product field rather than a derived cost.
+      row['Minimum Demand'] = product.minimumDemand
       // null means unknown (a required resource has no price
       // configured for the current cycle) - blank, never a
       // misleading 0, matching costCell()'s own "—" convention.

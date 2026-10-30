@@ -107,6 +107,16 @@ const profitCell = (value: number | null) => {
   )
 }
 
+// Deliberately NOT costCell(): minimum demand is a real NOT NULL
+// product field, not a derived cost, so it is never unknown and never
+// renders a dash. 0 is a meaningful value ("no minimum") and must
+// show as a literal 0. Whole units only, so no decimal formatting -
+// toLocaleString only adds thousands separators for large values.
+const minimumDemandCell = (value: number) =>
+  value.toLocaleString(undefined, {
+    maximumFractionDigits: 0,
+  })
+
 const NO_REQUIREMENT_RECORDED =
   'No requirement recorded for this resource on this product.'
 
@@ -199,6 +209,13 @@ const ProductTable = ({
         textAlign: 'right',
         render: (row) =>
         `₱${row.sellingPrice.toLocaleString()}`,
+    },
+    {
+        accessor: 'minimumDemand',
+        title: 'Minimum Demand',
+        sortable: true,
+        textAlign: 'right',
+        render: (row) => minimumDemandCell(row.minimumDemand),
     },
     {
         accessor: 'materialCost',

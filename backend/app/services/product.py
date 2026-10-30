@@ -38,6 +38,11 @@ def create_product(
         name=product_data.name,
         selling_price=product_data.selling_price,
         labor_cost=product_data.labor_cost,
+        # Always passed explicitly rather than relying on the model's
+        # own default=Decimal("0"): ProductCreate already defaults an
+        # omitted value to 0, so this stays a single source of truth
+        # and a caller that DOES send 0 is persisted as 0 either way.
+        minimum_demand=product_data.minimum_demand,
         is_active=product_data.is_active,
     )
 
