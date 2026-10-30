@@ -1,5 +1,6 @@
-from datetime import datetime
+from datetime import date, datetime
 from decimal import Decimal
+from enum import Enum
 
 from pydantic import BaseModel, Field
 
@@ -65,3 +66,61 @@ class SalesTransactionResponse(BaseModel):
     model_config = {
         "from_attributes": True,
     }
+
+
+class TransactionRangeMode(str, Enum):
+    """
+    Which rule produced the window the response was filtered by.
+
+    LATEST_AVAILABLE is the default when the caller sends no params:
+    the window is derived from the stored data (the 7 most recent
+    distinct transaction dates), never from the caller's clock.
+    """
+
+    LATEST_AVAILABLE = "latest_available"
+    CUSTOM = "custom"
+    ALL = "all"
+
+
+class TransactionDateRange(BaseModel):
+    """
+    The window actually applied to this response - what the client is
+    looking at. Deliberately distinct from TransactionAvailableRange
+    (what EXISTS in the table): filtering against `available` instead
+    of `start_date`/`end_date` would silently widen the view.
+
+    Either bound may be null, and only in CUSTOM mode: a caller may
+    send start_date alone (open-ended future) or end_date alone (open
+    -ended past). In LATEST_AVAILABLE mode both bounds are always
+    set, because the window is resolved from real rows - if there are
+    no rows there is no window at all and the whole object is null.
+    """
+
+    start_date: date | None
+    end_date: date | None
+    mode: TransactionRangeMode
+
+
+class TransactionAvailableRange(BaseModel):
+    """
+    The full span of transaction_date present in the table,
+    regardless of the active window - drives the date inputs' min/max
+    and the "no transactions in this range" empty state. Null only
+    when the table is empty.
+    """
+
+    earliest: date
+    latest: date
+
+
+class SalesTransactionListResponse(BaseModel):
+    """
+    Wraps what used to be a bare list. The client cannot label or
+    empty-state a window it did not choose, so the server reports the
+    window it resolved alongside the rows.
+    """
+
+    items: list[SalesTransactionResponse]
+    total: int
+    range: TransactionDateRange | None
+    available: TransactionAvailableRange | None

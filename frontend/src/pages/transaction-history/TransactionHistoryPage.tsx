@@ -8,6 +8,7 @@ import ChartCard from '../../components/cards/ChartCard'
 
 import TransactionToolbar from './components/TransactionToolbar'
 import TransactionTable from './components/TransactionTable'
+import TransactionDateRangeFilter from './components/TransactionDateRangeFilter'
 
 import useTransactions from './hooks/useTransactions'
 import AddTransactionModal from './components/AddTransactionModal'
@@ -16,7 +17,15 @@ import DeleteTransactionModal from './components/DeleteTransactionModal'
 import { notify } from '../../utils/notify'
 import { exportCsv } from '../../utils/exportCsv'
 import { exportExcel } from '../../utils/exportExcel'
-import type { Transaction } from './types'
+import {
+  DEFAULT_TRANSACTION_FILTER,
+  type Transaction,
+  type TransactionFilter,
+} from './types'
+import {
+  isDateOutsideFilter,
+  toSubmittedDate,
+} from './dateRange'
 import type {
   SalesTransactionCreateRequest,
   SalesTransactionUpdateRequest,
@@ -25,6 +34,15 @@ import type {
 const TransactionHistoryPage = () => {
   const [search, setSearch] = useState('')
   const [opened, setOpened] = useState(false)
+
+  // Defaults to the server-resolved window (the 7 most recent
+  // distinct transaction dates). Deliberately not a date range
+  // computed here: a client-side default would be anchored to this
+  // browser's clock, which goes empty as soon as the data is more
+  // than a week old and shifts by a day across timezones.
+  const [filter, setFilter] = useState<TransactionFilter>(
+    DEFAULT_TRANSACTION_FILTER,
+  )
 
   const [selectedTransaction, setSelectedTransaction] =
     useState<Transaction | null>(null)
@@ -42,13 +60,15 @@ const TransactionHistoryPage = () => {
 
   const {
     transactions,
+    range,
+    available,
     isLoading,
     isError,
     products,
     createTransaction,
     updateTransaction,
     deleteTransaction,
-  } = useTransactions()
+  } = useTransactions(filter)
 
   const filteredTransactions =
     transactions.filter(
@@ -81,6 +101,57 @@ const TransactionHistoryPage = () => {
     return 0
   })
 
+  // Describes the window the SERVER applied, not the one requested -
+  // the two differ in default mode, where the client never names a
+  // range at all.
+  const windowLabel = (() => {
+    if (!available) {
+      return 'no transactions recorded yet'
+    }
+
+    if (!range) {
+      return 'all transactions'
+    }
+
+    if (range.mode === 'latest_available') {
+      return `most recent activity - ${range.startDate} to ${range.endDate}`
+    }
+
+    if (range.startDate && range.endDate) {
+      return `${range.startDate} to ${range.endDate}`
+    }
+
+    if (range.startDate) {
+      return `${range.startDate} onward`
+    }
+
+    if (range.endDate) {
+      return `up to ${range.endDate}`
+    }
+
+    return 'all transactions'
+  })()
+
+  // `available === null` is the only way to tell "this business has
+  // recorded nothing yet" apart from "nothing falls in the window you
+  // picked" - the second is recoverable with Show All, the first is
+  // not, so they must not share a message.
+  const emptyMessage = (() => {
+    if (!available) {
+      return 'No transactions recorded yet. Use Add Transaction to record the first one.'
+    }
+
+    if (search.trim() !== '') {
+      return 'No transactions match your search in this date range.'
+    }
+
+    if (filter.mode === 'all') {
+      return 'No transactions found.'
+    }
+
+    return 'No transactions in the selected date range. Use Show All to see the full history.'
+  })()
+
   const handleSaveTransaction = async (
     data:
       | SalesTransactionCreateRequest
@@ -99,6 +170,17 @@ const TransactionHistoryPage = () => {
       )
 
       notify.added('Transaction')
+    }
+
+    // The selected range is deliberately left exactly as the user set
+    // it. Widening it automatically to reveal the saved row would
+    // silently override a filter they chose; instead the save is
+    // reported as succeeded-but-not-visible, and moving the range is
+    // left to them.
+    const savedDate = toSubmittedDate(data.transaction_date)
+
+    if (isDateOutsideFilter(filter, savedDate) && savedDate) {
+      notify.savedOutsideDateRange('Transaction', savedDate)
     }
 
     setSelectedTransaction(null)
@@ -199,13 +281,19 @@ const TransactionHistoryPage = () => {
         onExportExcel={handleExportExcel}
       />
 
+      <TransactionDateRangeFilter
+        filter={filter}
+        available={available}
+        onChange={setFilter}
+      />
+
       <ChartCard
         title="Transactions"
         subtitle={`${filteredTransactions.length} transaction${
           filteredTransactions.length !== 1
             ? 's'
             : ''
-        }`}
+        } - ${windowLabel}`}
         rightSection={
           <TextInput
             placeholder="Search transactions..."
@@ -233,6 +321,7 @@ const TransactionHistoryPage = () => {
           sortBy={sortBy}
           reverse={reverse}
           onSort={handleSort}
+          emptyMessage={emptyMessage}
         />
 
         <AddTransactionModal

@@ -54,3 +54,27 @@ export interface ProductSummary {
   name: string
   selling_price: string
 }
+
+// Mirrors backend/app/schemas/transaction.py's
+// TransactionDateRange / TransactionAvailableRange /
+// SalesTransactionListResponse. GET /api/transactions returns this
+// object, NOT a bare array: the client cannot label or empty-state a
+// window the server chose for it, so the resolved window travels
+// with the rows.
+export interface TransactionDateRangeResponse {
+  start_date: string | null
+  end_date: string | null
+  mode: 'latest_available' | 'custom' | 'all'
+}
+
+export interface TransactionAvailableRangeResponse {
+  earliest: string
+  latest: string
+}
+
+export interface SalesTransactionListResponse {
+  items: SalesTransactionResponse[]
+  total: number
+  range: TransactionDateRangeResponse | null
+  available: TransactionAvailableRangeResponse | null
+}

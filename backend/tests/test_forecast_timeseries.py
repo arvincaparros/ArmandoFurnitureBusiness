@@ -432,14 +432,21 @@ def test_nine_transactions_produce_nine_historical_points_plus_one_forecast(
     )
 
     try:
-        # Source of truth: the same rows the Transactions page shows.
-        transactions_response = client.get("/api/transactions")
+        # Source of truth: every transaction row, which is what this
+        # assertion has always meant. show_all=true is now required to
+        # say so - the endpoint's default is the 7 most recent distinct
+        # transaction dates, and this fixture spans 10 of them, so the
+        # default window would hide the three August rows.
+        transactions_response = client.get(
+            "/api/transactions",
+            params={"show_all": "true"},
+        )
 
         assert transactions_response.status_code == 200
 
         door_rows = [
             row
-            for row in transactions_response.json()
+            for row in transactions_response.json()["items"]
             if row["product_id"] == product.id
         ]
 

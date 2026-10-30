@@ -3,21 +3,61 @@ import apiClient from '../../../api/client'
 import type {
   ProductSummary,
   SalesTransactionCreateRequest,
+  SalesTransactionListResponse,
   SalesTransactionResponse,
   SalesTransactionUpdateRequest,
 } from './transactionTypes'
 
-// No query params exist on this endpoint (no filter, sort, or
-// pagination support) - it always returns the full table, ordered
-// transaction_date then id (backend/app/services/transaction.py::
-// get_transactions). Search/sort in this module are therefore
-// legitimately client-side: they operate over the complete dataset,
-// never a partial page of it.
-export async function fetchTransactions(): Promise<
-  SalesTransactionResponse[]
-> {
-  const response = await apiClient.get<SalesTransactionResponse[]>(
+import {
+  DEFAULT_TRANSACTION_FILTER,
+  type TransactionFilter,
+} from '../types'
+
+// Maps the UI filter onto the endpoint's three mutually exclusive
+// modes. Sending no params is NOT "give me everything" - the backend
+// resolves the 7 most recent distinct transaction DATES from the
+// stored data, so the default view is anchored to the newest row
+// rather than to this browser's clock. 'all' has to say so
+// explicitly with show_all=true.
+export function toTransactionQueryParams(
+  filter: TransactionFilter,
+): Record<string, string> {
+  if (filter.mode === 'all') {
+    return { show_all: 'true' }
+  }
+
+  if (filter.mode === 'custom') {
+    const params: Record<string, string> = {}
+
+    // Omitted entirely rather than sent as empty strings: FastAPI
+    // rejects "" as a date with a 422, and a one-sided range (only a
+    // start, or only an end) is a legitimate request.
+    if (filter.startDate) {
+      params.start_date = filter.startDate
+    }
+
+    if (filter.endDate) {
+      params.end_date = filter.endDate
+    }
+
+    return params
+  }
+
+  return {}
+}
+
+// Ordering is still transaction_date then id, server-side
+// (backend/app/services/transaction.py::get_transactions). Search and
+// sort in this module remain client-side, but they now operate over
+// the server-resolved window instead of the entire table - which is
+// the point of the change: the default view no longer downloads all
+// history to show the recent part of it.
+export async function fetchTransactions(
+  filter: TransactionFilter = DEFAULT_TRANSACTION_FILTER,
+): Promise<SalesTransactionListResponse> {
+  const response = await apiClient.get<SalesTransactionListResponse>(
     '/api/transactions',
+    { params: toTransactionQueryParams(filter) },
   )
 
   return response.data

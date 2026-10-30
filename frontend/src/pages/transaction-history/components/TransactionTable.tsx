@@ -18,6 +18,10 @@ interface TransactionTableProps {
   onSort: (
     accessor: keyof Transaction | string,
   ) => void
+
+  // Only used for the "there are no rows" case. Loading and error
+  // messages stay owned by this component.
+  emptyMessage?: string
 }
 
 const TransactionTable = ({
@@ -29,6 +33,7 @@ const TransactionTable = ({
   sortBy,
   reverse,
   onSort,
+  emptyMessage,
 }: TransactionTableProps) => {
   const columns: Column<Transaction>[] = [
     {
@@ -80,11 +85,11 @@ const TransactionTable = ({
     },
   ]
 
-  const emptyMessage = isLoading
+  const resolvedEmptyMessage = isLoading
     ? 'Loading transactions...'
     : isError
       ? 'Unable to load transactions.'
-      : 'No transactions found.'
+      : (emptyMessage ?? 'No transactions found.')
 
   return (
     <ScrollArea
@@ -97,7 +102,7 @@ const TransactionTable = ({
             sortBy={sortBy}
             reverse={reverse}
             onSort={onSort}
-            emptyMessage={emptyMessage}
+            emptyMessage={resolvedEmptyMessage}
         />
     </ScrollArea>
 

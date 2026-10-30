@@ -1,6 +1,7 @@
 import { notifications } from '@mantine/notifications'
 import {
   ArchiveRestore,
+  CalendarOff,
   CheckCircle2,
   Pencil,
   Trash2,
@@ -82,6 +83,22 @@ export const notify = {
       title: 'Changes Saved',
       message: 'All changes were saved successfully.',
       icon: <Save size={18} />,
+    })
+  },
+
+  // A save that succeeded but landed outside the date range the user
+  // is filtering by: the row is real, it is simply not in view. Kept
+  // separate from added()/updated() because the table will not change
+  // in response to the save, and silence there reads as a failure.
+  // autoClose is off deliberately - this explains an absence, which
+  // is easy to miss in a toast that disappears on its own.
+  savedOutsideDateRange(name: string, savedDate: string) {
+    notifications.show({
+      color: 'orange',
+      title: `${name} Saved - Outside Current Date Range`,
+      message: `Saved with date ${savedDate}, which is outside the date range you are viewing, so it is not shown in the table. Adjust the From / To dates or choose Show All to see it.`,
+      icon: <CalendarOff size={18} />,
+      autoClose: false,
     })
   },
 

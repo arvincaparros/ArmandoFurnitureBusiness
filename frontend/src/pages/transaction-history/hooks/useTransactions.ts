@@ -12,13 +12,26 @@ import {
   updateTransaction,
 } from '../api/transactionApi'
 
-import { toUiTransactions } from '../api/transactionAdapter'
+import {
+  toUiAvailableRange,
+  toUiDateRange,
+  toUiTransactions,
+} from '../api/transactionAdapter'
 
 import type {
   SalesTransactionCreateRequest,
   SalesTransactionUpdateRequest,
 } from '../api/transactionTypes'
 
+import {
+  DEFAULT_TRANSACTION_FILTER,
+  type TransactionFilter,
+} from '../types'
+
+// Prefix only. The live query key appends the active filter, so each
+// window is cached separately - and because invalidation below
+// targets this prefix, a create/update/delete still refreshes every
+// cached window rather than just the one on screen.
 const TRANSACTIONS_QUERY_KEY = ['transactions']
 const TRANSACTION_PRODUCTS_QUERY_KEY = [
   'transactions',
@@ -47,12 +60,14 @@ const invalidateForecastQueries = (
   })
 }
 
-const useTransactions = () => {
+const useTransactions = (
+  filter: TransactionFilter = DEFAULT_TRANSACTION_FILTER,
+) => {
   const queryClient = useQueryClient()
 
   const transactionsQuery = useQuery({
-    queryKey: TRANSACTIONS_QUERY_KEY,
-    queryFn: fetchTransactions,
+    queryKey: [...TRANSACTIONS_QUERY_KEY, filter],
+    queryFn: () => fetchTransactions(filter),
   })
 
   const productsQuery = useQuery({
@@ -114,9 +129,27 @@ const useTransactions = () => {
 
   return {
     transactions: toUiTransactions(
-      transactionsQuery.data ?? [],
+      transactionsQuery.data?.items ?? [],
       productsQuery.data ?? [],
     ),
+
+    // The window the server actually applied, so the page can say
+    // what it is showing. Null when no window was applied ('all') or
+    // when none exists (empty table).
+    range: toUiDateRange(
+      transactionsQuery.data?.range ?? null,
+    ),
+
+    // The full span of dates that exists, independent of the window.
+    // Null only when there are no transactions at all - which is how
+    // the page tells "nothing recorded yet" apart from "nothing in
+    // this range".
+    available: toUiAvailableRange(
+      transactionsQuery.data?.available ?? null,
+    ),
+
+    total: transactionsQuery.data?.total ?? 0,
+
     isLoading:
       transactionsQuery.isLoading ||
       productsQuery.isLoading,

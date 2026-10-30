@@ -1,8 +1,14 @@
 import type {
   ProductSummary,
   SalesTransactionResponse,
+  TransactionAvailableRangeResponse,
+  TransactionDateRangeResponse,
 } from './transactionTypes'
-import type { Transaction } from '../types'
+import type {
+  Transaction,
+  TransactionAvailableRange,
+  TransactionDateRange,
+} from '../types'
 
 // Every backend Decimal field arrives as a JSON string, never a bare
 // number - see backend/docs/demand-forecasting-api-contract.md §14
@@ -56,4 +62,35 @@ export function toUiTransactions(
   return transactions.map((transaction) =>
     toUiTransaction(transaction, productNames),
   )
+}
+
+// The date fields below are already ISO YYYY-MM-DD strings from the
+// backend (Pydantic `date`, not `datetime`), so they are carried
+// across as-is - no Date construction anywhere in this module, which
+// is what keeps the UI immune to timezone-shifted off-by-one days.
+export function toUiDateRange(
+  range: TransactionDateRangeResponse | null,
+): TransactionDateRange | null {
+  if (range === null) {
+    return null
+  }
+
+  return {
+    startDate: range.start_date,
+    endDate: range.end_date,
+    mode: range.mode,
+  }
+}
+
+export function toUiAvailableRange(
+  available: TransactionAvailableRangeResponse | null,
+): TransactionAvailableRange | null {
+  if (available === null) {
+    return null
+  }
+
+  return {
+    earliest: available.earliest,
+    latest: available.latest,
+  }
 }

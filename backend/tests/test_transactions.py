@@ -123,11 +123,21 @@ def test_get_transactions(client, db):
     db.add(transaction)
     db.commit()
 
-    response = client.get("/api/transactions")
+    # show_all=true because this test only cares that the endpoint
+    # returns the row it just inserted. Without it the endpoint
+    # applies its default window (the 7 most recent distinct
+    # transaction dates), which depends on whatever else is in the
+    # shared table at the time. The window rules themselves are
+    # covered exhaustively in test_transaction_date_filter.py, which
+    # owns the table and can assert exact counts.
+    response = client.get(
+        "/api/transactions",
+        params={"show_all": "true"},
+    )
 
     assert response.status_code == 200
 
-    data = response.json()
+    data = response.json()["items"]
 
     assert any(
         item["id"] == transaction.id
