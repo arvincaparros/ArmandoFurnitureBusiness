@@ -261,8 +261,8 @@ describe('useForecast table rows', () => {
     const door = result.current.forecastTableItems[0]
 
     // Door's latest historical week (2026-10-14) and first forecast
-    // week (2026-11-01).
+    // week (2026-11-01, predicted 9.5 - rounded up to a whole unit).
     expect(door.historicalSales).toBe(5)
-    expect(door.predictedDemand).toBe(9.5)
+    expect(door.predictedDemand).toBe(10)
   })
 })

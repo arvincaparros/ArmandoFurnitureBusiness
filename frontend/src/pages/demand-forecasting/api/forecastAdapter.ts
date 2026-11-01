@@ -223,8 +223,14 @@ export function toUiForecastTableItems(
       historicalSales: latestHistorical
         ? parseDecimal(latestHistorical.historical_sales ?? '0')
         : 0,
+      // Furniture is produced in whole units, so a fractional
+      // prediction is rounded up rather than shown as a decimal -
+      // ceil rather than round/floor so the table never under-plans
+      // production against the forecast.
       predictedDemand: firstForecast
-        ? parseDecimal(firstForecast.predicted_demand ?? '0')
+        ? Math.ceil(
+            parseDecimal(firstForecast.predicted_demand ?? '0'),
+          )
         : 0,
       forecastPeriod: firstForecast
         ? formatWeekRangeLabel(firstForecast.period)

@@ -233,4 +233,35 @@ describe('toUiForecastTableItems', () => {
   it('returns no rows when there is no timeseries response yet', () => {
     expect(toUiForecastTableItems(undefined)).toEqual([])
   })
+
+  it('rounds a fractional Predicted Demand up to a whole unit', () => {
+    const fractional: ForecastTimeSeriesResponse = {
+      products: [
+        {
+          product_id: 11,
+          product_name: 'Bed Frame',
+          trend: 'STABLE',
+          confidence_level: '50.00',
+          series: [
+            {
+              period: '2026-01-26',
+              transaction_id: null,
+              transaction_number: null,
+              historical_sales: null,
+              quantity_produced: null,
+              predicted_demand: '3.857142857142857',
+              is_forecast: true,
+            },
+          ],
+        },
+      ],
+    }
+
+    const items = toUiForecastTableItems(fractional)
+
+    // Furniture is produced in whole units - ceil, not round/floor,
+    // so the table never under-plans production against the
+    // forecast.
+    expect(items[0].predictedDemand).toBe(4)
+  })
 })
