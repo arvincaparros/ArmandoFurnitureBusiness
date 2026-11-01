@@ -4,6 +4,7 @@ import type {
   OptimizationHistoryResponse,
   OptimizationResponse,
   ProductionAllocationResponse,
+  ProductionApplicationResponse,
   ProductionFeasibilityResponse,
   ProductSummary,
 } from './productionTypes'
@@ -93,6 +94,21 @@ export async function fetchFeasibility(
   const response = await apiClient.get<ProductionFeasibilityResponse>(
     `/api/production-cycles/${cycleId}/feasibility`,
   )
+
+  return response.data
+}
+
+
+// The append-only production ledger for a cycle. Distinct from
+// fetchProductionAllocations: that returns the CURRENT committed plan
+// (one row per product, replaced on each apply), this returns every
+// apply event that ever happened in the cycle.
+export async function fetchProductionApplications(
+  cycleId: number,
+): Promise<ProductionApplicationResponse[]> {
+  const response = await apiClient.get<
+    ProductionApplicationResponse[]
+  >(`/api/production-cycles/${cycleId}/applications`)
 
   return response.data
 }

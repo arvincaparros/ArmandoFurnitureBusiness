@@ -60,6 +60,10 @@ const noHistoryTimeseries: ForecastTimeSeriesResponse = {
           historical_sales: null,
           quantity_produced: null,
           predicted_demand: '0.0000',
+          point_type: 'FORECAST',
+          application_id: null,
+          application_number: null,
+          production_cycle_id: null,
           is_forecast: true,
         },
       ],
@@ -95,6 +99,10 @@ const withHistoryTimeseries: ForecastTimeSeriesResponse = {
           historical_sales: '8.0000',
           quantity_produced: '8.0000',
           predicted_demand: null,
+          point_type: 'SALE',
+          application_id: null,
+          application_number: null,
+          production_cycle_id: null,
           is_forecast: false,
         },
         {
@@ -104,6 +112,10 @@ const withHistoryTimeseries: ForecastTimeSeriesResponse = {
           historical_sales: null,
           quantity_produced: null,
           predicted_demand: '8.0000',
+          point_type: 'FORECAST',
+          application_id: null,
+          application_number: null,
+          production_cycle_id: null,
           is_forecast: true,
         },
       ],
@@ -162,10 +174,12 @@ describe('DemandForecastingPage no-sales-history state', () => {
       screen.getByRole('link', { name: /transaction history/i }),
     ).toHaveAttribute('href', '/history')
 
-    // Chart does not draw a lone zero dot with no history to plot.
+    // Chart does not draw a lone zero dot with nothing to plot. The
+    // copy widened in Task 21: production alone is plottable now, so
+    // the message names sales OR production.
     await waitFor(() => {
       expect(
-        screen.getByText(/no sales history for this product yet/i),
+        screen.getByText(/no sales or production recorded/i),
       ).toBeInTheDocument()
     })
 

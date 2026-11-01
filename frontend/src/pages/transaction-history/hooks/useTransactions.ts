@@ -28,6 +28,8 @@ import {
   type TransactionFilter,
 } from '../types'
 
+import { fetchInventorySlice } from '../api/inventoryApi'
+
 // Prefix only. The live query key appends the active filter, so each
 // window is cached separately - and because invalidation below
 // targets this prefix, a create/update/delete still refreshes every
@@ -37,6 +39,10 @@ const TRANSACTION_PRODUCTS_QUERY_KEY = [
   'transactions',
   'products',
 ]
+
+// Shared with inventory/hooks/useInventory.ts on purpose: one
+// key, every writer invalidates it.
+const INVENTORY_QUERY_KEY = ['inventory']
 
 // Every transaction mutation (create/update/delete) changes the
 // monthly historical demand Demand Forecasting computes live from
@@ -75,9 +81,23 @@ const useTransactions = (
     queryFn: fetchProductSummaries,
   })
 
+  const inventoryQuery = useQuery({
+    queryKey: INVENTORY_QUERY_KEY,
+    queryFn: fetchInventorySlice,
+  })
+
   const invalidateTransactions = () =>
     queryClient.invalidateQueries({
       queryKey: TRANSACTIONS_QUERY_KEY,
+    })
+
+  // Every transaction mutation changes available stock (the
+  // sold half of the derivation), so the inventory figures this
+  // page shows - and the Inventory page's own ['inventory']
+  // query - go stale on each one.
+  const invalidateInventory = () =>
+    queryClient.invalidateQueries({
+      queryKey: INVENTORY_QUERY_KEY,
     })
 
   const createMutation = useMutation({
@@ -85,6 +105,7 @@ const useTransactions = (
       createTransaction(data),
     onSuccess: (created) => {
       invalidateTransactions()
+      invalidateInventory()
       invalidateForecastQueries(
         queryClient,
         created.product_id,
@@ -102,6 +123,7 @@ const useTransactions = (
     }) => updateTransaction(id, data),
     onSuccess: (updated) => {
       invalidateTransactions()
+      invalidateInventory()
       // product_id comes from the update response, not the request
       // (SalesTransactionUpdateRequest never carries one) - it's
       // always the transaction's real, unchanged product.
@@ -120,6 +142,7 @@ const useTransactions = (
       deleteTransaction(id),
     onSuccess: (_data, variables) => {
       invalidateTransactions()
+      invalidateInventory()
       invalidateForecastQueries(
         queryClient,
         variables.productId,
@@ -157,6 +180,29 @@ const useTransactions = (
       transactionsQuery.isError || productsQuery.isError,
 
     products: productsQuery.data ?? [],
+
+    stockByProductId: Object.fromEntries(
+      (inventoryQuery.data?.products ?? []).map((row) => [
+        row.product_id,
+        Number(row.available_stock),
+      ]),
+    ),
+
+    // cycle_produced, NOT available_stock. The produced figure
+    // must never be available stock: that spans every cycle and
+    // includes opening inventory, so showing it as "newly
+    // produced" would overstate what this cycle produced. The
+    // server computes the authoritative value anyway (a
+    // per-cycle drawdown); this is a display-only preview of it.
+    producedByProductId: Object.fromEntries(
+      (inventoryQuery.data?.products ?? []).map((row) => [
+        row.product_id,
+        Number(row.cycle_produced),
+      ]),
+    ),
+
+    isStockValidationEnabled:
+      inventoryQuery.data?.stock_validation_enabled ?? false,
 
     createTransaction: createMutation.mutateAsync,
     isCreating: createMutation.isPending,

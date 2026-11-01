@@ -24,10 +24,14 @@ export interface SalesTransactionResponse {
 // calculate_transaction_values); there is no field to submit a raw
 // sales amount directly. Decimal inputs are sent as JS numbers, same
 // convention as ProductResourceRequirementCreateRequest.
+// quantity_produced is SERVER-COMPUTED and deliberately absent
+// here: app/services/transaction.py::create_transaction fills it
+// from the production ledger and ignores any value sent. The
+// backend schema still accepts it for older clients, but this
+// client must not send one.
 export interface SalesTransactionCreateRequest {
   product_id: number
   transaction_date: string
-  quantity_produced: number
   quantity: number
   unit_price: number
   production_cost: number
@@ -39,6 +43,9 @@ export interface SalesTransactionCreateRequest {
 // update; the frontend must not attempt to send one.
 export interface SalesTransactionUpdateRequest {
   transaction_date?: string
+  // Kept because the backend still honours it for a deliberate
+  // correction (update_transaction does not re-derive the figure),
+  // but this UI never sends one - the field is read-only on screen.
   quantity_produced?: number
   quantity?: number
   unit_price?: number

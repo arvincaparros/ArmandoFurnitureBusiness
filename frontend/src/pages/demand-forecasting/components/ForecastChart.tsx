@@ -11,6 +11,7 @@ interface ForecastChartProps {
 }
 
 const HISTORICAL_SERIES = 'historicalDemand'
+const PRODUCED_SERIES = 'producedQuantity'
 const FORECAST_SERIES = 'forecastedDemand'
 
 // Shape recharts hands to a series' `dot` renderer.
@@ -77,15 +78,31 @@ const ForecastTooltip = ({ payload }: ChartTooltipProps) => {
         {row.fullDate}
       </Text>
 
-      {row.isForecast ? (
+      {row.pointType === 'FORECAST' && (
         <Text size="xs" c="dimmed">
           Forecasted demand: {row.forecastedDemand ?? 0} units
         </Text>
-      ) : (
+      )}
+
+      {row.pointType === 'PRODUCTION' && (
+        <>
+          <Text size="xs" c="dimmed">
+            Applied production: {row.producedQuantity ?? 0} units
+          </Text>
+          {row.applicationNumber && (
+            <Text size="xs" c="dimmed">
+              {row.applicationNumber}
+            </Text>
+          )}
+        </>
+      )}
+
+      {row.pointType === 'SALE' && (
         <>
           <Text size="xs" c="dimmed">
             Quantity sold: {row.historicalDemand ?? 0} units
           </Text>
+          {/* Pre-rollout rows only - see types.ts. */}
           {row.quantityProduced !== undefined && (
             <Text size="xs" c="dimmed">
               Quantity produced: {row.quantityProduced} units
@@ -148,22 +165,26 @@ const ForecastChart = ({
     )
   }
 
-  // A product with no recorded sales still gets exactly one forecast
-  // point (a flat 0-unit projection) from GET /api/forecast/timeseries,
-  // which otherwise renders as an empty-looking chart. There is no
-  // historical demand to plot until sales transactions exist, so say
-  // that explicitly rather than drawing a lone zero dot.
-  const hasHistoricalPoints = data.some(
-    (point) => point.historicalDemand !== undefined,
+  // A product with nothing recorded still gets exactly one forecast
+  // point (a flat 0-unit projection) from
+  // GET /api/forecast/timeseries, which renders as an empty-looking
+  // chart. Production alone IS plottable now - the ledger reports it
+  // whether or not anything has been sold - so only a product with
+  // neither sales nor production gets the explanatory message.
+  const hasPlottablePoints = data.some(
+    (point) =>
+      point.historicalDemand !== undefined ||
+      point.producedQuantity !== undefined,
   )
 
-  if (!hasHistoricalPoints) {
+  if (!hasPlottablePoints) {
     return (
       <Center h={280}>
         <Text c="dimmed" ta="center">
-          No sales history for this product yet. Record sales
-          transactions and run the demand forecast to see historical
-          and forecasted demand.
+          No sales or production recorded for this product yet.
+          Record sales transactions or apply a production plan, then
+          run the demand forecast to see historical and forecasted
+          demand.
         </Text>
       </Center>
     )
@@ -213,6 +234,11 @@ const ForecastChart = ({
         {
           name: HISTORICAL_SERIES,
           label: 'Historical Demand (Transaction)',
+        },
+        {
+          name: PRODUCED_SERIES,
+          label: 'Applied Production',
+          color: 'teal.6',
         },
         {
           name: FORECAST_SERIES,

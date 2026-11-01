@@ -9,6 +9,9 @@ from app.schemas.utilization import (
 )
 from app.services.auth import get_current_user
 from app.services.production import get_production_cycle
+from app.services.production_application import (
+    get_cycle_consumed_by_resource,
+)
 from app.services.resource_utilization import (
     calculate_resource_utilization,
     get_latest_production_cycle_id,
@@ -82,7 +85,19 @@ def resource_utilization(
             detail="No production cycles found",
         )
 
-    return calculate_resource_utilization(db, cycle_id)
+    # A cycle that has had production applications must report the
+    # cumulative consumption those applications recorded, not what
+    # the latest ProductionAllocation alone implies - otherwise the
+    # report shows capacity the cycle has already spent. A cycle with
+    # no applications (every pre-ledger cycle) gets an empty dict,
+    # which falls back to the original allocation-derived path.
+    consumed = get_cycle_consumed_by_resource(db, cycle_id)
+
+    return calculate_resource_utilization(
+        db,
+        cycle_id,
+        consumption_override=consumed or None,
+    )
 
 
 @router.get(
@@ -105,4 +120,16 @@ def resource_utilization_by_cycle(
             detail="Production cycle not found",
         )
 
-    return calculate_resource_utilization(db, cycle_id)
+    # A cycle that has had production applications must report the
+    # cumulative consumption those applications recorded, not what
+    # the latest ProductionAllocation alone implies - otherwise the
+    # report shows capacity the cycle has already spent. A cycle with
+    # no applications (every pre-ledger cycle) gets an empty dict,
+    # which falls back to the original allocation-derived path.
+    consumed = get_cycle_consumed_by_resource(db, cycle_id)
+
+    return calculate_resource_utilization(
+        db,
+        cycle_id,
+        consumption_override=consumed or None,
+    )

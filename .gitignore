@@ -9,6 +9,7 @@ backend/__pycache__/
 
 # Environment
 backend/.env
+backend/.env.test
 frontend/.env
 .env
 
@@ -18,3 +19,7 @@ frontend/.env
 # OS
 .DS_Store
 Thumbs.db
+
+# Playwright
+frontend/test-results/
+frontend/playwright-report/

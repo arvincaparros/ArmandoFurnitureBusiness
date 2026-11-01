@@ -8,7 +8,24 @@ from pydantic import BaseModel, Field
 class SalesTransactionCreate(BaseModel):
     product_id: int
     transaction_date: datetime
-    quantity_produced: Decimal = Field(gt=0)
+
+    # SERVER-COMPUTED - app/services/transaction.py::create_transaction
+    # overwrites whatever arrives here with
+    # inventory.py::get_unattributed_produced for this product in the
+    # transaction's own cycle. Accepted-and-ignored rather than
+    # forbidden so existing clients and scripts that still send it keep
+    # working; optional so new clients can simply omit it.
+    #
+    # gt=0 was deliberately dropped: under the drawdown rule the
+    # SECOND sale in a cycle legitimately records 0 newly-produced
+    # units, which is what keeps the per-cycle produced sum equal to
+    # actual production instead of multiplying with the number of
+    # transactions recorded.
+    quantity_produced: Decimal | None = Field(
+        default=None,
+        ge=0,
+    )
+
     quantity: Decimal = Field(gt=0)
     unit_price: Decimal = Field(gt=0)
     # Per-unit production cost - app/services/transaction.py::
@@ -50,6 +67,11 @@ class SalesTransactionResponse(BaseModel):
     id: int
     transaction_number: str
     product_id: int
+
+    # Null only for rows created before this column existed -
+    # see app/database/models.py::SalesTransaction
+    # .production_cycle_id for why those are never backfilled.
+    production_cycle_id: int | None
     transaction_date: datetime
     quantity_produced: Decimal
     quantity: Decimal

@@ -51,30 +51,35 @@ export const forecastChartData: ForecastChartData[] = [
   {
     date: 'Jan 15',
     fullDate: 'Jan 15, 2026',
+    pointType: 'SALE' as const,
     isForecast: false,
     historicalDemand: 55,
   },
   {
     date: 'Feb 12',
     fullDate: 'Feb 12, 2026',
+    pointType: 'SALE' as const,
     isForecast: false,
     historicalDemand: 100,
   },
   {
     date: 'Mar 20',
     fullDate: 'Mar 20, 2026',
+    pointType: 'SALE' as const,
     isForecast: false,
     historicalDemand: 160,
   },
   {
     date: 'Apr 08',
     fullDate: 'Apr 08, 2026',
+    pointType: 'SALE' as const,
     isForecast: false,
     historicalDemand: 210,
   },
   {
     date: 'May 22',
     fullDate: 'May 22, 2026',
+    pointType: 'SALE' as const,
     isForecast: false,
     historicalDemand: 220,
     forecastedDemand: 220,
@@ -82,6 +87,7 @@ export const forecastChartData: ForecastChartData[] = [
   {
     date: 'Jun 01',
     fullDate: 'Jun 01, 2026',
+    pointType: 'FORECAST' as const,
     isForecast: true,
     forecastedDemand: 255,
   },

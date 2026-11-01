@@ -181,9 +181,23 @@ export function toUiForecastChartData(
   return series.map((point) => ({
     date: formatAxisLabel(point.period),
     fullDate: formatFullDate(point.period),
+    pointType: point.point_type,
     isForecast: point.is_forecast,
     transactionNumber: point.transaction_number ?? undefined,
-    quantityProduced: parseNullableDecimal(point.quantity_produced),
+    applicationNumber: point.application_number ?? undefined,
+    // Plotted production comes from the ledger's PRODUCTION
+    // points only. A legacy SALE row's produced figure stays
+    // tooltip-only, exactly as it rendered before the ledger
+    // existed - promoting it into the line would retroactively
+    // redraw settled history.
+    producedQuantity:
+      point.point_type === 'PRODUCTION'
+        ? parseNullableDecimal(point.quantity_produced)
+        : undefined,
+    quantityProduced:
+      point.point_type === 'SALE'
+        ? parseNullableDecimal(point.quantity_produced)
+        : undefined,
     historicalDemand: point.is_forecast
       ? undefined
       : parseNullableDecimal(point.historical_sales),

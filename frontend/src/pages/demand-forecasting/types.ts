@@ -1,3 +1,5 @@
+import type { ForecastPointType } from './api/forecastTypes'
+
 // Matches the real backend domain (app/services/forecasting.py::
 // determine_forecast_status) rather than an invented success/pending/
 // failed enum - see the Demand Forecasting Phase D report for why.
@@ -30,9 +32,19 @@ export interface ForecastChartData {
   // Records which side of the historical/forecast boundary this row
   // belongs to, so the tooltip never presents a forecast as a sale.
   isForecast: boolean
-  // Tooltip-only context for a historical row.
+  // Which kind of event this row is - see forecastTypes.ts. The
+  // tooltip branches on this rather than on which value is
+  // defined.
+  pointType: ForecastPointType
+  // Tooltip-only context.
   transactionNumber?: string
+  applicationNumber?: string
+  // Pre-rollout produced figure carried by a SALE row. Display
+  // only, never plotted - that is how it has always rendered.
   quantityProduced?: number
+  // The PLOTTED production value, set only on a PRODUCTION row.
+  // Its source is the production application ledger.
+  producedQuantity?: number
   // Exactly one of these is set per row. The chart additionally reuses
   // the last historical row's value as the forecast line's start, so
   // the dashed segment connects to the real history.

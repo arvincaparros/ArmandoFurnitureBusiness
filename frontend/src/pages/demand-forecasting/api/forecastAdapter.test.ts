@@ -43,6 +43,10 @@ const FORECAST_POINT: ForecastTimeSeriesPoint = {
   quantity_produced: null,
   // Monthly sold totals [8, 18, 9] -> avg_delta 0.5 -> 9.5.
   predicted_demand: '9.5000',
+  point_type: 'FORECAST',
+  application_id: null,
+  application_number: null,
+  production_cycle_id: null,
   is_forecast: true,
 }
 
@@ -56,6 +60,10 @@ function toSeriesPoint(
     historical_sales: sold,
     quantity_produced: produced,
     predicted_demand: null,
+    point_type: 'SALE',
+    application_id: null,
+    application_number: null,
+    production_cycle_id: null,
     is_forecast: false,
   }
 }
@@ -255,5 +263,83 @@ describe('toUiForecastChartData', () => {
 
   it('returns no points when the product has no series yet', () => {
     expect(toUiForecastChartData(undefined)).toEqual([])
+  })
+})
+
+describe('toUiForecastChartData production points', () => {
+  it('plots produced units from PRODUCTION points only', () => {
+    const rows = toUiForecastChartData({
+      products: [
+        {
+          product_id: 1,
+          product_name: 'Door',
+          series: [
+            {
+              period: '2026-10-26',
+              point_type: 'PRODUCTION',
+              transaction_id: null,
+              transaction_number: null,
+              application_id: 7,
+              application_number: 'PA-0007',
+              production_cycle_id: 3,
+              historical_sales: null,
+              quantity_produced: '6.0000',
+              predicted_demand: null,
+              is_forecast: false,
+            },
+            {
+              period: '2026-10-28',
+              point_type: 'SALE',
+              transaction_id: 9,
+              transaction_number: 'TRX-000009',
+              application_id: null,
+              application_number: null,
+              production_cycle_id: null,
+              historical_sales: '2.0000',
+              quantity_produced: null,
+              predicted_demand: null,
+              is_forecast: false,
+            },
+          ],
+        },
+      ],
+    })
+
+    expect(rows[0].pointType).toBe('PRODUCTION')
+    expect(rows[0].producedQuantity).toBe(6)
+    expect(rows[0].applicationNumber).toBe('PA-0007')
+    expect(rows[0].historicalDemand).toBeUndefined()
+
+    expect(rows[1].producedQuantity).toBeUndefined()
+    expect(rows[1].historicalDemand).toBe(2)
+  })
+
+  it('keeps a legacy sale point produced figure in the tooltip field', () => {
+    const rows = toUiForecastChartData({
+      products: [
+        {
+          product_id: 1,
+          product_name: 'Door',
+          series: [
+            {
+              period: '2026-08-23',
+              point_type: 'SALE',
+              transaction_id: 1,
+              transaction_number: 'TRX-000001',
+              application_id: null,
+              application_number: null,
+              production_cycle_id: null,
+              historical_sales: '1.0000',
+              quantity_produced: '5.0000',
+              predicted_demand: null,
+              is_forecast: false,
+            },
+          ],
+        },
+      ],
+    })
+
+    expect(rows[0].quantityProduced).toBe(5)
+    expect(rows[0].producedQuantity).toBeUndefined()
   })
 })

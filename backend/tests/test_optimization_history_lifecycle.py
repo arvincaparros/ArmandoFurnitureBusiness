@@ -35,6 +35,11 @@ from app.database.models import (
 )
 from app.services.optimization_history import get_latest_optimal_run
 
+# Plain module name, not `tests.conftest`: pytest's default prepend
+# import mode puts backend/tests on sys.path, so this is the import
+# form that does not also depend on how the runner was invoked.
+from conftest import purge_ledger
+
 
 # (started_at, duration_ms, total_profit, total_cost, products_produced)
 # - the authoritative spreadsheet figures, so the eight records this
@@ -145,7 +150,16 @@ def _delete_all_runs(db, cycle_id):
     cycle's runs, then every run itself. Allocations and utilization
     snapshots are deliberately not touched - that is exactly what the
     target transaction promises to preserve.
+
+    The ledger purge comes FIRST for the same reason as in
+    _cleanup_cycle: once apply_optimization appends a
+    ProductionApplication (Task 6), it references the run via
+    optimization_run_id, which is ON DELETE RESTRICT - so deleting the
+    cycle's runs is refused until those applications are gone. Scoped
+    to this cycle, so other cycles' applications are untouched.
     """
+
+    purge_ledger(db, cycle_ids=[cycle_id])
 
     db.expire_all()
 
@@ -263,7 +277,17 @@ def _cleanup_cycle(db, cycle_id):
     """
     Remove everything these tests created for their own fixture cycle,
     in FK order, so the shared database is left exactly as found.
+
+    The ledger purge is FIRST and is not optional: once
+    apply_optimization appends a ProductionApplication (Task 6), the
+    OptimizationRun delete below is blocked by
+    production_applications.optimization_run_id, which is ON DELETE
+    RESTRICT. Without this, these tests fail with IntegrityError the
+    moment apply starts writing the ledger. Scoped to this cycle, so
+    applications belonging to any other cycle are untouched.
     """
+
+    purge_ledger(db, cycle_ids=[cycle_id])
 
     db.expire_all()
 

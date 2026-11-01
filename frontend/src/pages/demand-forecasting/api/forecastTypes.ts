@@ -37,13 +37,31 @@ export interface ForecastResponse {
 // transaction_number identify the row, so two sales on the same date
 // remain two points. The forecast point has no transaction, and its
 // "period" is the first day of the forecasted month.
-// quantity_produced is carried for display only - the plotted value
-// is historical_sales (quantity sold), the measure the forecast is
-// built from.
+// point_type is the authoritative kind discriminator (see
+// backend/app/schemas/forecast.py):
+//   SALE       - one sales transaction; historical_sales is the
+//                quantity SOLD, the measure the forecast is built
+//                from. quantity_produced is set only on PRE-ROLLOUT
+//                rows, is display-only, and is NOT plotted.
+//   PRODUCTION - one applied production ledger entry;
+//                quantity_produced is the quantity PRODUCED and is
+//                the plotted production value. No transaction.
+//   FORECAST   - the single trailing projection.
+// is_forecast stays available and is True exactly when point_type
+// is 'FORECAST'.
+export type ForecastPointType =
+  | 'SALE'
+  | 'PRODUCTION'
+  | 'FORECAST'
+
 export interface ForecastTimeSeriesPoint {
   period: string
+  point_type: ForecastPointType
   transaction_id: number | null
   transaction_number: string | null
+  application_id: number | null
+  application_number: string | null
+  production_cycle_id: number | null
   historical_sales: string | null
   quantity_produced: string | null
   predicted_demand: string | null

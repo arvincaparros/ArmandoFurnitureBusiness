@@ -328,6 +328,9 @@ def find_resource_capacity_shortages(
     cycle_id: int,
     quantities_by_product_id: dict[int, Decimal],
     requirement_override: tuple[int, int, Decimal] | None = None,
+    already_consumed_by_resource_id: (
+        dict[int, Decimal] | None
+    ) = None,
 ) -> list[dict]:
     """
     Checks a PROPOSED set of product quantities against this cycle's
@@ -338,6 +341,21 @@ def find_resource_capacity_shortages(
     there's no CycleResource row for it at all this cycle. Returns one
     shortage dict per over-capacity resource - an empty list means the
     proposal fits entirely within current capacity.
+
+    already_consumed_by_resource_id makes the check INCREMENTAL: the
+    quantities passed in are validated against what is LEFT of each
+    resource after earlier production applications in this same cycle
+    have taken their share (see production_application.py::
+    get_cycle_consumed_by_resource). Omitted/None reproduces the
+    original non-incremental behaviour exactly, which is what every
+    caller other than apply_optimization still wants - a manual
+    allocation edit is a revision of the current plan, not an
+    additional draw on materials.
+
+    The offset is floored at zero: a resource whose capacity was
+    reduced below what has already been consumed reports zero
+    remaining, never a negative availability, so
+    format_capacity_shortage_message's arithmetic stays readable.
     """
 
     consumption = calculate_resource_requirements_for_quantities(
@@ -355,6 +373,8 @@ def find_resource_capacity_shortages(
         ).all()
     }
 
+    consumed_by_id = already_consumed_by_resource_id or {}
+
     shortages = []
 
     for item in consumption:
@@ -365,7 +385,14 @@ def find_resource_capacity_shortages(
         elif not item["resource_is_active"]:
             available_quantity = Decimal("0")
         else:
-            available_quantity = cycle_resource.available_quantity
+            available_quantity = max(
+                Decimal("0"),
+                cycle_resource.available_quantity
+                - consumed_by_id.get(
+                    item["resource_id"],
+                    Decimal("0"),
+                ),
+            )
 
         required_quantity = item["required_quantity"]
 

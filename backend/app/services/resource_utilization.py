@@ -63,11 +63,24 @@ def classify_utilization_status(utilization_rate: Decimal) -> str:
 def calculate_resource_utilization(
     db: Session,
     cycle_id: int,
+    consumption_override: dict[int, Decimal] | None = None,
 ) -> dict:
     """
     Aggregate resource utilization for a production cycle from
     existing cycle resource capacity and existing allocation-based
     consumption calculations.
+
+    consumption_override replaces the allocation-derived
+    consumption with an explicit resource_id -> consumed mapping.
+    Needed because ProductionAllocation holds only the CURRENT plan
+    for a cycle: once a cycle has had more than one production
+    application, consumption derived from the allocation
+    understates what the cycle has actually spent, and the report
+    would show capacity that is already gone. Callers that have the
+    cumulative ledger figure (see production_application.py::
+    get_cycle_consumed_by_resource) pass it here. None keeps the
+    original allocation-derived behaviour, which is still correct
+    for a cycle with at most one application.
     """
 
     cycle_resources = get_cycle_resources(db, cycle_id)
@@ -88,10 +101,16 @@ def calculate_resource_utilization(
             "bottlenecks": [],
         }
 
-    consumption_by_resource = {
-        item["resource_id"]: item["required_quantity"]
-        for item in calculate_resource_consumption(db, cycle_id)
-    }
+    if consumption_override is not None:
+        consumption_by_resource = consumption_override
+    else:
+        consumption_by_resource = {
+            item["resource_id"]: item["required_quantity"]
+            for item in calculate_resource_consumption(
+                db,
+                cycle_id,
+            )
+        }
 
     resource_ids = [
         cycle_resource.resource_id

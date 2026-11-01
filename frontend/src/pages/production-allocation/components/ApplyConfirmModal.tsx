@@ -14,17 +14,34 @@ import { getApiErrorMessage } from '../../../api/apiError'
 
 interface ApplyConfirmModalProps {
   opened: boolean
+
+  // Units this plan will ADD, and what the cycle has already had
+  // applied. Production is append-only now, so the copy has to say
+  // "add" rather than the old "replace".
+  plannedTotal: number
+  cycleProducedTotal: number
+
   onClose: () => void
   onConfirm: () => Promise<unknown>
 }
 
 const ApplyConfirmModal = ({
   opened,
+  plannedTotal,
+  cycleProducedTotal,
   onClose,
   onConfirm,
 }: ApplyConfirmModalProps) => {
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  const additiveMessage =
+    `This will add ${plannedTotal} units to this cycle`
+    + (cycleProducedTotal > 0
+      ? `, on top of the ${cycleProducedTotal} units already applied`
+      : '')
+    + ', and consume the matching resource capacity.'
+    + ' Previously applied production is never overwritten.'
 
   const handleConfirm = async () => {
     setIsSubmitting(true)
@@ -58,13 +75,12 @@ const ApplyConfirmModal = ({
       </Text>
 
       <Alert
-        color="orange"
+        color="blue"
         variant="light"
         icon={<AlertTriangle size={18} />}
         mb="md"
       >
-        This will replace the current committed allocation for
-        this production cycle with the latest optimal plan.
+        {additiveMessage}
       </Alert>
 
       {error && (

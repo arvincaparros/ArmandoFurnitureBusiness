@@ -63,6 +63,10 @@ const salePoint = (
   historical_sales: sold,
   quantity_produced: produced,
   predicted_demand: null,
+  point_type: 'SALE',
+  application_id: null,
+  application_number: null,
+  production_cycle_id: null,
   is_forecast: false,
 })
 
@@ -76,6 +80,10 @@ const forecastPoint = (
   historical_sales: null,
   quantity_produced: null,
   predicted_demand: predicted,
+  point_type: 'FORECAST',
+  application_id: null,
+  application_number: null,
+  production_cycle_id: null,
   is_forecast: true,
 })
 
@@ -227,8 +235,11 @@ describe('useForecast product selection', () => {
       {
         date: 'May 04',
         fullDate: 'May 04, 2026',
+        pointType: 'SALE',
         isForecast: false,
         transactionNumber: 'TRX-CH-1',
+        applicationNumber: undefined,
+        producedQuantity: undefined,
         quantityProduced: 9,
         historicalDemand: 9,
         forecastedDemand: undefined,
@@ -236,8 +247,11 @@ describe('useForecast product selection', () => {
       {
         date: 'Jun 01',
         fullDate: 'Jun 01, 2026',
+        pointType: 'FORECAST',
         isForecast: true,
         transactionNumber: undefined,
+        applicationNumber: undefined,
+        producedQuantity: undefined,
         quantityProduced: undefined,
         historicalDemand: undefined,
         forecastedDemand: 9,

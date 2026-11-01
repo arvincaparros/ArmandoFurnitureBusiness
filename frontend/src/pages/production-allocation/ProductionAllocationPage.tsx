@@ -14,7 +14,7 @@ import {
   Tooltip,
 } from '@mantine/core'
 
-import { AlertCircle, CheckCircle2 } from 'lucide-react'
+import { AlertCircle, CheckCircle2, Info } from 'lucide-react'
 
 import GeneratePlanButton from './components/GeneratePlanButton'
 import ProductionPlanTable from './components/ProductionPlanTable'
@@ -50,6 +50,9 @@ const ProductionAllocationPage = () => {
     needsReoptimization,
     isAllocationInfeasible,
     bottlenecks,
+
+    isCurrentPlanApplied,
+    cycleProducedTotal,
   } = useProductionAllocation()
 
   const [applyModalOpened, setApplyModalOpened] = useState(false)
@@ -191,6 +194,22 @@ const ProductionAllocationPage = () => {
         </Grid.Col>
       </Grid>
 
+      {isCurrentPlanApplied && (
+        <Alert
+          color="gray"
+          variant="light"
+          icon={<Info size={18} />}
+          mt="md"
+        >
+          This production plan has already been applied
+          {cycleProducedTotal > 0
+            ? ` (${cycleProducedTotal} units produced in this cycle so far)`
+            : ''}
+          . Generate a new plan to produce more — re-applying the
+          same plan would double-count its units.
+        </Alert>
+      )}
+
       {needsReoptimization && currentAllocation.length > 0 && (
         <Alert
           color={isAllocationInfeasible ? 'red' : 'orange'}
@@ -252,6 +271,11 @@ const ProductionAllocationPage = () => {
 
       <ApplyConfirmModal
         opened={applyModalOpened}
+        plannedTotal={plans.reduce(
+          (total, plan) => total + plan.quantity,
+          0,
+        )}
+        cycleProducedTotal={cycleProducedTotal}
         onClose={() => setApplyModalOpened(false)}
         onConfirm={handleConfirmApply}
       />

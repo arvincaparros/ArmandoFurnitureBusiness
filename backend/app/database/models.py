@@ -616,6 +616,27 @@ class SalesTransaction(Base):
         index=True,
     )
 
+    # Which 7-day production cycle this sale belongs to, resolved
+    # from transaction_date at creation time (see
+    # services/transaction.py::resolve_production_cycle_for_date).
+    # Drives the CYCLE-SCOPED sold total; all-time sold - and
+    # therefore available stock - never filters on it, so a sale
+    # always reduces stock regardless of which cycle it landed in.
+    #
+    # Nullable, and deliberately never backfilled: rows created
+    # before this column existed have no reliable cycle, and
+    # inventing one would inject fabricated numbers into a real
+    # cycle's reported sales. ON DELETE SET NULL for the same
+    # reason - deleting a cycle must not delete sales history.
+    production_cycle_id: Mapped[int | None] = mapped_column(
+        ForeignKey(
+            "production_cycles.id",
+            ondelete="SET NULL",
+        ),
+        nullable=True,
+        index=True,
+    )
+
     transaction_date: Mapped[datetime] = mapped_column(
         DateTime,
         nullable=False,
@@ -666,6 +687,10 @@ class SalesTransaction(Base):
     )
 
     product: Mapped["Product"] = relationship()
+
+    production_cycle: Mapped["ProductionCycle | None"] = (
+        relationship()
+    )
 
 class ForecastRun(Base):
     __tablename__ = "forecast_runs"
@@ -995,6 +1020,411 @@ class ResourceUtilizationHistoryItem(Base):
 
     utilization_run: Mapped["ResourceUtilizationRun"] = relationship(
         back_populates="items",
+    )
+
+    resource: Mapped["Resource | None"] = relationship()
+
+
+class OpeningInventorySet(Base):
+    """
+    One auditable declaration of finished-goods stock on hand at the
+    moment this system started tracking inventory. Exists because
+    available stock is DERIVED (opening + applied production - sales)
+    and the business already had physical stock when the ledger
+    started - assuming zero would understate every product's stock
+    forever.
+
+    Lifecycle: DRAFT (editable) -> REVIEWED (frozen, authoritative) ->
+    SUPERSEDED (a later set was reviewed in its place). A REVIEWED
+    set's items are never mutated: a correction is a NEW set, so the
+    original declared balance stays readable afterwards. At most one
+    REVIEWED set exists at a time, enforced by the partial unique
+    index below - every stock figure in the system depends on that.
+
+    Stock-based sales validation is OFF until a REVIEWED set exists
+    (see services/opening_inventory.py::is_stock_validation_enabled);
+    sales recorded before then are accepted unvalidated rather than
+    validated against a balance nobody has confirmed.
+    """
+
+    __tablename__ = "opening_inventory_sets"
+
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+        index=True,
+    )
+
+    # Same sequential friendly-id convention as
+    # SalesTransaction.transaction_number and
+    # ResourceUtilizationRun.utilization_number - the service layer
+    # generates "OI-0001"-style values; this default is only a
+    # fallback for a row created outside that helper.
+    set_number: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        unique=True,
+        index=True,
+        default=lambda: f"OI-{uuid4().hex[:8].upper()}",
+    )
+
+    # "DRAFT" | "REVIEWED" | "SUPERSEDED" - see the constants in
+    # app/services/opening_inventory.py, which are the only values
+    # ever written.
+    status: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        default="DRAFT",
+        index=True,
+    )
+
+    # The business date these balances were counted as of. Recorded
+    # for the audit trail only - stock derivation never filters by it,
+    # because the opening balance is by definition the starting point
+    # for ALL ledger activity regardless of date.
+    effective_date: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+    )
+
+    notes: Mapped[str | None] = mapped_column(
+        String(500),
+        nullable=True,
+    )
+
+    created_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+    )
+
+    # SET NULL rather than CASCADE: deleting a user must never delete
+    # the opening balance declaration that every stock figure depends
+    # on. The audit trail degrades to "unknown user" instead.
+    created_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    reviewed_at: Mapped[datetime | None] = mapped_column(
+        DateTime,
+        nullable=True,
+    )
+
+    reviewed_by_user_id: Mapped[int | None] = mapped_column(
+        ForeignKey("users.id", ondelete="SET NULL"),
+        nullable=True,
+    )
+
+    items: Mapped[
+        list["OpeningInventoryItem"]
+    ] = relationship(
+        back_populates="inventory_set",
+        cascade="all, delete-orphan",
+    )
+
+    created_by: Mapped["User | None"] = relationship(
+        foreign_keys=[created_by_user_id],
+    )
+
+    reviewed_by: Mapped["User | None"] = relationship(
+        foreign_keys=[reviewed_by_user_id],
+    )
+
+
+class OpeningInventoryItem(Base):
+    """
+    One product's declared opening balance within a set.
+
+    An ABSENT row is NOT an implied zero. Review refuses a set that
+    omits any active product which existed on the set's
+    effective_date (see
+    services/opening_inventory.py::find_missing_opening_declarations),
+    so every applicable product carries an explicit quantity here -
+    including an explicit zero. The only products legitimately absent
+    are those created after the effective date, which had no
+    pre-existing stock by construction.
+
+    There is still no backfill that invents rows: the declaration is
+    made by a human at review time, not synthesised.
+    """
+
+    __tablename__ = "opening_inventory_items"
+
+    __table_args__ = (
+        UniqueConstraint(
+            "opening_inventory_set_id",
+            "product_id",
+            name="uq_opening_inventory_item",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+        index=True,
+    )
+
+    opening_inventory_set_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "opening_inventory_sets.id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+        index=True,
+    )
+
+    # RESTRICT, not CASCADE: a reviewed opening balance is history
+    # that must outlive the product it was declared against. A
+    # product delete path does not exist today, but if one is ever
+    # added it must be blocked here rather than silently erasing a
+    # reviewed declared balance - the one figure every derived stock
+    # calculation in the system is anchored to.
+    product_id: Mapped[int] = mapped_column(
+        ForeignKey("products.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+
+    quantity: Mapped[Decimal] = mapped_column(
+        Numeric(12, 4),
+        nullable=False,
+    )
+
+    notes: Mapped[str | None] = mapped_column(
+        String(500),
+        nullable=True,
+    )
+
+    inventory_set: Mapped["OpeningInventorySet"] = relationship(
+        back_populates="items",
+    )
+
+    product: Mapped["Product"] = relationship()
+
+
+class ProductionApplication(Base):
+    """
+    One "Apply to Production" event - APPEND-ONLY, and the
+    authoritative source for all new production history.
+
+    Deliberately NOT ProductionAllocation. That table is the CURRENT
+    COMMITTED PLAN for a cycle: one row per product
+    (uq_production_allocation), fully deleted and reinserted by
+    apply_optimization on every apply, and read by resource
+    feasibility/consumption/financials. Those semantics are correct
+    for a plan and useless as a history - a second apply in the same
+    cycle overwrites the first, so "10 units on Day 1 plus 10 more on
+    Day 5" cannot be represented there at all. This table records
+    every apply event instead, and nothing ever deletes or mutates a
+    row.
+
+    optimization_run_id is UNIQUE: applying the same optimization run
+    twice would double-count its units into available stock. The
+    service layer checks for it first and returns a clean 400 (see
+    services/production_application.py::has_application_for_run), but
+    the constraint is what makes it impossible under concurrency
+    rather than merely unlikely.
+    """
+
+    __tablename__ = "production_applications"
+
+    __table_args__ = (
+        UniqueConstraint(
+            "optimization_run_id",
+            name="uq_production_application_run",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+        index=True,
+    )
+
+    application_number: Mapped[str] = mapped_column(
+        String(20),
+        nullable=False,
+        unique=True,
+        index=True,
+        default=lambda: f"PA-{uuid4().hex[:8].upper()}",
+    )
+
+    # RESTRICT, not CASCADE: this row (and the items it owns) is the
+    # append-only history this class's docstring promises. CASCADE
+    # would let `DELETE /api/production-cycles/{id}` silently destroy
+    # every application in that cycle - exactly the "nothing ever
+    # deletes or mutates a row" guarantee above would then be false.
+    # delete_production_cycle checks for referencing applications and
+    # raises a clean 409 before any write; RESTRICT is what makes that
+    # the only way to delete a cycle, not merely the usual way.
+    production_cycle_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "production_cycles.id",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+        index=True,
+    )
+
+    # RESTRICT for the same reason: no DELETE endpoint for
+    # OptimizationRun exists today, but if one is ever added it must
+    # be blocked by this FK rather than cascading into the ledger -
+    # the application history must outlive the run that produced it.
+    optimization_run_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "optimization_runs.id",
+            ondelete="RESTRICT",
+        ),
+        nullable=False,
+        index=True,
+    )
+
+    applied_at: Mapped[datetime] = mapped_column(
+        DateTime,
+        nullable=False,
+        default=datetime.utcnow,
+    )
+
+    production_cycle: Mapped["ProductionCycle"] = relationship()
+
+    optimization_run: Mapped["OptimizationRun"] = relationship()
+
+    product_items: Mapped[
+        list["ProductionApplicationItem"]
+    ] = relationship(
+        back_populates="application",
+        cascade="all, delete-orphan",
+    )
+
+    resource_items: Mapped[
+        list["ProductionApplicationResourceItem"]
+    ] = relationship(
+        back_populates="application",
+        cascade="all, delete-orphan",
+    )
+
+
+class ProductionApplicationItem(Base):
+    """
+    How many units of one product a single apply event produced. The
+    sum of these across ALL cycles is the production half of available
+    stock (see services/inventory.py::get_available_stock); the sum
+    within one cycle is that cycle's produced total.
+    """
+
+    __tablename__ = "production_application_items"
+
+    __table_args__ = (
+        UniqueConstraint(
+            "production_application_id",
+            "product_id",
+            name="uq_production_application_item",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+        index=True,
+    )
+
+    production_application_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "production_applications.id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+        index=True,
+    )
+
+    # RESTRICT, not CASCADE: this is the production half of available
+    # stock (see services/inventory.py::get_available_stock) and must
+    # outlive the product record it was produced against, the same
+    # reasoning as OpeningInventoryItem.product_id above.
+    product_id: Mapped[int] = mapped_column(
+        ForeignKey("products.id", ondelete="RESTRICT"),
+        nullable=False,
+        index=True,
+    )
+
+    quantity_produced: Mapped[Decimal] = mapped_column(
+        Numeric(12, 4),
+        nullable=False,
+    )
+
+    application: Mapped["ProductionApplication"] = relationship(
+        back_populates="product_items",
+    )
+
+    product: Mapped["Product"] = relationship()
+
+
+class ProductionApplicationResourceItem(Base):
+    """
+    How much of one resource a single apply event consumed. This is
+    what makes consumption INCREMENTAL: the next application in the
+    same cycle gets
+    CycleResource.available_quantity minus the sum of these rows
+    (see services/production_application.py::
+    get_cycle_consumed_by_resource), so it can never re-spend capacity
+    an earlier application already used.
+
+    resource_name/unit are denormalised at write time, and resource_id
+    is ON DELETE SET NULL - same reasoning as
+    ResourceUtilizationHistoryItem: what an application consumed is a
+    historical fact that must stay fully displayable even if the
+    resource is later renamed or removed.
+    """
+
+    __tablename__ = "production_application_resource_items"
+
+    __table_args__ = (
+        UniqueConstraint(
+            "production_application_id",
+            "resource_id",
+            name="uq_production_application_resource_item",
+        ),
+    )
+
+    id: Mapped[int] = mapped_column(
+        Integer,
+        primary_key=True,
+        index=True,
+    )
+
+    production_application_id: Mapped[int] = mapped_column(
+        ForeignKey(
+            "production_applications.id",
+            ondelete="CASCADE",
+        ),
+        nullable=False,
+        index=True,
+    )
+
+    resource_id: Mapped[int | None] = mapped_column(
+        ForeignKey("resources.id", ondelete="SET NULL"),
+        nullable=True,
+        index=True,
+    )
+
+    resource_name: Mapped[str] = mapped_column(
+        String(100),
+        nullable=False,
+    )
+
+    unit: Mapped[str] = mapped_column(
+        String(30),
+        nullable=False,
+    )
+
+    consumed_quantity: Mapped[Decimal] = mapped_column(
+        Numeric(12, 4),
+        nullable=False,
+    )
+
+    application: Mapped["ProductionApplication"] = relationship(
+        back_populates="resource_items",
     )
 
     resource: Mapped["Resource | None"] = relationship()

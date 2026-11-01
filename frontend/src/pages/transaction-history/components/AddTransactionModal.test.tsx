@@ -1,4 +1,4 @@
-import { render, screen } from '@testing-library/react'
+import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MantineProvider } from '@mantine/core'
 import { describe, expect, it, vi } from 'vitest'
@@ -6,7 +6,11 @@ import { describe, expect, it, vi } from 'vitest'
 import AddTransactionModal from './AddTransactionModal'
 
 import type { Transaction } from '../types'
-import type { ProductSummary } from '../api/transactionTypes'
+import type {
+  ProductSummary,
+  SalesTransactionCreateRequest,
+  SalesTransactionUpdateRequest,
+} from '../api/transactionTypes'
 
 const products: ProductSummary[] = [
   {
@@ -32,8 +36,29 @@ const existingTransaction: Transaction = {
   profitEarned: 1100,
 }
 
-const renderModal = (transaction: Transaction | null = null) => {
-  const onSave = vi.fn().mockResolvedValue(undefined)
+interface RenderOptions {
+  transaction?: Transaction | null
+  onSave?: (
+    data:
+      | SalesTransactionCreateRequest
+      | SalesTransactionUpdateRequest,
+  ) => Promise<void>
+  stockByProductId?: Record<number, number>
+  producedByProductId?: Record<number, number>
+  isStockValidationEnabled?: boolean
+}
+
+// Takes an options object since Task 15: the modal now requires the
+// three inventory props, and the new cases vary them. The default is
+// validation OFF with empty maps, which is exactly how the four
+// pre-Task-15 tests behaved, so none of their expectations change.
+const renderModal = ({
+  transaction = null,
+  onSave = vi.fn().mockResolvedValue(undefined),
+  stockByProductId = {},
+  producedByProductId = {},
+  isStockValidationEnabled = false,
+}: RenderOptions = {}) => {
   const onClose = vi.fn()
 
   render(
@@ -42,6 +67,9 @@ const renderModal = (transaction: Transaction | null = null) => {
         opened
         products={products}
         transaction={transaction}
+        stockByProductId={stockByProductId}
+        producedByProductId={producedByProductId}
+        isStockValidationEnabled={isStockValidationEnabled}
         onClose={onClose}
         onSave={onSave}
       />
@@ -139,7 +167,8 @@ describe('AddTransactionModal', () => {
         .value,
     ).toContain('1200')
 
-    await setNumber('Quantity Produced', '5')
+    // Quantity Produced is read-only and server-filled now, so this
+    // test no longer types into it.
     await setNumber('Quantity Sold', '3')
 
     const dateValue = (
@@ -153,7 +182,6 @@ describe('AddTransactionModal', () => {
     expect(onSave).toHaveBeenCalledWith({
       product_id: 1,
       transaction_date: `${dateValue}T00:00:00`,
-      quantity_produced: 5,
       quantity: 3,
       unit_price: 1200,
       production_cost: 0,
@@ -162,9 +190,9 @@ describe('AddTransactionModal', () => {
   })
 
   it('still edits a transaction and omits production cost so the stored cost is preserved', async () => {
-    const { onSave, onClose } = renderModal(
-      existingTransaction,
-    )
+    const { onSave, onClose } = renderModal({
+      transaction: existingTransaction,
+    })
 
     expect(
       screen.getByRole('combobox', {
@@ -183,10 +211,124 @@ describe('AddTransactionModal', () => {
     // rate this transaction was saved with).
     expect(onSave).toHaveBeenCalledWith({
       transaction_date: '2026-09-01T00:00:00',
-      quantity_produced: 5,
       quantity: 4,
       unit_price: 1200,
     })
     expect(onClose).toHaveBeenCalled()
+  })
+
+  // --- Task 15 -----------------------------------------------------
+  // Quantity Produced is server-computed (a per-cycle drawdown) and
+  // Quantity Sold is capped at available stock whenever a complete
+  // opening balance has been reviewed. Both figures come from
+  // GET /api/inventory; nothing is recomputed here.
+
+  it('shows Quantity Produced as read-only and filled from applied production', async () => {
+    renderModal({
+      producedByProductId: { 1: 10 },
+      stockByProductId: { 1: 15 },
+      isStockValidationEnabled: true,
+    })
+
+    await selectProduct('Test Chair')
+
+    const producedInput = screen.getByLabelText(
+      /quantity produced/i,
+    ) as HTMLInputElement
+
+    expect(producedInput).toHaveAttribute('readonly')
+    expect(producedInput.value).toBe('10')
+  })
+
+  it('shows available stock for the selected product', async () => {
+    renderModal({
+      producedByProductId: { 1: 10 },
+      stockByProductId: { 1: 15 },
+      isStockValidationEnabled: true,
+    })
+
+    await selectProduct('Test Chair')
+
+    expect(
+      await screen.findByText(/15 units available/i),
+    ).toBeInTheDocument()
+  })
+
+  it('blocks a quantity sold above available stock', async () => {
+    const onSave = vi.fn()
+
+    renderModal({
+      onSave,
+      producedByProductId: { 1: 10 },
+      stockByProductId: { 1: 15 },
+      isStockValidationEnabled: true,
+    })
+
+    await selectProduct('Test Chair')
+
+    await userEvent.clear(screen.getByLabelText(/quantity sold/i))
+    await userEvent.type(
+      screen.getByLabelText(/quantity sold/i),
+      '16',
+    )
+
+    expect(
+      await screen.findByText(/only 15 units are available/i),
+    ).toBeInTheDocument()
+
+    expect(
+      screen.getByRole('button', { name: /^save$/i }),
+    ).toBeDisabled()
+
+    expect(onSave).not.toHaveBeenCalled()
+  })
+
+  it('does not cap the quantity sold while validation is off', async () => {
+    renderModal({
+      producedByProductId: {},
+      stockByProductId: {},
+      isStockValidationEnabled: false,
+    })
+
+    await selectProduct('Test Chair')
+
+    await userEvent.clear(screen.getByLabelText(/quantity sold/i))
+    await userEvent.type(screen.getByLabelText(/quantity sold/i), '99')
+
+    expect(
+      screen.queryByText(/units are available/i),
+    ).not.toBeInTheDocument()
+
+    expect(
+      screen.getByRole('button', { name: /^save$/i }),
+    ).toBeEnabled()
+  })
+
+  it('omits quantity_produced from the create payload', async () => {
+    const onSave = vi.fn().mockResolvedValue(undefined)
+
+    renderModal({
+      onSave,
+      producedByProductId: { 1: 10 },
+      stockByProductId: { 1: 15 },
+      isStockValidationEnabled: true,
+    })
+
+    await selectProduct('Test Chair')
+
+    await userEvent.clear(screen.getByLabelText(/quantity sold/i))
+    await userEvent.type(screen.getByLabelText(/quantity sold/i), '3')
+
+    await userEvent.click(
+      screen.getByRole('button', { name: /^save$/i }),
+    )
+
+    await waitFor(() => {
+      expect(onSave).toHaveBeenCalled()
+    })
+
+    expect(
+      onSave.mock.calls[0][0],
+    ).not.toHaveProperty('quantity_produced')
   })
 })

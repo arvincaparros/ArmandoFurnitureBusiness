@@ -59,6 +59,7 @@ const sale = (
 ): ForecastChartData => ({
   date,
   fullDate,
+  pointType: 'SALE' as const,
   isForecast: false,
   transactionNumber,
   quantityProduced: sold,
@@ -68,6 +69,7 @@ const sale = (
 const forecastRow: ForecastChartData = {
   date: 'Nov 01',
   fullDate: 'Nov 01, 2026',
+  pointType: 'FORECAST' as const,
   isForecast: true,
   forecastedDemand: 9.5,
 }
@@ -234,6 +236,14 @@ describe('ForecastChart series', () => {
         name: 'historicalDemand',
         label: 'Historical Demand (Transaction)',
       },
+      // Task 21: the ledger-sourced production line sits between the
+      // two existing series. teal is distinct from both themes'
+      // primary and from the forecast's grape/blue.
+      {
+        name: 'producedQuantity',
+        label: 'Applied Production',
+        color: 'teal.6',
+      },
       {
         name: 'forecastedDemand',
         label: 'Forecasted Demand',
@@ -249,5 +259,63 @@ describe('ForecastChart series', () => {
       chart.data[8].historicalDemand,
     )
     expect(chart.data[9].isForecast).toBe(true)
+  })
+})
+
+
+describe('ForecastChart production series', () => {
+  const productionRow: ForecastChartData = {
+    date: 'Oct 26',
+    fullDate: 'Oct 26, 2026',
+    pointType: 'PRODUCTION',
+    isForecast: false,
+    applicationNumber: 'PA-0007',
+    producedQuantity: 6,
+  }
+
+  it('renders the chart when a product has production but no sales', () => {
+    const chart = renderChart([productionRow, forecastRow])
+
+    expect(
+      screen.queryByText(/No sales or production recorded/),
+    ).not.toBeInTheDocument()
+
+    expect(
+      chart.series.map((entry) => entry.label),
+    ).toContain('Applied Production')
+
+    expect(
+      chart.series.map((entry) => entry.name),
+    ).toContain('producedQuantity')
+  })
+
+  it('still explains an entirely empty product', () => {
+    // Only a forecast point: nothing plottable, so the component
+    // returns the message instead of a chart.
+    render(
+      <MantineProvider>
+        <ForecastChart
+          data={[forecastRow]}
+          isLoading={false}
+          isError={false}
+          hasProducts
+        />
+      </MantineProvider>,
+    )
+
+    expect(
+      screen.getByText(/No sales or production recorded/),
+    ).toBeInTheDocument()
+  })
+
+  it('shows the applied production figure and its application number', () => {
+    renderChart([productionRow, forecastRow])
+    renderTooltip(productionRow)
+
+    expect(
+      screen.getByText(/Applied production: 6 units/),
+    ).toBeInTheDocument()
+
+    expect(screen.getByText('PA-0007')).toBeInTheDocument()
   })
 })
