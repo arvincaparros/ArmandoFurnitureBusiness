@@ -26,17 +26,19 @@ export async function generateForecast(): Promise<ForecastResponse> {
   return response.data
 }
 
-// Always scoped to one product (product_id required by this module's
-// use of it) - the backend's product_id-less form (returning every
-// active product's series at once) has no caller here, since the
-// chart only ever displays one selected product at a time. 404s if
-// product_id doesn't match an active product - left to the caller.
+// Omit productId to fetch every active product's series at once (the
+// Forecast Table's source - one row per product) and pass it to scope
+// to a single product (the Forecast Chart's source). 404s if
+// productId doesn't match an active product - left to the caller.
 export async function fetchForecastTimeseries(
-  productId: number,
+  productId?: number,
 ): Promise<ForecastTimeSeriesResponse> {
   const response = await apiClient.get<ForecastTimeSeriesResponse>(
     '/api/forecast/timeseries',
-    { params: { product_id: productId } },
+    {
+      params:
+        productId === undefined ? {} : { product_id: productId },
+    },
   )
 
   return response.data

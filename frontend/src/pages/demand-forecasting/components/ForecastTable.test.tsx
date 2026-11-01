@@ -4,19 +4,24 @@ import { describe, expect, it } from 'vitest'
 
 import ForecastTable from './ForecastTable'
 
-import type { ForecastWeekRow } from '../types'
+import type { ForecastTableItem } from '../types'
 
-const WEEK_ROWS: ForecastWeekRow[] = [
+const FORECAST_ITEMS: ForecastTableItem[] = [
   {
+    id: 1,
     furnitureProduct: 'Chair',
-    weekLabel: 'Jan 5 - Jan 11',
     historicalSales: 10,
+    predictedDemand: 25,
+    forecastPeriod: 'Jan 26 - Feb 1',
+    confidenceLevel: 66.67,
   },
   {
-    furnitureProduct: 'Chair',
-    weekLabel: 'Jan 26 - Feb 1',
-    predictedDemand: 25,
-    confidenceLevel: 66.67,
+    id: 2,
+    furnitureProduct: 'Dining Table',
+    historicalSales: 0,
+    predictedDemand: 0,
+    forecastPeriod: 'Nov 2 - Nov 8',
+    confidenceLevel: 0,
   },
 ]
 
@@ -28,7 +33,7 @@ const renderTable = (
   render(
     <MantineProvider>
       <ForecastTable
-        weekRows={WEEK_ROWS}
+        forecastItems={FORECAST_ITEMS}
         isLoading={false}
         isError={false}
         {...props}
@@ -37,7 +42,7 @@ const renderTable = (
   )
 
 describe('ForecastTable', () => {
-  it('keeps the original column set, in order, with Forecast Period in place of Next Cycle', () => {
+  it('keeps the original column set, in order', () => {
     renderTable()
 
     expect(
@@ -53,51 +58,44 @@ describe('ForecastTable', () => {
     expect(screen.getByText('Confidence Level')).toBeInTheDocument()
   })
 
-  it('does not render a Trend or Forecast Status column', () => {
+  it('does not render a Forecast Status column', () => {
     renderTable()
 
-    expect(screen.queryByText('Trend')).toBeNull()
     expect(screen.queryByText('Forecast Status')).toBeNull()
+    expect(screen.queryByText('Trend')).toBeNull()
   })
 
-  it('renders each weekly row with its own forecast period label', () => {
+  it('renders exactly one row per product, with both historical sales and predicted demand filled in', () => {
     renderTable()
 
-    expect(screen.getByText('Jan 5 - Jan 11')).toBeInTheDocument()
-    expect(screen.getByText('Jan 26 - Feb 1')).toBeInTheDocument()
-  })
+    expect(screen.getByText('Chair')).toBeInTheDocument()
+    expect(screen.getByText('Dining Table')).toBeInTheDocument()
 
-  it('keeps historical sales and predicted demand in separate columns, never combined', () => {
-    renderTable()
-
-    // The historical row has a value in Historical Sales and a
-    // placeholder in Predicted Demand; the forecast row is the
-    // reverse - never both populated on one row, and never merged
-    // into one "quantity" value.
+    // Neither column is blank for either product - historical sales
+    // and predicted demand always both appear on the same row.
     expect(screen.getByText('10')).toBeInTheDocument()
     expect(screen.getByText('25')).toBeInTheDocument()
+    expect(screen.getByText('Jan 26 - Feb 1')).toBeInTheDocument()
+    expect(screen.getByText('66.7%')).toBeInTheDocument()
   })
 
-  it('shows confidence level only on the forecast row', () => {
+  it('shows the weekly forecast period instead of the old Next Cycle literal', () => {
     renderTable()
 
-    expect(screen.getByText('66.7%')).toBeInTheDocument()
-
-    // The historical row's Predicted Demand and Confidence Level
-    // cells, plus the forecast row's Historical Sales cell, all show
-    // the placeholder rather than a stale or inherited value.
-    expect(screen.getAllByText('—')).toHaveLength(3)
+    expect(screen.queryByText('Next Cycle')).toBeNull()
+    expect(screen.getByText('Jan 26 - Feb 1')).toBeInTheDocument()
+    expect(screen.getByText('Nov 2 - Nov 8')).toBeInTheDocument()
   })
 
   it('shows a loading message and renders no rows while loading', () => {
     renderTable({ isLoading: true })
 
     expect(screen.getByText('Loading forecast...')).toBeInTheDocument()
-    expect(screen.queryByText('Jan 5 - Jan 11')).toBeNull()
+    expect(screen.queryByText('Chair')).toBeNull()
   })
 
   it('shows an error message when the request failed', () => {
-    renderTable({ isLoading: false, isError: true, weekRows: [] })
+    renderTable({ isLoading: false, isError: true, forecastItems: [] })
 
     expect(
       screen.getByText('Unable to load forecast.'),
@@ -105,10 +103,10 @@ describe('ForecastTable', () => {
   })
 
   it('shows an empty message when there is no data to show', () => {
-    renderTable({ weekRows: [] })
+    renderTable({ forecastItems: [] })
 
     expect(
-      screen.getByText('No forecast data available for this product.'),
+      screen.getByText('No forecast data available.'),
     ).toBeInTheDocument()
   })
 })

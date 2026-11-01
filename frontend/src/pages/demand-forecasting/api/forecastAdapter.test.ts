@@ -2,7 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   toUiForecastChartData,
-  toUiForecastWeekRows,
+  toUiForecastTableItems,
 } from './forecastAdapter'
 
 import type {
@@ -153,62 +153,84 @@ describe('toUiForecastChartData', () => {
   })
 })
 
-describe('toUiForecastWeekRows', () => {
-  it('labels each historical week with its Monday-start range, in the Historical Sales column only', () => {
-    const rows = toUiForecastWeekRows(chairTimeseries)
+// A second product with zero history: all 3 series points are
+// forecast, no historical points at all - exercises the "no
+// historical week" fallback.
+const diningTableTimeseries = {
+  product_id: 9,
+  product_name: 'Dining Table',
+  trend: 'NO_DATA',
+  confidence_level: '0.00',
+  series: [
+    {
+      period: '2026-11-02',
+      transaction_id: null,
+      transaction_number: null,
+      historical_sales: null,
+      quantity_produced: null,
+      predicted_demand: '0',
+      is_forecast: true,
+    },
+    {
+      period: '2026-11-09',
+      transaction_id: null,
+      transaction_number: null,
+      historical_sales: null,
+      quantity_produced: null,
+      predicted_demand: '0',
+      is_forecast: true,
+    },
+    {
+      period: '2026-11-16',
+      transaction_id: null,
+      transaction_number: null,
+      historical_sales: null,
+      quantity_produced: null,
+      predicted_demand: '0',
+      is_forecast: true,
+    },
+  ],
+}
 
-    const historicalRows = rows.filter(
-      (row) => row.historicalSales !== undefined,
-    )
+const allProductsTimeseries: ForecastTimeSeriesResponse = {
+  products: [chairTimeseries.products[0], diningTableTimeseries],
+}
 
-    expect(historicalRows).toHaveLength(3)
-    expect(historicalRows.map((row) => row.weekLabel)).toEqual([
-      'Jan 5 - Jan 11',
-      'Jan 12 - Jan 18',
-      'Jan 19 - Jan 25',
+describe('toUiForecastTableItems', () => {
+  it('returns exactly one row per product, for every product in the response', () => {
+    const items = toUiForecastTableItems(allProductsTimeseries)
+
+    expect(items).toHaveLength(2)
+    expect(items.map((item) => item.furnitureProduct)).toEqual([
+      'Chair',
+      'Dining Table',
     ])
-    expect(historicalRows.map((row) => row.historicalSales)).toEqual([
-      10, 0, 20,
-    ])
-    // Historical Sales and Predicted Demand never share a row -
-    // Predicted Demand/Confidence Level stay unset on these rows.
-    expect(
-      historicalRows.every(
-        (row) =>
-          row.predictedDemand === undefined &&
-          row.confidenceLevel === undefined,
-      ),
-    ).toBe(true)
   })
 
-  it('puts every forecast week in the Predicted Demand column with the shared product-level confidence', () => {
-    const rows = toUiForecastWeekRows(chairTimeseries)
+  it('fills Historical Sales from the latest historical week and Predicted Demand from the first forecast week, on the same row', () => {
+    const items = toUiForecastTableItems(allProductsTimeseries)
+    const chair = items[0]
 
-    const forecastRows = rows.filter(
-      (row) => row.predictedDemand !== undefined,
-    )
-
-    expect(forecastRows).toHaveLength(3)
-    expect(forecastRows.map((row) => row.predictedDemand)).toEqual([
-      25, 30, 35,
-    ])
-    expect(
-      forecastRows.every((row) => row.historicalSales === undefined),
-    ).toBe(true)
-    expect(
-      forecastRows.every((row) => row.confidenceLevel === 66.67),
-    ).toBe(true)
+    // Latest historical week is 2026-01-19 (quantity 20), first
+    // forecast week is 2026-01-26 (predicted 25) - both on one row,
+    // neither blank.
+    expect(chair.historicalSales).toBe(20)
+    expect(chair.predictedDemand).toBe(25)
+    expect(chair.forecastPeriod).toBe('Jan 26 - Feb 1')
+    expect(chair.confidenceLevel).toBe(66.67)
   })
 
-  it('carries the furniture product name on every row', () => {
-    const rows = toUiForecastWeekRows(chairTimeseries)
+  it('falls back to 0 for Historical Sales when a product has no historical weeks at all', () => {
+    const items = toUiForecastTableItems(allProductsTimeseries)
+    const diningTable = items[1]
 
-    expect(rows.every((row) => row.furnitureProduct === 'Chair')).toBe(
-      true,
-    )
+    expect(diningTable.historicalSales).toBe(0)
+    expect(diningTable.predictedDemand).toBe(0)
+    expect(diningTable.forecastPeriod).toBe('Nov 2 - Nov 8')
+    expect(diningTable.confidenceLevel).toBe(0)
   })
 
-  it('returns no rows when the product has no series yet', () => {
-    expect(toUiForecastWeekRows(undefined)).toEqual([])
+  it('returns no rows when there is no timeseries response yet', () => {
+    expect(toUiForecastTableItems(undefined)).toEqual([])
   })
 })

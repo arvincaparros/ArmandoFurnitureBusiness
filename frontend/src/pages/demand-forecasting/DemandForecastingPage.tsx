@@ -77,40 +77,10 @@ const DemandForecastingPage = () => {
     selectedProductId,
     setSelectedProductId,
     chartData,
-    tableRows,
+    forecastTableItems,
     isChartLoading,
     isChartError,
   } = useForecast()
-
-  const selectedProductName = products.find(
-    (product) => Number(product.value) === selectedProductId,
-  )?.label
-
-  // Shared by both the Forecast Table and the Forecast Graph - there
-  // is one product selector, not two independently wired ones.
-  const productSelector = (
-    <Group gap="xs" wrap="nowrap">
-      <Text size="sm" c="dimmed">
-        Product:
-      </Text>
-
-      <Select
-        placeholder="Select a product"
-        data={products}
-        value={
-          selectedProductId !== null
-            ? String(selectedProductId)
-            : null
-        }
-        onChange={(value) =>
-          setSelectedProductId(value ? Number(value) : null)
-        }
-        disabled={products.length === 0}
-        w={200}
-        searchable
-      />
-    </Group>
-  )
 
   const {
     messages: chatMessages,
@@ -257,15 +227,10 @@ const DemandForecastingPage = () => {
         <Box className={classes.table}>
           <ChartCard
             title="Forecast Table"
-            subtitle={
-              selectedProductName
-                ? `Weekly demand for ${selectedProductName}`
-                : 'Select a product to view weekly demand'
-            }
-            rightSection={productSelector}
+            subtitle={`${forecastTableItems.length} products forecasted`}
           >
             <ForecastTable
-              weekRows={tableRows}
+              forecastItems={forecastTableItems}
               isLoading={isLoading || isChartLoading}
               isError={isError || isChartError}
             />
@@ -378,7 +343,31 @@ const DemandForecastingPage = () => {
           <ChartCard
             title="Demand Forecast Graph"
             subtitle="Each point represents one week of demand. The last three points are the 3-week forecast."
-            rightSection={productSelector}
+            rightSection={
+              <Group gap="xs" wrap="nowrap">
+                <Text size="sm" c="dimmed">
+                  Product:
+                </Text>
+
+                <Select
+                  placeholder="Select a product"
+                  data={products}
+                  value={
+                    selectedProductId !== null
+                      ? String(selectedProductId)
+                      : null
+                  }
+                  onChange={(value) =>
+                    setSelectedProductId(
+                      value ? Number(value) : null,
+                    )
+                  }
+                  disabled={products.length === 0}
+                  w={200}
+                  searchable
+                />
+              </Group>
+            }
           >
             <ForecastChart
               data={chartData}

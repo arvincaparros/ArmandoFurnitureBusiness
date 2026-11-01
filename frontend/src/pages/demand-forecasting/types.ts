@@ -40,25 +40,21 @@ export interface ForecastChartData {
   forecastedDemand?: number
 }
 
-// One row of the Forecast Table: a single week, either an actual
-// historical week or one of the three forecast weeks that follow it.
-// Built from the same GET /api/forecast/timeseries series the chart
-// renders - see forecastAdapter.ts::toUiForecastWeekRows - so the
-// table and chart never disagree on weekly totals. Mirrors the
-// original table's column set (furniture product, historical sales,
-// predicted demand, forecast period, confidence level) with weekly
-// rows instead of one row per product - historicalSales and
-// predictedDemand stay separate fields/columns, never combined.
-export interface ForecastWeekRow {
+// One row of the Forecast Table: the original one-row-per-product
+// shape (furniture product, historical sales, predicted demand,
+// forecast period, confidence level - no status). Built from GET
+// /api/forecast/timeseries requested for every product at once (see
+// forecastAdapter.ts::toUiForecastTableItems), with historicalSales
+// = that product's latest historical week and predictedDemand = its
+// first forecast week, so every product gets exactly one row and
+// neither value is ever blank.
+export interface ForecastTableItem {
+  id: number
   furnitureProduct: string
-  weekLabel: string
-  // Exactly one of these is set per row: historicalSales on a
-  // historical week, predictedDemand on a forecast week.
-  historicalSales?: number
-  predictedDemand?: number
-  // Only set on forecast rows - computed once per product and shared
-  // by all three forecast weeks.
-  confidenceLevel?: number
+  historicalSales: number
+  predictedDemand: number
+  forecastPeriod: string
+  confidenceLevel: number
 }
 
 export interface ChatMessage {

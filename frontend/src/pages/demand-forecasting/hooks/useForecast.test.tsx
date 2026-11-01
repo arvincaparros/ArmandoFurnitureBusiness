@@ -94,23 +94,19 @@ const DOOR_SALES = [
   salePoint('2026-10-14', '5.0000', '5.0000', 'TRX-000226'),
 ]
 
-const doorTimeseries: ForecastTimeSeriesResponse = {
+// Both products' series, as returned by the unfiltered
+// GET /api/forecast/timeseries (no product_id) - the hook now fetches
+// every active product's series in one request and derives both the
+// table (all products) and the chart (the selected one) from it.
+const allTimeseries: ForecastTimeSeriesResponse = {
   products: [
     {
       product_id: DOOR_ID,
       product_name: 'Door (60x210)',
       trend: 'INCREASING',
       confidence_level: '50.00',
-      series: [
-        ...DOOR_SALES,
-        forecastPoint('2026-11-01', '9.5000'),
-      ],
+      series: [...DOOR_SALES, forecastPoint('2026-11-01', '9.5000')],
     },
-  ],
-}
-
-const chairTimeseries: ForecastTimeSeriesResponse = {
-  products: [
     {
       product_id: CHAIR_ID,
       product_name: 'Chair',
@@ -124,30 +120,12 @@ const chairTimeseries: ForecastTimeSeriesResponse = {
   ],
 }
 
-let resolveChairRequest:
-  | ((value: ForecastTimeSeriesResponse) => void)
-  | null = null
-
 beforeEach(() => {
-  resolveChairRequest = null
-
   vi.mocked(fetchForecast).mockReset()
   vi.mocked(fetchForecastTimeseries).mockReset()
 
   vi.mocked(fetchForecast).mockResolvedValue(forecastResponse)
-
-  vi.mocked(fetchForecastTimeseries).mockImplementation(
-    (productId: number) => {
-      if (productId === CHAIR_ID) {
-        // Held open so the test can observe the in-flight state.
-        return new Promise<ForecastTimeSeriesResponse>((resolve) => {
-          resolveChairRequest = resolve
-        })
-      }
-
-      return Promise.resolve(doorTimeseries)
-    },
-  )
+  vi.mocked(fetchForecastTimeseries).mockResolvedValue(allTimeseries)
 })
 
 const renderForecast = () => {
@@ -167,7 +145,18 @@ const renderForecast = () => {
 }
 
 describe('useForecast product selection', () => {
-  it('opens on the first product with history and plots every transaction', async () => {
+  it('fetches every product\'s series in one unfiltered request', async () => {
+    renderForecast()
+
+    await waitFor(() => {
+      expect(fetchForecastTimeseries).toHaveBeenCalled()
+    })
+
+    expect(fetchForecastTimeseries).toHaveBeenCalledTimes(1)
+    expect(fetchForecastTimeseries).toHaveBeenCalledWith()
+  })
+
+  it('opens the chart on the first product with history and plots every transaction', async () => {
     const { result } = renderForecast()
 
     await waitFor(() => {
@@ -175,7 +164,6 @@ describe('useForecast product selection', () => {
     })
 
     expect(result.current.selectedProductId).toBe(DOOR_ID)
-    expect(fetchForecastTimeseries).toHaveBeenCalledWith(DOOR_ID)
 
     // 9 historical points (one per transaction) then exactly one
     // forecast point.
@@ -194,7 +182,7 @@ describe('useForecast product selection', () => {
     expect(result.current.chartData[9].date).toBe('Nov 01')
   })
 
-  it('swaps to the newly selected product without showing the old one', async () => {
+  it('swaps the chart to the newly selected product without a second fetch', async () => {
     const { result } = renderForecast()
 
     await waitFor(() => {
@@ -205,25 +193,15 @@ describe('useForecast product selection', () => {
       result.current.setSelectedProductId(CHAIR_ID)
     })
 
-    expect(result.current.selectedProductId).toBe(CHAIR_ID)
-
-    // In flight: the previous product's points are gone rather than
-    // lingering until the new response lands.
-    expect(result.current.chartData).toEqual([])
-
-    await act(async () => {
-      if (!resolveChairRequest) {
-        throw new Error('the chair series was never requested')
-      }
-
-      resolveChairRequest(chairTimeseries)
-    })
-
     await waitFor(() => {
       expect(result.current.chartData).toHaveLength(2)
     })
 
-    expect(fetchForecastTimeseries).toHaveBeenCalledWith(CHAIR_ID)
+    expect(result.current.selectedProductId).toBe(CHAIR_ID)
+
+    // Picked out of the already-fetched response - no re-fetch on
+    // product switch.
+    expect(fetchForecastTimeseries).toHaveBeenCalledTimes(1)
 
     // The previous product's transactions are nowhere in the new
     // series: one of its own sales, then its own forecast point.
@@ -247,5 +225,44 @@ describe('useForecast product selection', () => {
         forecastedDemand: 9,
       },
     ])
+  })
+})
+
+describe('useForecast table rows', () => {
+  it('returns one row per product, for every product, regardless of which one is selected', async () => {
+    const { result } = renderForecast()
+
+    await waitFor(() => {
+      expect(result.current.forecastTableItems).toHaveLength(2)
+    })
+
+    expect(
+      result.current.forecastTableItems.map(
+        (item) => item.furnitureProduct,
+      ),
+    ).toEqual(['Door (60x210)', 'Chair'])
+
+    act(() => {
+      result.current.setSelectedProductId(CHAIR_ID)
+    })
+
+    // Selecting a different product for the chart does not change
+    // which products appear in the table.
+    expect(result.current.forecastTableItems).toHaveLength(2)
+  })
+
+  it('fills historical sales and predicted demand on the same row for each product', async () => {
+    const { result } = renderForecast()
+
+    await waitFor(() => {
+      expect(result.current.forecastTableItems).toHaveLength(2)
+    })
+
+    const door = result.current.forecastTableItems[0]
+
+    // Door's latest historical week (2026-10-14) and first forecast
+    // week (2026-11-01).
+    expect(door.historicalSales).toBe(5)
+    expect(door.predictedDemand).toBe(9.5)
   })
 })

@@ -16,7 +16,7 @@ import {
   toForecastProductOptions,
   toUiForecastChartData,
   toUiForecastItems,
-  toUiForecastWeekRows,
+  toUiForecastTableItems,
 } from '../api/forecastAdapter'
 
 const FORECAST_QUERY_KEY = ['forecast']
@@ -43,8 +43,7 @@ const useForecast = () => {
       // state as GET /api/forecast (see forecastApi.ts) rather than
       // reading the persisted run, so its values wouldn't actually
       // change here today - invalidated anyway for correctness/
-      // freshness rather than assuming that stays true. Prefix match
-      // (no productId) so this covers whichever product is selected.
+      // freshness rather than assuming that stays true.
       queryClient.invalidateQueries({
         queryKey: ['forecast-timeseries'],
       })
@@ -99,11 +98,20 @@ const useForecast = () => {
     ? requestedProductId
     : defaultProductId
 
+  // Unfiltered - every active product's weekly series at once, in one
+  // request. This is the Forecast Table's source (one row per
+  // product, built below) and the Forecast Chart's source (the
+  // selected product's own series, picked out of this same response
+  // rather than fetched again) - the two never disagree on weekly
+  // totals because neither recomputes it independently.
   const timeseriesQuery = useQuery({
-    queryKey: ['forecast-timeseries', selectedProductId],
-    queryFn: () => fetchForecastTimeseries(selectedProductId as number),
-    enabled: selectedProductId !== null,
+    queryKey: ['forecast-timeseries'],
+    queryFn: () => fetchForecastTimeseries(),
   })
+
+  const selectedProductSeries = timeseriesQuery.data?.products.find(
+    (product) => product.product_id === selectedProductId,
+  )
 
   return {
     forecastItems,
@@ -119,20 +127,16 @@ const useForecast = () => {
     selectedProductId,
     setSelectedProductId,
 
-    chartData: toUiForecastChartData(timeseriesQuery.data),
-    // Same timeseriesQuery response as chartData above, mapped into
-    // table rows instead of chart points - one fetch feeds both, so
-    // the table and chart never recompute or disagree on weekly
-    // totals.
-    tableRows: toUiForecastWeekRows(timeseriesQuery.data),
-    // Bridges the two-phase load (resolve the product list, then that
-    // product's series) - selectedProductId is derived synchronously
-    // from `products` above, so as soon as products are known and
-    // non-empty there's always a valid id and timeseriesQuery.isLoading
-    // alone reflects whether the chart should still be waiting.
-    isChartLoading:
-      forecastQuery.isLoading ||
-      (products.length > 0 && timeseriesQuery.isLoading),
+    chartData: toUiForecastChartData(
+      selectedProductSeries
+        ? { products: [selectedProductSeries] }
+        : undefined,
+    ),
+    // One row per product (the original table shape) - every
+    // product's own latest historical week and first forecast week,
+    // never split across multiple rows.
+    forecastTableItems: toUiForecastTableItems(timeseriesQuery.data),
+    isChartLoading: forecastQuery.isLoading || timeseriesQuery.isLoading,
     isChartError: timeseriesQuery.isError,
   }
 }

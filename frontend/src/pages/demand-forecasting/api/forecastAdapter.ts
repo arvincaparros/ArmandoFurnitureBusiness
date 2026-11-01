@@ -7,7 +7,7 @@ import type {
   ForecastChartData,
   ForecastItem,
   ForecastStatus,
-  ForecastWeekRow,
+  ForecastTableItem,
 } from '../types'
 
 // Every backend Decimal field arrives as a JSON string, never a bare
@@ -189,37 +189,47 @@ function formatWeekRangeLabel(weekStartIso: string): string {
   return `${start.month} ${start.day} - ${end.month} ${end.day}`
 }
 
-// One row per weekly point from the SAME timeseries payload the chart
-// adapts below (toUiForecastChartData) - the Forecast Table and the
-// Forecast Graph are built from one fetch, never two independent
-// calculations. historicalSales/predictedDemand stay separate fields
-// (never combined into one quantity), mirroring the original table's
-// column split; confidence_level lives once on the product and is
-// shared by every forecast row, historical rows carry none.
-export function toUiForecastWeekRows(
+// One row per PRODUCT (the original table shape), built from GET
+// /api/forecast/timeseries requested with no product_id - the same
+// endpoint and request the backend already supports for "every
+// active product's series at once". historicalSales is that
+// product's latest historical week; predictedDemand is its first
+// forecast week (week 1, immediately after the latest historical
+// week) - both come from the one already-fetched weekly series, so
+// neither is ever blank and nothing is recomputed independently of
+// the chart's own data (see toUiForecastChartData below, which reads
+// the same per-product series for whichever product is selected).
+export function toUiForecastTableItems(
   timeseries: ForecastTimeSeriesResponse | undefined,
-): ForecastWeekRow[] {
-  const product = timeseries?.products[0]
-
-  if (!product) {
+): ForecastTableItem[] {
+  if (!timeseries) {
     return []
   }
 
-  return product.series.map((point) => {
-    const isForecast = point.is_forecast
+  return timeseries.products.map((product) => {
+    const historicalPoints = product.series.filter(
+      (point) => !point.is_forecast,
+    )
+    const forecastPoints = product.series.filter(
+      (point) => point.is_forecast,
+    )
+
+    const latestHistorical = historicalPoints.at(-1)
+    const firstForecast = forecastPoints[0]
 
     return {
+      id: product.product_id,
       furnitureProduct: product.product_name,
-      weekLabel: formatWeekRangeLabel(point.period),
-      historicalSales: isForecast
-        ? undefined
-        : parseDecimal(point.historical_sales ?? '0'),
-      predictedDemand: isForecast
-        ? parseDecimal(point.predicted_demand ?? '0')
-        : undefined,
-      confidenceLevel: isForecast
-        ? parseDecimal(product.confidence_level)
-        : undefined,
+      historicalSales: latestHistorical
+        ? parseDecimal(latestHistorical.historical_sales ?? '0')
+        : 0,
+      predictedDemand: firstForecast
+        ? parseDecimal(firstForecast.predicted_demand ?? '0')
+        : 0,
+      forecastPeriod: firstForecast
+        ? formatWeekRangeLabel(firstForecast.period)
+        : '—',
+      confidenceLevel: parseDecimal(product.confidence_level),
     }
   })
 }

@@ -7,20 +7,20 @@ import AppTable, {
   type Column,
 } from '../../../components/tables/AppTable'
 
-import type { ForecastWeekRow } from '../types'
+import type { ForecastTableItem } from '../types'
 
 interface ForecastTableProps {
-  weekRows: ForecastWeekRow[]
+  forecastItems: ForecastTableItem[]
   isLoading: boolean
   isError: boolean
 }
 
 const ForecastTable = ({
-  weekRows,
+  forecastItems,
   isLoading,
   isError,
 }: ForecastTableProps) => {
-  const columns: Column<ForecastWeekRow>[] = [
+  const columns: Column<ForecastTableItem>[] = [
     {
       accessor: 'furnitureProduct',
       title: 'Furniture Product',
@@ -28,26 +28,20 @@ const ForecastTable = ({
     {
       accessor: 'historicalSales',
       title: 'Historical Sales (Units)',
-      render: (row) =>
-        row.historicalSales === undefined ? '—' : row.historicalSales,
     },
     {
       accessor: 'predictedDemand',
       title: 'Predicted Demand (Units)',
-      render: (row) =>
-        row.predictedDemand === undefined ? '—' : row.predictedDemand,
     },
     {
-      accessor: 'weekLabel',
+      accessor: 'forecastPeriod',
       title: 'Forecast Period',
     },
     {
       accessor: 'confidenceLevel',
       title: 'Confidence Level',
       render: (row) =>
-        row.confidenceLevel === undefined
-          ? '—'
-          : `${row.confidenceLevel.toFixed(1)}%`,
+        `${row.confidenceLevel.toFixed(1)}%`,
     },
   ]
 
@@ -55,7 +49,7 @@ const ForecastTable = ({
     ? 'Loading forecast...'
     : isError
       ? 'Unable to load forecast.'
-      : 'No forecast data available for this product.'
+      : 'No forecast data available.'
 
   return (
     <Box
@@ -81,7 +75,7 @@ const ForecastTable = ({
         >
           <AppTable
             columns={columns}
-            data={isLoading ? [] : weekRows}
+            data={isLoading ? [] : forecastItems}
             emptyMessage={emptyMessage}
           />
         </Box>
