@@ -66,7 +66,7 @@ def generate(
 @router.get(
     "/timeseries",
     response_model=ForecastTimeSeriesResponse,
-    summary="Get per-transaction historical series and one forecast point for charting",
+    summary="Get weekly historical series and a 3-week forecast for the forecast table and chart",
 )
 def timeseries(
     product_id: int | None = None,

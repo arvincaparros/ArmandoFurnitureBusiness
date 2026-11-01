@@ -29,17 +29,19 @@ export interface ForecastResponse {
 // the authoritative historical/forecast boundary marker - per the
 // service (app/services/forecasting.py::get_forecast_timeseries), a
 // historical point always has historical_sales set and
-// predicted_demand null, the single forecast point always has the
-// reverse - never assume this from array position.
+// predicted_demand null, a forecast point always has the reverse -
+// never assume this from array position.
 //
-// A historical point is one qualifying SALES TRANSACTION: "period" is
-// that transaction's date (YYYY-MM-DD) and transaction_id/
-// transaction_number identify the row, so two sales on the same date
-// remain two points. The forecast point has no transaction, and its
-// "period" is the first day of the forecasted month.
-// quantity_produced is carried for display only - the plotted value
-// is historical_sales (quantity sold), the measure the forecast is
-// built from.
+// A historical point is one calendar WEEK (Monday start) of
+// qualifying sales, zero-filled for weeks with none - "period" is
+// that week's Monday date (YYYY-MM-DD). Each of the (exactly three)
+// trailing forecast points is the week immediately following the
+// last, with no transaction behind it. transaction_id/
+// transaction_number are never populated under weekly aggregation
+// (kept nullable rather than removed, since nothing still relies on
+// them). quantity_produced is carried for display only - the plotted
+// value is historical_sales (quantity sold), the measure the forecast
+// is built from.
 export interface ForecastTimeSeriesPoint {
   period: string
   transaction_id: number | null
@@ -53,6 +55,10 @@ export interface ForecastTimeSeriesPoint {
 export interface ProductTimeSeriesResponse {
   product_id: number
   product_name: string
+  // Computed once from the product's weekly historical series and
+  // shared by every forecast point in `series` - never per-point.
+  trend: string
+  confidence_level: string
   series: ForecastTimeSeriesPoint[]
 }
 

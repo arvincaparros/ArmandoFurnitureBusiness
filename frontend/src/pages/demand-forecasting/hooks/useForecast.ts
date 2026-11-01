@@ -16,6 +16,7 @@ import {
   toForecastProductOptions,
   toUiForecastChartData,
   toUiForecastItems,
+  toUiForecastWeekRows,
 } from '../api/forecastAdapter'
 
 const FORECAST_QUERY_KEY = ['forecast']
@@ -119,6 +120,11 @@ const useForecast = () => {
     setSelectedProductId,
 
     chartData: toUiForecastChartData(timeseriesQuery.data),
+    // Same timeseriesQuery response as chartData above, mapped into
+    // table rows instead of chart points - one fetch feeds both, so
+    // the table and chart never recompute or disagree on weekly
+    // totals.
+    tableRows: toUiForecastWeekRows(timeseriesQuery.data),
     // Bridges the two-phase load (resolve the product list, then that
     // product's series) - selectedProductId is derived synchronously
     // from `products` above, so as soon as products are known and

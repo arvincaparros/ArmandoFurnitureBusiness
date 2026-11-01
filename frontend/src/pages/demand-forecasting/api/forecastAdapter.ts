@@ -7,6 +7,7 @@ import type {
   ForecastChartData,
   ForecastItem,
   ForecastStatus,
+  ForecastWeekRow,
 } from '../types'
 
 // Every backend Decimal field arrives as a JSON string, never a bare
@@ -161,14 +162,75 @@ function formatFullDate(period: string): string {
     : `${parts.month} ${parts.year}`
 }
 
+// End of the week starting on `weekStartIso` ("YYYY-MM-DD", a Monday)
+// - always 6 days later, matching the backend's Monday-start weekly
+// boundary exactly, never recomputed differently anywhere else.
+function weekEndIso(weekStartIso: string): string {
+  const [year, month, day] = weekStartIso.split('-').map(Number)
+  const end = new Date(year, month - 1, day + 6)
+
+  return [
+    end.getFullYear(),
+    String(end.getMonth() + 1).padStart(2, '0'),
+    String(end.getDate()).padStart(2, '0'),
+  ].join('-')
+}
+
+// Table-only week-range label, e.g. "Nov 2 - Nov 8" - reuses the same
+// period parsing the chart's axis/tooltip labels already go through.
+function formatWeekRangeLabel(weekStartIso: string): string {
+  const start = parsePeriod(weekStartIso)
+  const end = parsePeriod(weekEndIso(weekStartIso))
+
+  if (!start || !end) {
+    return weekStartIso
+  }
+
+  return `${start.month} ${start.day} - ${end.month} ${end.day}`
+}
+
+// One row per weekly point from the SAME timeseries payload the chart
+// adapts below (toUiForecastChartData) - the Forecast Table and the
+// Forecast Graph are built from one fetch, never two independent
+// calculations. historicalSales/predictedDemand stay separate fields
+// (never combined into one quantity), mirroring the original table's
+// column split; confidence_level lives once on the product and is
+// shared by every forecast row, historical rows carry none.
+export function toUiForecastWeekRows(
+  timeseries: ForecastTimeSeriesResponse | undefined,
+): ForecastWeekRow[] {
+  const product = timeseries?.products[0]
+
+  if (!product) {
+    return []
+  }
+
+  return product.series.map((point) => {
+    const isForecast = point.is_forecast
+
+    return {
+      furnitureProduct: product.product_name,
+      weekLabel: formatWeekRangeLabel(point.period),
+      historicalSales: isForecast
+        ? undefined
+        : parseDecimal(point.historical_sales ?? '0'),
+      predictedDemand: isForecast
+        ? parseDecimal(point.predicted_demand ?? '0')
+        : undefined,
+      confidenceLevel: isForecast
+        ? parseDecimal(product.confidence_level)
+        : undefined,
+    }
+  })
+}
+
 // is_forecast is the backend's authoritative historical/forecast
 // boundary marker (see forecastTypes.ts) - branched on directly rather
 // than inferred from which value happens to be non-null.
 //
-// One row per API point, in API order: every qualifying transaction
-// keeps its own row (two sales on the same date stay two points) and
-// the series ends with the backend's single forecast point. Nothing is
-// grouped, deduplicated or sliced here.
+// One row per weekly point, in API order: every historical week keeps
+// its own row and the series ends with the backend's three forecast
+// weeks. Nothing is grouped, deduplicated or sliced here.
 export function toUiForecastChartData(
   timeseries: ForecastTimeSeriesResponse | undefined,
 ): ForecastChartData[] {

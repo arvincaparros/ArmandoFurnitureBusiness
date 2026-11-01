@@ -52,6 +52,8 @@ const noHistoryTimeseries: ForecastTimeSeriesResponse = {
     {
       product_id: 1,
       product_name: 'Test Dining Table',
+      trend: 'NO_DATA',
+      confidence_level: '0.00',
       series: [
         {
           period: '2026-11-01',
@@ -87,6 +89,8 @@ const withHistoryTimeseries: ForecastTimeSeriesResponse = {
     {
       product_id: 2,
       product_name: 'Test Chair',
+      trend: 'STABLE',
+      confidence_level: '8.33',
       series: [
         {
           period: '2026-09-05',
