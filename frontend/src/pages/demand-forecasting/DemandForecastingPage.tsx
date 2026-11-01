@@ -77,9 +77,40 @@ const DemandForecastingPage = () => {
     selectedProductId,
     setSelectedProductId,
     chartData,
+    tableRows,
     isChartLoading,
     isChartError,
   } = useForecast()
+
+  const selectedProductName = products.find(
+    (product) => Number(product.value) === selectedProductId,
+  )?.label
+
+  // Shared by both the Forecast Table and the Forecast Graph - there
+  // is one product selector, not two independently wired ones.
+  const productSelector = (
+    <Group gap="xs" wrap="nowrap">
+      <Text size="sm" c="dimmed">
+        Product:
+      </Text>
+
+      <Select
+        placeholder="Select a product"
+        data={products}
+        value={
+          selectedProductId !== null
+            ? String(selectedProductId)
+            : null
+        }
+        onChange={(value) =>
+          setSelectedProductId(value ? Number(value) : null)
+        }
+        disabled={products.length === 0}
+        w={200}
+        searchable
+      />
+    </Group>
+  )
 
   const {
     messages: chatMessages,
@@ -226,12 +257,17 @@ const DemandForecastingPage = () => {
         <Box className={classes.table}>
           <ChartCard
             title="Forecast Table"
-            subtitle={`${forecastItems.length} products forecasted`}
+            subtitle={
+              selectedProductName
+                ? `Weekly demand for ${selectedProductName}`
+                : 'Select a product to view weekly demand'
+            }
+            rightSection={productSelector}
           >
             <ForecastTable
-              forecastItems={forecastItems}
-              isLoading={isLoading}
-              isError={isError}
+              weekRows={tableRows}
+              isLoading={isLoading || isChartLoading}
+              isError={isError || isChartError}
             />
           </ChartCard>
         </Box>
@@ -335,40 +371,14 @@ const DemandForecastingPage = () => {
 
         {/* CHART */}
         <Box className={classes.chart}>
-          {/* Each historical point is one recorded sales transaction
-              (backend app/services/forecasting.py::
-              get_transaction_historical_demand), followed by exactly
-              one forecasted point that is still computed from monthly
-              totals. Stating the grain keeps the transaction count
-              from reading as aggregated data. */}
+          {/* Each historical point is one calendar week of recorded
+              sales transactions (backend app/services/forecasting.py::
+              get_weekly_historical_demand), followed by exactly three
+              forecasted weeks. */}
           <ChartCard
             title="Demand Forecast Graph"
-            subtitle="Each point represents one transaction record. The last point is the forecasted demand."
-            rightSection={
-              <Group gap="xs" wrap="nowrap">
-                <Text size="sm" c="dimmed">
-                  Product:
-                </Text>
-
-                <Select
-                  placeholder="Select a product"
-                  data={products}
-                  value={
-                    selectedProductId !== null
-                      ? String(selectedProductId)
-                      : null
-                  }
-                  onChange={(value) =>
-                    setSelectedProductId(
-                      value ? Number(value) : null,
-                    )
-                  }
-                  disabled={products.length === 0}
-                  w={200}
-                  searchable
-                />
-              </Group>
-            }
+            subtitle="Each point represents one week of demand. The last three points are the 3-week forecast."
+            rightSection={productSelector}
           >
             <ForecastChart
               data={chartData}

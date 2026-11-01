@@ -1,58 +1,38 @@
 import { describe, expect, it } from 'vitest'
 
-import { toUiForecastChartData } from './forecastAdapter'
+import {
+  toUiForecastChartData,
+  toUiForecastWeekRows,
+} from './forecastAdapter'
 
 import type {
   ForecastTimeSeriesPoint,
   ForecastTimeSeriesResponse,
 } from './forecastTypes'
 
-// The adviser's case, row for row from transaction-history (2).csv:
-// 9 qualifying sales of "Door ( 60x210 )", each with its own
-// transaction number, date, quantity sold and quantity produced, plus
-// the single forecast point GET /api/forecast/timeseries appends.
+// 2026-01-05 is a Monday, used as the weekly anchor throughout so
+// boundaries are easy to verify by eye.
 //
-// Quantity sold is the plotted value (35 units in total); quantity
-// produced (39 units) only travels in the tooltip.
-// id, transaction number, date, quantity sold, quantity produced.
-type CsvRow = readonly [
-  id: string,
-  number: string,
+// 3 historical weeks (one zero-filled gap), then exactly 3 forecast
+// weeks: quantities [10, 0, 20] -> avg_delta = (20-10)/2 = 5 ->
+// 25, 30, 35.
+const HISTORICAL_WEEKS: readonly [
   period: string,
   sold: string,
   produced: string,
+][] = [
+  ['2026-01-05', '10.0000', '10.0000'],
+  ['2026-01-12', '0.0000', '0.0000'],
+  ['2026-01-19', '20.0000', '22.0000'],
 ]
 
-const DOOR_TRANSACTIONS: readonly CsvRow[] = [
-  ['101', 'TRX-000140', '2026-08-23', '1.0000', '5.0000'],
-  ['102', 'TRX-000153', '2026-08-27', '4.0000', '4.0000'],
-  ['103', 'TRX-000158', '2026-08-30', '3.0000', '3.0000'],
-  ['104', 'TRX-000169', '2026-09-06', '5.0000', '5.0000'],
-  ['105', 'TRX-000186', '2026-09-16', '5.0000', '5.0000'],
-  ['106', 'TRX-000191', '2026-09-20', '5.0000', '5.0000'],
-  ['107', 'TRX-000203', '2026-09-28', '3.0000', '3.0000'],
-  ['108', 'TRX-000215', '2026-10-06', '4.0000', '4.0000'],
-  ['109', 'TRX-000226', '2026-10-14', '5.0000', '5.0000'],
-]
-
-const FORECAST_POINT: ForecastTimeSeriesPoint = {
-  period: '2026-11-01',
-  transaction_id: null,
-  transaction_number: null,
-  historical_sales: null,
-  quantity_produced: null,
-  // Monthly sold totals [8, 18, 9] -> avg_delta 0.5 -> 9.5.
-  predicted_demand: '9.5000',
-  is_forecast: true,
-}
-
-function toSeriesPoint(
-  [id, number, period, sold, produced]: CsvRow,
+function toHistoricalPoint(
+  [period, sold, produced]: readonly [string, string, string],
 ): ForecastTimeSeriesPoint {
   return {
     period,
-    transaction_id: Number(id),
-    transaction_number: number,
+    transaction_id: null,
+    transaction_number: null,
     historical_sales: sold,
     quantity_produced: produced,
     predicted_demand: null,
@@ -60,65 +40,78 @@ function toSeriesPoint(
   }
 }
 
-const nineTransactionTimeseries: ForecastTimeSeriesResponse = {
+const FORECAST_WEEKS: readonly ForecastTimeSeriesPoint[] = [
+  {
+    period: '2026-01-26',
+    transaction_id: null,
+    transaction_number: null,
+    historical_sales: null,
+    quantity_produced: null,
+    predicted_demand: '25.0000',
+    is_forecast: true,
+  },
+  {
+    period: '2026-02-02',
+    transaction_id: null,
+    transaction_number: null,
+    historical_sales: null,
+    quantity_produced: null,
+    predicted_demand: '30.0000',
+    is_forecast: true,
+  },
+  {
+    period: '2026-02-09',
+    transaction_id: null,
+    transaction_number: null,
+    historical_sales: null,
+    quantity_produced: null,
+    predicted_demand: '35.0000',
+    is_forecast: true,
+  },
+]
+
+const chairTimeseries: ForecastTimeSeriesResponse = {
   products: [
     {
       product_id: 7,
-      product_name: 'Door (60x210)',
+      product_name: 'Chair',
+      trend: 'INCREASING',
+      confidence_level: '66.67',
       series: [
-        ...DOOR_TRANSACTIONS.map(toSeriesPoint),
-        FORECAST_POINT,
+        ...HISTORICAL_WEEKS.map(toHistoricalPoint),
+        ...FORECAST_WEEKS,
       ],
     },
   ],
 }
 
 describe('toUiForecastChartData', () => {
-  it('turns 9 transactions into 9 historical points plus 1 forecast point', () => {
-    const data = toUiForecastChartData(nineTransactionTimeseries)
+  it('turns 3 historical weeks and 3 forecast weeks into 6 points', () => {
+    const data = toUiForecastChartData(chairTimeseries)
 
-    expect(data).toHaveLength(10)
+    expect(data).toHaveLength(6)
 
-    // Every transaction keeps its own date on the x-axis, in
-    // chronological order, and nothing is grouped by month. The axis
-    // label is month + day; the year lives in `fullDate`.
     expect(data.map((point) => point.date)).toEqual([
-      'Aug 23',
-      'Aug 27',
-      'Aug 30',
-      'Sep 06',
-      'Sep 16',
-      'Sep 20',
-      'Sep 28',
-      'Oct 06',
-      'Oct 14',
-      'Nov 01',
-    ])
-
-    expect(data.map((point) => point.fullDate)).toEqual([
-      'Aug 23, 2026',
-      'Aug 27, 2026',
-      'Aug 30, 2026',
-      'Sep 06, 2026',
-      'Sep 16, 2026',
-      'Sep 20, 2026',
-      'Sep 28, 2026',
-      'Oct 06, 2026',
-      'Oct 14, 2026',
-      'Nov 01, 2026',
+      'Jan 05',
+      'Jan 12',
+      'Jan 19',
+      'Jan 26',
+      'Feb 02',
+      'Feb 09',
     ])
 
     expect(data.map((point) => point.historicalDemand)).toEqual([
-      1, 4, 3, 5, 5, 5, 3, 4, 5, undefined,
+      10, 0, 20, undefined, undefined, undefined,
     ])
 
-    expect(data.filter((point) => point.historicalDemand !== undefined))
-      .toHaveLength(9)
-    expect(data.filter((point) => point.isForecast)).toHaveLength(1)
+    expect(
+      data.filter((point) => point.historicalDemand !== undefined),
+    ).toHaveLength(3)
+    expect(data.filter((point) => point.isForecast)).toHaveLength(3)
   })
 
-  it('accounts for every unit and never counts the forecast as a sale', () => {
-    const data = toUiForecastChartData(nineTransactionTimeseries)
+  it('accounts for every unit and never counts a forecast week as a sale', () => {
+    const data = toUiForecastChartData(chairTimeseries)
 
     const soldUnits = data.reduce(
       (total, point) => total + (point.historicalDemand ?? 0),
@@ -129,131 +122,93 @@ describe('toUiForecastChartData', () => {
       0,
     )
 
-    // No recorded row disappears on the way to the chart.
-    expect(soldUnits).toBe(35)
-    expect(producedUnits).toBe(39)
+    expect(soldUnits).toBe(30)
+    expect(producedUnits).toBe(32)
 
-    // Exactly one point belongs to the forecast series, and it is the
-    // trailing point, not one of the sales.
     const forecastPoints = data.filter(
       (point) => point.forecastedDemand !== undefined,
     )
 
-    expect(forecastPoints).toHaveLength(1)
-    expect(forecastPoints[0]).toBe(data[data.length - 1])
-    expect(forecastPoints[0].date).toBe('Nov 01')
-    expect(forecastPoints[0].fullDate).toBe('Nov 01, 2026')
-    expect(forecastPoints[0].forecastedDemand).toBe(9.5)
-    expect(forecastPoints[0].historicalDemand).toBeUndefined()
-  })
-
-  it('keeps transaction identity so points can be told apart', () => {
-    const data = toUiForecastChartData(nineTransactionTimeseries)
-
+    expect(forecastPoints).toHaveLength(3)
+    expect(forecastPoints.map((point) => point.forecastedDemand)).toEqual([
+      25, 30, 35,
+    ])
     expect(
-      data
-        .filter((point) => !point.isForecast)
-        .map((point) => point.transactionNumber),
-    ).toEqual(DOOR_TRANSACTIONS.map(([, number]) => number))
-
-    // The forecast row has no transaction behind it.
-    expect(data[data.length - 1].transactionNumber).toBeUndefined()
-  })
-
-  it('keeps two transactions on the same date as two separate points', () => {
-    const sameDate = toUiForecastChartData({
-      products: [
-        {
-          product_id: 7,
-          product_name: 'Door (60x210)',
-          series: [
-            toSeriesPoint([
-              '101',
-              'TRX-000140',
-              '2026-08-23',
-              '1.0000',
-              '5.0000',
-            ]),
-            toSeriesPoint([
-              '102',
-              'TRX-000153',
-              '2026-08-23',
-              '4.0000',
-              '4.0000',
-            ]),
-            FORECAST_POINT,
-          ],
-        },
-      ],
-    })
-
-    expect(sameDate).toHaveLength(3)
-    expect(sameDate.map((point) => point.date)).toEqual([
-      'Aug 23',
-      'Aug 23',
-      'Nov 01',
-    ])
-    expect(sameDate.map((point) => point.fullDate)).toEqual([
-      'Aug 23, 2026',
-      'Aug 23, 2026',
-      'Nov 01, 2026',
-    ])
-    expect(sameDate.map((point) => point.historicalDemand)).toEqual([
-      1,
-      4,
-      undefined,
-    ])
-    expect(sameDate[0].transactionNumber).not.toBe(
-      sameDate[1].transactionNumber,
-    )
+      forecastPoints.every(
+        (point) => point.historicalDemand === undefined,
+      ),
+    ).toBe(true)
   })
 
   it('formats the axis day exactly as the API sent it', () => {
-    const data = toUiForecastChartData({
-      products: [
-        {
-          product_id: 7,
-          product_name: 'Door (60x210)',
-          series: [
-            // Single-digit days keep their leading zero, and the day is
-            // never rounded to the month or shifted for spacing.
-            toSeriesPoint([
-              '101',
-              'TRX-000140',
-              '2026-09-06',
-              '1.0000',
-              '1.0000',
-            ]),
-            toSeriesPoint([
-              '102',
-              'TRX-000153',
-              '2026-12-31',
-              '2.0000',
-              '2.0000',
-            ]),
-            FORECAST_POINT,
-          ],
-        },
-      ],
-    })
-
-    expect(data.map((point) => point.date)).toEqual([
-      'Sep 06',
-      'Dec 31',
-      'Nov 01',
-    ])
-    expect(data.map((point) => point.fullDate)).toEqual([
-      'Sep 06, 2026',
-      'Dec 31, 2026',
-      'Nov 01, 2026',
-    ])
-
-    // The axis label is the concise form: no year, and the tooltip is
-    // the only place the year appears.
-    expect(data.every((point) => !point.date.includes('20'))).toBe(true)
+    expect(
+      toUiForecastChartData(chairTimeseries).every(
+        (point) => !point.date.includes('20'),
+      ),
+    ).toBe(true)
   })
 
   it('returns no points when the product has no series yet', () => {
     expect(toUiForecastChartData(undefined)).toEqual([])
+  })
+})
+
+describe('toUiForecastWeekRows', () => {
+  it('labels each historical week with its Monday-start range, in the Historical Sales column only', () => {
+    const rows = toUiForecastWeekRows(chairTimeseries)
+
+    const historicalRows = rows.filter(
+      (row) => row.historicalSales !== undefined,
+    )
+
+    expect(historicalRows).toHaveLength(3)
+    expect(historicalRows.map((row) => row.weekLabel)).toEqual([
+      'Jan 5 - Jan 11',
+      'Jan 12 - Jan 18',
+      'Jan 19 - Jan 25',
+    ])
+    expect(historicalRows.map((row) => row.historicalSales)).toEqual([
+      10, 0, 20,
+    ])
+    // Historical Sales and Predicted Demand never share a row -
+    // Predicted Demand/Confidence Level stay unset on these rows.
+    expect(
+      historicalRows.every(
+        (row) =>
+          row.predictedDemand === undefined &&
+          row.confidenceLevel === undefined,
+      ),
+    ).toBe(true)
+  })
+
+  it('puts every forecast week in the Predicted Demand column with the shared product-level confidence', () => {
+    const rows = toUiForecastWeekRows(chairTimeseries)
+
+    const forecastRows = rows.filter(
+      (row) => row.predictedDemand !== undefined,
+    )
+
+    expect(forecastRows).toHaveLength(3)
+    expect(forecastRows.map((row) => row.predictedDemand)).toEqual([
+      25, 30, 35,
+    ])
+    expect(
+      forecastRows.every((row) => row.historicalSales === undefined),
+    ).toBe(true)
+    expect(
+      forecastRows.every((row) => row.confidenceLevel === 66.67),
+    ).toBe(true)
+  })
+
+  it('carries the furniture product name on every row', () => {
+    const rows = toUiForecastWeekRows(chairTimeseries)
+
+    expect(rows.every((row) => row.furnitureProduct === 'Chair')).toBe(
+      true,
+    )
+  })
+
+  it('returns no rows when the product has no series yet', () => {
+    expect(toUiForecastWeekRows(undefined)).toEqual([])
   })
 })

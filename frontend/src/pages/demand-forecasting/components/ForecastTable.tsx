@@ -1,59 +1,26 @@
 import {
-  AlertTriangle,
-  CheckCircle2,
-  Minus,
-} from 'lucide-react'
-
-import {
   Box,
   ScrollArea,
-  Tooltip,
 } from '@mantine/core'
 
 import AppTable, {
   type Column,
 } from '../../../components/tables/AppTable'
 
-import type { ForecastItem } from '../types'
+import type { ForecastWeekRow } from '../types'
 
 interface ForecastTableProps {
-  forecastItems: ForecastItem[]
+  weekRows: ForecastWeekRow[]
   isLoading: boolean
   isError: boolean
 }
 
-// Approved mapping (Demand Forecasting Phase D): READY = success/green
-// check, LOW_CONFIDENCE = warning/amber (forecast exists, confidence is
-// limited - not a failure), NO_DATA = neutral/dash (insufficient
-// qualifying history). Mirrors app/services/forecasting.py::
-// determine_forecast_status exactly - no other status values exist.
-const statusIndicator: Record<
-  ForecastItem['status'],
-  { icon: typeof CheckCircle2; color: string; label: string }
-> = {
-  READY: {
-    icon: CheckCircle2,
-    color: 'green',
-    label: 'Ready',
-  },
-  LOW_CONFIDENCE: {
-    icon: AlertTriangle,
-    color: 'orange',
-    label: 'Low confidence',
-  },
-  NO_DATA: {
-    icon: Minus,
-    color: 'gray',
-    label: 'No data',
-  },
-}
-
 const ForecastTable = ({
-  forecastItems,
+  weekRows,
   isLoading,
   isError,
 }: ForecastTableProps) => {
-  const columns: Column<ForecastItem>[] = [
+  const columns: Column<ForecastWeekRow>[] = [
     {
       accessor: 'furnitureProduct',
       title: 'Furniture Product',
@@ -61,45 +28,26 @@ const ForecastTable = ({
     {
       accessor: 'historicalSales',
       title: 'Historical Sales (Units)',
+      render: (row) =>
+        row.historicalSales === undefined ? '—' : row.historicalSales,
     },
     {
       accessor: 'predictedDemand',
       title: 'Predicted Demand (Units)',
+      render: (row) =>
+        row.predictedDemand === undefined ? '—' : row.predictedDemand,
     },
     {
-      accessor: 'forecastPeriod',
+      accessor: 'weekLabel',
       title: 'Forecast Period',
     },
     {
       accessor: 'confidenceLevel',
       title: 'Confidence Level',
       render: (row) =>
-        `${row.confidenceLevel.toFixed(1)}%`,
-    },
-    {
-      accessor: 'status',
-      title: 'Forecast Status',
-      textAlign: 'center',
-      render: (row) => {
-        const indicator = statusIndicator[row.status]
-        const Icon = indicator.icon
-
-        return (
-          <Tooltip label={indicator.label}>
-            <Icon
-              size={18}
-              color={
-                indicator.color === 'gray'
-                  ? '#9ca3af'
-                  : indicator.color === 'orange'
-                    ? '#d97706'
-                    : '#16a34a'
-              }
-              strokeWidth={2.5}
-            />
-          </Tooltip>
-        )
-      },
+        row.confidenceLevel === undefined
+          ? '—'
+          : `${row.confidenceLevel.toFixed(1)}%`,
     },
   ]
 
@@ -107,7 +55,7 @@ const ForecastTable = ({
     ? 'Loading forecast...'
     : isError
       ? 'Unable to load forecast.'
-      : 'No forecast data available.'
+      : 'No forecast data available for this product.'
 
   return (
     <Box
@@ -133,7 +81,7 @@ const ForecastTable = ({
         >
           <AppTable
             columns={columns}
-            data={isLoading ? [] : forecastItems}
+            data={isLoading ? [] : weekRows}
             emptyMessage={emptyMessage}
           />
         </Box>

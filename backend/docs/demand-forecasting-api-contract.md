@@ -240,9 +240,9 @@ Returns one specific forecast run by its ID.
 ## 10. GET /api/forecast/timeseries
 
 ### Purpose
-Returns a chart-ready series per product: **one point per qualifying sales transaction** (actual transaction date on the x-axis, quantity sold on the y-axis) plus exactly one trailing forecast point. Intended to feed a demand chart (historical line, then one projected point).
+Returns a chart/table-ready **weekly** series per product: one point per calendar week (Monday start) of qualifying sales, zero-filled for weeks with no qualifying sales, followed by **exactly three** trailing forecast points — one week each, immediately following the last historical week. This single response is the shared data source for both the Forecast Table and the Forecast Graph; neither recomputes it independently.
 
-The chart grain and the forecast's input grain are deliberately different — see §13.
+The forecast is computed directly from this same weekly series (not from monthly totals) — see §13.
 
 ### Request
 
@@ -251,43 +251,74 @@ The chart grain and the forecast's input grain are deliberately different — se
 |---|---|---|---|
 | `product_id` | int | no | If omitted, returns the series for **every active product**. If provided, filters to that single product. |
 
-**No other query parameters exist.** Do not assume date-range filtering, a `months` limit, or a `forecast_horizon` parameter — none is implemented.
+**No other query parameters exist.** Do not assume date-range filtering, a `months` limit, or a `forecast_horizon` parameter — none is implemented. The 3-week forecast horizon is a fixed constant (`WEEKLY_FORECAST_WEEKS` in `app/services/forecasting.py`), not configurable via the request.
 
 ### Response
 `200 OK`, `ForecastTimeSeriesResponse`.
+
+Verified live response — captured via `TestClient` against a product with three weeks of history (`2026-01-05`: 10 units + `2026-01-08`: 5 units summed into one week; `2026-01-12`: no sales, zero-filled; `2026-01-19`: 20 units):
 
 ```json
 {
   "products": [
     {
-      "product_id": 2,
-      "product_name": "Chair",
+      "product_id": 3757,
+      "product_name": "Test Chair",
+      "trend": "INCREASING",
+      "confidence_level": "38.58",
       "series": [
         {
-          "period": "2026-01-10",
-          "transaction_id": 41,
-          "transaction_number": "TRX-000140",
-          "historical_sales": "12.0000",
-          "quantity_produced": "12.0000",
+          "period": "2026-01-05",
+          "transaction_id": null,
+          "transaction_number": null,
+          "historical_sales": "15.0000",
+          "quantity_produced": "15.0000",
           "predicted_demand": null,
           "is_forecast": false
         },
         {
-          "period": "2026-01-28",
-          "transaction_id": 42,
-          "transaction_number": "TRX-000153",
-          "historical_sales": "9.0000",
-          "quantity_produced": "9.0000",
+          "period": "2026-01-12",
+          "transaction_id": null,
+          "transaction_number": null,
+          "historical_sales": "0",
+          "quantity_produced": "0",
           "predicted_demand": null,
           "is_forecast": false
         },
         {
-          "period": "2026-02-01",
+          "period": "2026-01-19",
+          "transaction_id": null,
+          "transaction_number": null,
+          "historical_sales": "20.0000",
+          "quantity_produced": "20.0000",
+          "predicted_demand": null,
+          "is_forecast": false
+        },
+        {
+          "period": "2026-01-26",
           "transaction_id": null,
           "transaction_number": null,
           "historical_sales": null,
           "quantity_produced": null,
-          "predicted_demand": "10.5000",
+          "predicted_demand": "22.5000",
+          "is_forecast": true
+        },
+        {
+          "period": "2026-02-02",
+          "transaction_id": null,
+          "transaction_number": null,
+          "historical_sales": null,
+          "quantity_produced": null,
+          "predicted_demand": "25.0000",
+          "is_forecast": true
+        },
+        {
+          "period": "2026-02-09",
+          "transaction_id": null,
+          "transaction_number": null,
+          "historical_sales": null,
+          "quantity_produced": null,
+          "predicted_demand": "27.5000",
           "is_forecast": true
         }
       ]
@@ -303,16 +334,18 @@ The chart grain and the forecast's input grain are deliberately different — se
 | `products` | array | no | One entry per matching active product, ordered by `Product.id` ascending. |
 | `products[].product_id` | int | no | |
 | `products[].product_name` | string | no | |
-| `products[].series` | array | no | One historical point per qualifying sales transaction, ordered by `(transaction_date, id)`, followed by **exactly one** forecast point (always last). A zero-history product has a `series` of length 1 (forecast point only). |
-| `series[].period` | string, `"YYYY-MM-DD"` | no | Historical point: that transaction's real date. Forecast point: the first day of the forecasted month. See §13 — do not assume it is "next calendar month from today" for every point. |
-| `series[].transaction_id` | int or `null` | yes | The `sales_transactions.id` behind a historical point; `null` on the forecast point. Stable identity for telling same-date transactions apart. |
-| `series[].transaction_number` | string or `null` | yes | The `TRX-…` reference behind a historical point; `null` on the forecast point. |
-| `series[].historical_sales` | Decimal string or `null` | yes | That transaction's **quantity sold**. Populated on historical points; **always `null` on the forecast point.** |
-| `series[].quantity_produced` | Decimal string or `null` | yes | That transaction's quantity produced, for display/tooltip only — **never** the plotted value. `null` on the forecast point. |
-| `series[].predicted_demand` | Decimal string or `null` | yes | `null` on every historical point; populated only on the forecast point. |
-| `series[].is_forecast` | boolean | no | `false` for every historical point, `true` for exactly one point per product (the last one). |
+| `products[].trend` | string | no | One of `INCREASING`, `DECREASING`, `STABLE`, `NO_DATA`. Computed **once** from the product's weekly historical series and shared by all three forecast points below — not recomputed per point. |
+| `products[].confidence_level` | Decimal string | no | Same composite data-quality score described in §12, computed from the **weekly** series (not the monthly one `GET /api/forecast` uses) — the two endpoints' confidence values for the same product are not expected to match. Always 2 decimal places. |
+| `products[].series` | array | no | One historical point per calendar week (Monday start) from the product's first to last qualifying week, zero-filled for weeks with no qualifying sales, followed by **exactly three** forecast points (always last). A zero-history product has a `series` of length 3 (forecast points only, no historical points at all). |
+| `series[].period` | string, `"YYYY-MM-DD"` | no | The Monday start date of that week — for both historical and forecast points. See §13. |
+| `series[].transaction_id` | `null` | yes | Always `null`. Carried in the schema for backward compatibility only — a weekly point can aggregate zero, one, or several transactions, so no single transaction id applies. |
+| `series[].transaction_number` | `null` | yes | Always `null`, same reason as `transaction_id`. |
+| `series[].historical_sales` | Decimal string or `null` | yes | That week's **total quantity sold**, summed across every qualifying transaction in the week (`"0"` for a zero-filled week). Populated on historical points; **always `null` on forecast points.** |
+| `series[].quantity_produced` | Decimal string or `null` | yes | That week's total quantity produced, summed the same way, for display only — **never** the plotted value. `null` on forecast points. |
+| `series[].predicted_demand` | Decimal string or `null` | yes | `null` on every historical point; populated on each of the three forecast points. |
+| `series[].is_forecast` | boolean | no | `false` for every historical point, `true` for exactly three points per product (the last three). |
 
-This endpoint does **not** return `trend`, `confidence_level`, or `forecast_status` per point or per product — those exist only on `GET /api/forecast` and the history endpoints. Do not expect them here.
+This endpoint's per-point data (`series[]`) does **not** include `trend` or `confidence_level` — those are returned once per product, alongside `series`, as shown above. `forecast_status` is not returned by this endpoint at all (it exists only on `GET /api/forecast` and the history endpoints).
 
 ### Example
 
@@ -334,9 +367,54 @@ Returns only product `2`'s series.
 | `product_id` refers to an **unknown** product | `404 {"detail": "Product not found"}` |
 | `product_id` refers to an **inactive** product | `404 {"detail": "Product not found"}` (inactive products are excluded from the underlying active-product query, so they're indistinguishable from unknown IDs at the API level) |
 | `product_id` is not a valid integer (e.g. `?product_id=abc`) | `422`, FastAPI's standard validation error (see §11) |
-| Product has **zero** sales history | `series` has exactly one point: the forecast point, `historical_sales: null`, `predicted_demand: "0"`, `is_forecast: true`. |
-| Two transactions share one date | Both appear, as two consecutive points with the same `period` but different `transaction_id`s. Nothing is grouped or deduplicated. |
-| Multiple products requested (no filter) | Each product's series is computed and returned independently; products themselves are ordered by `id`, but there is no cross-product period alignment — each series only contains that product's own transactions and forecast point. |
+| Product has **zero** sales history | `series` has exactly 3 points, all forecast, `historical_sales: null` throughout, `predicted_demand: "0"` on each, `trend: "NO_DATA"`, `confidence_level: "0.00"`. Verified live example below. |
+| Two transactions share one date (or one week) | Summed into that single week's `historical_sales`/`quantity_produced` total — never kept as separate points. This is the opposite of the pre-weekly behavior. |
+| A week between two qualifying weeks has no sales | Still appears in `series`, zero-filled (`historical_sales: "0"`). |
+| Multiple products requested (no filter) | Each product's series is computed and returned independently; products themselves are ordered by `id`, but there is no cross-product period alignment — each series only contains that product's own weeks. |
+
+**Verified live example — zero-history product** (captured the same way, server date `2026-11-01`, a Sunday; the containing week starts Monday `2026-10-26`, so week 1 of the forecast is the following Monday):
+
+```json
+{
+  "products": [
+    {
+      "product_id": 3759,
+      "product_name": "Test Dining Table",
+      "trend": "NO_DATA",
+      "confidence_level": "0.00",
+      "series": [
+        {
+          "period": "2026-11-02",
+          "transaction_id": null,
+          "transaction_number": null,
+          "historical_sales": null,
+          "quantity_produced": null,
+          "predicted_demand": "0",
+          "is_forecast": true
+        },
+        {
+          "period": "2026-11-09",
+          "transaction_id": null,
+          "transaction_number": null,
+          "historical_sales": null,
+          "quantity_produced": null,
+          "predicted_demand": "0",
+          "is_forecast": true
+        },
+        {
+          "period": "2026-11-16",
+          "transaction_id": null,
+          "transaction_number": null,
+          "historical_sales": null,
+          "quantity_produced": null,
+          "predicted_demand": "0",
+          "is_forecast": true
+        }
+      ]
+    }
+  ]
+}
+```
 
 ---
 
@@ -378,40 +456,43 @@ Do not present this value to end users as a prediction probability, an ML confid
 
 ## 13. Time-Series Semantics
 
-This section documents the **exact, verified** point construction in `get_forecast_timeseries()` (`app/services/forecasting.py`) — reported precisely, not simplified.
+This section documents the **exact, verified** point construction in `get_forecast_timeseries()` (`app/services/forecasting.py`) — reported precisely, not simplified. This supersedes an earlier version of this endpoint, which aggregated historical points per calendar month and returned a single trailing forecast point; see §17 item 3.
 
-**Historical points — one per sales transaction:**
+**Historical points — one per calendar week:**
 ```text
-source  = get_transaction_historical_demand()
+source  = get_weekly_historical_demand()
 filter  = Product.is_active = true AND quantity > 0
-period  = that transaction's date  ("YYYY-MM-DD")
-value   = that transaction's quantity SOLD  (historical_sales)
-order   = (transaction_date, id) ascending
+period  = the Monday start date of that week  ("YYYY-MM-DD")
+value   = that week's total quantity SOLD, summed across every
+          qualifying transaction in the week  (historical_sales)
+order   = chronological, one entry per week from the product's
+          first to last qualifying week, zero-filled for weeks
+          with no qualifying sales
 ```
-Two transactions on the same date therefore produce two points with the same `period`, distinguished by `transaction_id` / `transaction_number`. They are never grouped, deduplicated or dropped. `quantity_produced` travels alongside for the tooltip only and is never plotted; the plotted value is quantity sold, the same field `GET /api/forecast` uses.
+Two transactions on the same date (or anywhere else in the same Monday-start week) are summed into that one week's point — never kept as separate points. `quantity_produced` is summed the same way per week, travels alongside for the tooltip only, and is never plotted; the plotted value is quantity sold, the same field `GET /api/forecast` uses.
 
-**The forecast value is still computed from monthly totals.** `calculate_forecast()` consumes `get_monthly_historical_demand()` (quantity summed per calendar month, zero-filled between the product's first and last qualifying month) — the exact same function it used before transaction-level charting. The two grains are deliberately different: monthly totals are never plotted as if they were single sales, and the forecast is never re-derived from individual transaction quantities. A product with 9 transactions spread over 3 months therefore renders 9 historical points, while its forecast still comes from the 3 monthly totals.
+**The forecast is computed directly from this same weekly series** — `calculate_weekly_forecast()` consumes `get_weekly_historical_demand()`'s output, the same weekly totals the historical points above are built from. There is no separate monthly layer feeding this endpoint (unlike `GET /api/forecast`, which still uses `get_monthly_historical_demand()`/`calculate_forecast()` independently — see §15). The two endpoints' forecasts for the same product are therefore computed from different aggregations and are not expected to agree.
 
-**For a product with at least one qualifying transaction:**
+**Forecast points — exactly three, one week each:**
 ```text
-forecast_point.period = the FIRST DAY of the calendar month immediately
-                         AFTER that product's own LAST transaction month
+forecast_week_1.period = the Monday immediately AFTER the product's
+                          own last historical week
+forecast_week_2.period = forecast_week_1.period + 7 days
+forecast_week_3.period = forecast_week_2.period + 7 days
 ```
-This is computed per-product, from that product's own last transaction date — it is **not** a single global value shared across all products.
+This is computed per-product, from that product's own last historical week — it is **not** a single global value shared across all products. The three forecast quantities themselves come from `calculate_weekly_forecast()`'s linear-trend extrapolation: with `n >= 2` historical weeks, `avg_delta = (last - first) / (n - 1)`, and each successive forecast point adds `avg_delta` to the previous one (clamped at 0). With exactly 1 historical week, all three forecast points flat-carry that week's value. With 0 historical weeks, all three are `0`.
 
-**For a product with zero transactions:**
+**For a product with at least one qualifying historical week** (verified live example, §10): a product whose last historical week starts `2026-01-19` returns forecast points starting `2026-01-26`, `2026-02-02`, and `2026-02-09`.
+
+**For a product with zero qualifying transactions:**
 ```text
-forecast_point.period = the FIRST DAY of the calendar month immediately
-                         AFTER today's date (server clock at request time)
+forecast_week_1.period = the Monday immediately AFTER the Monday-start
+                          week containing today's date (server clock
+                          at request time)
 ```
+Verified live example (§10): on a server date of `2026-11-01` (a Sunday, so the containing week starts Monday `2026-10-26`), a product with no sales history returns forecast points `2026-11-02`, `2026-11-09`, `2026-11-16`.
 
-**Verified example** (captured live): on a server date of `2026-08-15`, a product with no sales history returns a forecast point with `"period": "2026-09-01"`.
-
-**Verified example with history**: a product whose latest transaction is `2026-10-14` returns a forecast point with `"period": "2026-11-01"` — the month immediately following its own last transaction month, regardless of what today's date actually is.
-
-**This is a per-product-anchored design, not a single "next month from today" value applied uniformly.** The frontend must consume the backend-provided `period` string for each point as-is and must **not** attempt to recompute or infer forecast periods independently — different products in the same response can legitimately have different forecast-point periods if their sales histories end in different months.
-
-**Known ambiguity** (see §17): this exact anchoring choice (per-product last-historical-month vs. a single global "next month from today" for every product) was a documented implementation decision made during Phase F, not something explicitly pinned down word-for-word in the original specification. It is internally consistent and fully tested, but flagged here for awareness.
+**This is a per-product-anchored design, not a single "next week from today" value applied uniformly to every product.** The frontend must consume the backend-provided `period` string for each point as-is and must **not** attempt to recompute or infer forecast periods independently — different products in the same response can legitimately have different forecast-point periods if their sales histories end in different weeks.
 
 ---
 
@@ -421,8 +502,8 @@ All Decimal fields serialize as **JSON strings**, never bare numbers (verified e
 
 | Field | Endpoint(s) | Type | Nullable | Verified precision behavior |
 |---|---|---|---|---|
-| `historical_sales` | Live, Time-series | Decimal string | Live: no. Time-series: yes (null on forecast point) | `"0"` (no decimal places) when derived from the in-memory zero-history fallback; `"12.0000"` (4dp) when derived from a real `SalesTransaction.quantity` (a `Numeric(12,4)` column). **Not fixed-width.** |
-| `predicted_demand` | Live, Time-series | Decimal string | Live: no. Time-series: yes (null on historical points) | Same variable-precision behavior as `historical_sales` — `"0"` for the zero-history case, `"12.0000"`-style otherwise. |
+| `historical_sales` | Live, Time-series | Decimal string | Live: no. Time-series: yes (null on forecast points) | `"0"` (no decimal places) for a zero-filled week (an in-memory `Decimal("0")` literal) or a zero-history fallback; `"15.0000"`-style (4dp) when the week's total comes from summing one or more real `SalesTransaction.quantity` values (a `Numeric(12,4)` column). **Not fixed-width.** Verified in §10's examples: `"0"` for the zero-filled `2026-01-12` week, `"15.0000"`/`"20.0000"` for weeks with real transactions. |
+| `predicted_demand` | Live, Time-series | Decimal string | Live: no. Time-series: yes (null on historical points) | Same variable-precision behavior as `historical_sales` — `"0"` for the zero-history case (verified in §10), `"22.5000"`-style otherwise. |
 | `confidence_level` | Live, History | Decimal string | Live: no. History: yes | **Always exactly 2 decimal places** (`.quantize(Decimal("0.01"))`), e.g. `"0.00"`, `"8.33"`, `"100.00"`. |
 | `historical_quantity` | History only | Decimal string | no (column is `NOT NULL`) | **Always exactly 4 decimal places**, e.g. `"0.0000"`, `"12.0000"` — because this value is read back from a `Numeric(12,4)` database column, unlike the live endpoint's in-memory equivalent. |
 | `forecast_quantity` | History only | Decimal string | no | Same 4-decimal-place behavior as `historical_quantity`, for the same reason. |
@@ -455,15 +536,20 @@ This is **intentionally different** from the live contract. The rename applied i
 
 ### Time-Series API (`GET /api/forecast/timeseries`)
 ```text
-period                 ("YYYY-MM-DD": transaction date, or first day of the forecasted month)
-transaction_id         (nullable — null on the forecast point)
-transaction_number     (nullable — null on the forecast point)
-historical_sales       (uses the live-API vocabulary, nullable — null on the forecast point)
+# per product, alongside series[]:
+trend                  (computed from the weekly series, shared by all 3 forecast points)
+confidence_level       (same, shared by all 3 forecast points)
+
+# per series[] point:
+period                 ("YYYY-MM-DD": that week's Monday start date, historical or forecast)
+transaction_id         (always null — a weekly point can span 0..N transactions)
+transaction_number     (always null, same reason)
+historical_sales       (uses the live-API vocabulary, nullable — null on forecast points)
 quantity_produced      (nullable, display/tooltip only — never plotted)
 predicted_demand       (uses the live-API vocabulary, nullable — null on historical points)
 is_forecast
 ```
-Uses the **live** API's field vocabulary (`historical_sales`/`predicted_demand`), not the history API's (`historical_quantity`/`forecast_quantity`) — confirmed directly from `ForecastTimeSeriesPoint` in `app/schemas/forecast.py`.
+Uses the **live** API's field vocabulary (`historical_sales`/`predicted_demand`), not the history API's (`historical_quantity`/`forecast_quantity`) — confirmed directly from `ForecastTimeSeriesPoint` in `app/schemas/forecast.py`. `trend`/`confidence_level` live on `ProductTimeSeries` (once per product), not on each point — confirmed directly from the same schema file.
 
 **Rule of thumb for frontend developers**: if you're building the forecast table or triggering a new forecast, you're in `historical_sales`/`predicted_demand` territory. If you're reading saved history, you're in `historical_quantity`/`forecast_quantity` territory. If you're building the chart, you're back in `historical_sales`/`predicted_demand` territory (via the time-series endpoint).
 
@@ -500,15 +586,17 @@ Specific History Run
 GET /api/forecast/history/{run_id}
     → 404 if the run_id doesn't exist
 
-Chart
+Forecast Table (weekly view) and Forecast Graph — same data source
     ↓
 GET /api/forecast/timeseries?product_id=<id>
-    → series[] with one historical point per transaction
-      (period = transaction date, transaction_id/number set,
-      historical_sales set, is_forecast=false) followed by exactly
-      one forecast point (period = first day of the forecasted
-      month, predicted_demand set, historical_sales null,
-      transaction_id null, is_forecast=true)
+    → products[0].trend, confidence_level (once, shared by all 3
+      forecast points)
+    → products[0].series[] with one historical point per calendar
+      week (period = that week's Monday start date, historical_sales/
+      quantity_produced set, is_forecast=false), zero-filled for weeks
+      with no sales, followed by exactly 3 forecast points (period =
+      the following Mondays, predicted_demand set, historical_sales
+      null, is_forecast=true)
 ```
 
 **Fields that are always present on the live forecast table** (`GET /api/forecast`): `product_id`, `product_name`, `historical_sales`, `predicted_demand`, `trend`, `confidence_level`, `forecast_status` — none of these are nullable on this endpoint.
@@ -517,7 +605,7 @@ GET /api/forecast/timeseries?product_id=<id>
 
 **Status values that exist today**: `READY`, `LOW_CONFIDENCE`, `NO_DATA` — no other values are produced by the backend. Do not build UI branches for any other status string.
 
-**Forecast period is not a real calendar label on the live/history endpoints** — it is the literal string `"NEXT_CYCLE"` everywhere except the time-series endpoint's per-point `period` field, which is a real `"YYYY-MM"` string (see §13). Do not attempt to derive a real date from the live endpoint's `forecast_period`.
+**Forecast period is not a real calendar label on the live/history endpoints** — it is the literal string `"NEXT_CYCLE"` everywhere except the time-series endpoint's per-point `period` field, which is a real `"YYYY-MM-DD"` (weekly Monday-start date) string (see §13). Do not attempt to derive a real date from the live endpoint's `forecast_period`.
 
 **The backend computes forecast values, confidence, status, and forecast periods — the frontend must not recalculate any of these independently.** See §19.
 
@@ -527,11 +615,11 @@ GET /api/forecast/timeseries?product_id=<id>
 
 These are documented as-is, per instruction, without modifying any backend code:
 
-1. **`forecast_period` is a placeholder literal, not a computed calendar value, on the live and history endpoints.** `GET /api/forecast`, `POST /api/forecast/generate`, and every history endpoint always return the hardcoded string `"NEXT_CYCLE"` — this was never replaced with a real calendar month, unlike the time-series endpoint's per-point `period`, which is a real `"YYYY-MM-DD"` value. This inconsistency (two different "what period is this forecast for" representations within the same feature) is a real, verified characteristic of the current backend, not a documentation gap.
+1. **`forecast_period` is a placeholder literal, not a computed calendar value, on the live and history endpoints.** `GET /api/forecast`, `POST /api/forecast/generate`, and every history endpoint always return the hardcoded string `"NEXT_CYCLE"` — this was never replaced with a real calendar date, unlike the time-series endpoint's per-point `period`, which is a real `"YYYY-MM-DD"` weekly Monday-start date. This inconsistency (two different "what period is this forecast for" representations within the same feature) is a real, verified characteristic of the current backend, not a documentation gap.
 
 2. **Decimal string precision is not uniform** — see §14 for the full verified breakdown. A frontend comparing a live-endpoint value against a history-endpoint value for what should be "the same number" must compare numerically, not as strings.
 
-3. **Time-series forecast-period anchoring is per-product, not global** — see §13. This is a deliberate, tested implementation choice made during Phase F, carried forward through Phase G's final validation without further change. It was flagged in the Phase F/G reports as resting on an interpretation of an underspecified point in the original specification (the spec's period-computation guidance was written primarily for the live endpoint's single run-wide `forecast_period`, and was never fully pinned down for a per-point, per-product timeline). It is internally consistent and fully covered by tests, but is called out here for explicit awareness before frontend work is built against it.
+3. **The time-series endpoint's historical/forecast design changed from monthly/per-transaction to weekly/3-point.** Earlier, `GET /api/forecast/timeseries` returned one historical point per qualifying sales transaction plus exactly one trailing forecast point computed from `get_monthly_historical_demand()`/`calculate_forecast()` (the same monthly layer `GET /api/forecast` still uses). It now returns one point per calendar week (zero-filled) plus exactly three forecast points, computed from its own weekly layer (`get_weekly_historical_demand()`/`calculate_weekly_forecast()`) — see §13. `GET /api/forecast` and the history endpoints were **not** changed by this and still use the monthly layer; only the time-series endpoint's aggregation and forecast horizon changed. Forecast-period anchoring remains **per-product, not global**, same design principle as before, just at weekly instead of monthly granularity.
 
 4. **The forecast history response omits `product_name`.** `GET /api/forecast` includes `product_name` per product; the history endpoints only include `product_id`. A frontend rendering forecast history by product name will need to resolve `product_id` → name itself (e.g. via `GET /api/products`), since the history payload does not provide it.
 
@@ -555,9 +643,9 @@ These are documented as-is, per instruction, without modifying any backend code:
 - Forecast values (`predicted_demand` / `forecast_quantity`)
 - Confidence level
 - Forecast status
-- Forecast period (both the live `"NEXT_CYCLE"` literal and the time-series endpoint's per-point `"YYYY-MM-DD"` periods)
-- Historical demand aggregation (monthly, zero-filled) **for the forecast calculation**, and the per-transaction historical points **for the chart** — the two are separate layers (§13)
-- Time-series point ordering, transaction identity (`transaction_id` / `transaction_number`) and dates
+- Forecast period (both the live `"NEXT_CYCLE"` literal and the time-series endpoint's per-point `"YYYY-MM-DD"` weekly periods)
+- Historical demand aggregation — monthly, zero-filled, **for `GET /api/forecast`'s calculation**, and weekly, zero-filled, **for the time-series endpoint's table/chart series and its own forecast calculation** — the two are separate layers that are not expected to agree (§13)
+- Time-series point ordering and dates (the 3-forecast-week horizon is a fixed backend constant, not frontend-derived)
 
 ### The frontend must NOT independently:
 - Recalculate forecast values from raw sales data
@@ -579,3 +667,12 @@ This document was produced by:
 5. Running the full test suite and both a full and per-file focused run immediately before writing this document.
 
 **Test result at verification time**: `pytest -q` → **130 passed, 0 failed, 0 skipped**. Matches the expected baseline exactly.
+
+### 20.1 Update — Weekly Forecast View
+
+`GET /api/forecast/timeseries` (§10, §13) was changed from a monthly-forecast/per-transaction-chart design to a weekly, 3-forecast-point design. `GET /api/forecast`, `/generate`, and the history endpoints (§5–§9) were not changed. This update was verified by:
+
+1. Reading the updated `get_weekly_historical_demand()`, `calculate_weekly_forecast()`, and `get_forecast_timeseries()` in `app/services/forecasting.py`, and the updated `ProductTimeSeries`/`ForecastTimeSeriesPoint` schemas in `app/schemas/forecast.py`, in full.
+2. **Directly exercising the running application** via `TestClient` (the same mechanism as §20 item 4) against a product with real weekly sales history and a product with none, capturing the exact JSON shown in §10's two examples — not hand-computed or assumed, including the `confidence_level` value, which was computed by the real `Decimal` arithmetic rather than estimated.
+3. Running the targeted suites: `tests/test_forecast_weekly.py` (weekly aggregation + weekly forecast unit tests) and the rewritten `tests/test_forecast_timeseries.py` — **79 passed** across these plus `tests/test_forecast.py`, `tests/test_forecast_aggregation.py`, and `tests/test_forecast_history.py` together, **0 failed**.
+4. Running the full backend suite: **415 passed, 0 failed** (one unrelated module, `tests/test_transaction_date_filter.py`, is skipped by its own pre-existing database-name safety guard, unrelated to this change).

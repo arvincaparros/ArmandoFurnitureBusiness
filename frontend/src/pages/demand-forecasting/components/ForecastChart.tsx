@@ -26,16 +26,21 @@ interface ChartTooltipProps {
   payload?: readonly { payload?: ForecastChartData }[]
 }
 
-// Recharts renders whatever this returns for every point it asks
-// about, so every point except the forecast end returns an empty
-// group: the last transaction anchors the dashed forecast segment but
-// must keep looking like a plain historical dot.
+// Recharts renders whatever this returns for every point on the
+// forecast series, so only the connector point returns an empty
+// group: the last historical week anchors the dashed forecast segment
+// but must keep looking like a plain historical dot, while each of
+// the three real forecast weeks after it gets its own visible dot.
 const renderForecastDot = (
   { cx, cy, index }: ChartDotProps,
-  lastIndex: number,
+  connectorIndex: number,
   fill: string,
 ) => {
-  if (index !== lastIndex || cx === undefined || cy === undefined) {
+  if (
+    index === connectorIndex ||
+    cx === undefined ||
+    cy === undefined
+  ) {
     return <g />
   }
 
@@ -212,7 +217,7 @@ const ForecastChart = ({
       series={[
         {
           name: HISTORICAL_SERIES,
-          label: 'Historical Demand (Transaction)',
+          label: 'Historical Demand (Weekly)',
         },
         {
           name: FORECAST_SERIES,
@@ -246,7 +251,7 @@ const ForecastChart = ({
               dot: (dotProps: ChartDotProps) =>
                 renderForecastDot(
                   dotProps,
-                  chartData.length - 1,
+                  lastHistoricalIndex,
                   forecastFill,
                 ),
             }

@@ -99,6 +99,8 @@ const doorTimeseries: ForecastTimeSeriesResponse = {
     {
       product_id: DOOR_ID,
       product_name: 'Door (60x210)',
+      trend: 'INCREASING',
+      confidence_level: '50.00',
       series: [
         ...DOOR_SALES,
         forecastPoint('2026-11-01', '9.5000'),
@@ -112,6 +114,8 @@ const chairTimeseries: ForecastTimeSeriesResponse = {
     {
       product_id: CHAIR_ID,
       product_name: 'Chair',
+      trend: 'STABLE',
+      confidence_level: '50.00',
       series: [
         salePoint('2026-05-04', '9.0000', '9.0000', 'TRX-CH-1'),
         forecastPoint('2026-06-01', '9.0000'),

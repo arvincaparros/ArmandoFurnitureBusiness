@@ -1,5 +1,5 @@
 from collections import defaultdict
-from datetime import date
+from datetime import date, datetime, timedelta
 from decimal import Decimal
 
 from sqlalchemy import select
@@ -12,12 +12,32 @@ from app.database.models import (
     SalesTransaction,
 )
 
+# Number of weekly forecast points the timeseries endpoint produces -
+# the forecast table and chart both render exactly this many.
+WEEKLY_FORECAST_WEEKS = 3
+
 
 def _next_month(year: int, month: int) -> tuple[int, int]:
     if month == 12:
         return year + 1, 1
 
     return year, month + 1
+
+
+def _week_start(moment: date | datetime) -> date:
+    """
+    Monday of the calendar week containing `moment` - the weekly
+    aggregation's date boundary, used identically for historical
+    buckets and forecast week periods so both line up.
+    """
+
+    day = moment.date() if isinstance(moment, datetime) else moment
+
+    return day - timedelta(days=day.weekday())
+
+
+def _next_week(week_start: date) -> date:
+    return week_start + timedelta(days=7)
 
 
 def get_monthly_historical_demand(
@@ -105,35 +125,32 @@ def get_monthly_historical_demand(
     return monthly_series
 
 
-def get_transaction_historical_demand(
+def get_weekly_historical_demand(
     db: Session,
 ) -> dict[int, list[dict]]:
     """
-    Return the qualifying sales transactions per active product at
-    full transaction granularity, in chronological order.
+    Aggregate qualifying sales transactions into a chronological,
+    zero-filled WEEKLY (Monday-start) demand series per active
+    product.
 
-    This is the chart's historical data layer - one graph point
-    per recorded transaction - and deliberately NOT the forecast
-    algorithm's input: calculate_forecast() keeps consuming
-    get_monthly_historical_demand()'s monthly totals, so the
-    forecast keeps its monthly meaning and scale.
+    This is the shared historical data layer for the forecast
+    table and the forecast chart - both render from the same
+    series produced here, via get_forecast_timeseries(), so the
+    two never recompute or disagree on weekly totals.
 
-    Qualification matches the monthly layer exactly (active
-    product, quantity > 0) so a transaction can never appear in
-    one series and be missing from the other.
+    Qualification matches get_monthly_historical_demand() exactly
+    (active product, quantity > 0).
 
     Returns, per product_id, a list of
-    {"period": "YYYY-MM-DD", "transaction_id": int,
-     "transaction_number": str, "quantity": Decimal,
-     "quantity_produced": Decimal} ordered by
-    (transaction_date, id), so transactions sharing a date stay
-    separate and keep a stable identity.
+    {"period": "YYYY-MM-DD", "quantity": Decimal,
+     "quantity_produced": Decimal} covering every calendar week
+    (by its Monday start date) from that product's first to last
+    qualifying transaction week, in ascending order, with weeks
+    that have no qualifying transactions filled in as zero.
     """
 
     statement = (
         select(
-            SalesTransaction.id,
-            SalesTransaction.transaction_number,
             SalesTransaction.product_id,
             SalesTransaction.transaction_date,
             SalesTransaction.quantity,
@@ -150,26 +167,63 @@ def get_transaction_historical_demand(
         .order_by(
             SalesTransaction.product_id,
             SalesTransaction.transaction_date,
-            SalesTransaction.id,
         )
     )
 
-    transactions: dict[int, list[dict]] = defaultdict(list)
+    rows = db.execute(statement).all()
 
-    for row in db.execute(statement).all():
-        transactions[row.product_id].append(
+    weekly_totals: dict[int, dict[date, dict[str, Decimal]]] = (
+        defaultdict(dict)
+    )
+
+    for row in rows:
+        week_key = _week_start(row.transaction_date)
+
+        totals = weekly_totals[row.product_id].setdefault(
+            week_key,
             {
-                "period": row.transaction_date.strftime(
-                    "%Y-%m-%d"
-                ),
-                "transaction_id": row.id,
-                "transaction_number": row.transaction_number,
-                "quantity": row.quantity,
-                "quantity_produced": row.quantity_produced,
-            }
+                "quantity": Decimal("0"),
+                "quantity_produced": Decimal("0"),
+            },
         )
 
-    return dict(transactions)
+        totals["quantity"] += row.quantity
+        totals["quantity_produced"] += row.quantity_produced
+
+    weekly_series: dict[int, list[dict]] = {}
+
+    for product_id, totals_by_week in weekly_totals.items():
+        weeks = sorted(totals_by_week.keys())
+
+        week = weeks[0]
+        last_week = weeks[-1]
+
+        series = []
+
+        while week <= last_week:
+            totals = totals_by_week.get(
+                week,
+                {
+                    "quantity": Decimal("0"),
+                    "quantity_produced": Decimal("0"),
+                },
+            )
+
+            series.append(
+                {
+                    "period": week.strftime("%Y-%m-%d"),
+                    "quantity": totals["quantity"],
+                    "quantity_produced": totals[
+                        "quantity_produced"
+                    ],
+                }
+            )
+
+            week = _next_week(week)
+
+        weekly_series[product_id] = series
+
+    return weekly_series
 
 
 def calculate_data_score(months: int) -> Decimal:
@@ -260,6 +314,34 @@ def determine_forecast_status(
     return "READY"
 
 
+def _avg_delta_and_trend(
+    quantities: list[Decimal],
+) -> tuple[Decimal, str]:
+    """
+    avg_delta = (last - first) / (n - 1) and the INCREASING/
+    DECREASING/STABLE label derived from its sign. Shared by
+    calculate_forecast() (one next-period step) and
+    calculate_weekly_forecast() (several steps applied in a row).
+    Callers guarantee len(quantities) >= 2.
+    """
+
+    first_quantity = quantities[0]
+    latest_quantity = quantities[-1]
+
+    avg_delta = (latest_quantity - first_quantity) / Decimal(
+        len(quantities) - 1
+    )
+
+    if avg_delta > 0:
+        trend = "INCREASING"
+    elif avg_delta < 0:
+        trend = "DECREASING"
+    else:
+        trend = "STABLE"
+
+    return avg_delta, trend
+
+
 def calculate_forecast(
     monthly_historical_demand: dict[int, list[dict]],
 ) -> dict[int, dict]:
@@ -314,18 +396,7 @@ def calculate_forecast(
             }
             continue
 
-        first_quantity = quantities[0]
-
-        avg_delta = (
-            latest_quantity - first_quantity
-        ) / Decimal(months - 1)
-
-        if avg_delta > 0:
-            trend = "INCREASING"
-        elif avg_delta < 0:
-            trend = "DECREASING"
-        else:
-            trend = "STABLE"
+        avg_delta, trend = _avg_delta_and_trend(quantities)
 
         forecast_quantity = latest_quantity + avg_delta
 
@@ -338,6 +409,83 @@ def calculate_forecast(
             "trend": trend,
             "confidence_level": confidence_level,
             "forecast_status": forecast_status,
+        }
+
+    return forecasts
+
+
+def calculate_weekly_forecast(
+    weekly_historical_demand: dict[int, list[dict]],
+    num_weeks: int = WEEKLY_FORECAST_WEEKS,
+) -> dict[int, dict]:
+    """
+    Compute the next `num_weeks` weekly forecast points per product
+    from its weekly historical demand series (as produced by
+    get_weekly_historical_demand()), using the same linear-trend
+    extrapolation as calculate_forecast() - just applied
+    iteratively, one avg_delta step at a time, instead of a single
+    next-period value.
+
+    weeks == 0: every forecast point is 0, trend = NO_DATA
+    weeks == 1: every forecast point flat-carries the single
+                observed week, trend = STABLE
+    weeks >= 2: avg_delta = (last - first) / (weeks - 1)
+                forecast[0] = max(0, last + avg_delta)
+                forecast[i] = max(0, forecast[i - 1] + avg_delta)
+
+    Also attaches confidence_level and trend, computed once from
+    the weekly series and shared by all num_weeks forecast points
+    for a product - never recomputed per point.
+    """
+
+    forecasts = {}
+
+    for product_id, series in weekly_historical_demand.items():
+        quantities = [item["quantity"] for item in series]
+        weeks = len(quantities)
+
+        confidence_level = calculate_confidence_level(quantities)
+
+        if weeks == 0:
+            forecasts[product_id] = {
+                "forecast_quantities": [
+                    Decimal("0")
+                ] * num_weeks,
+                "trend": "NO_DATA",
+                "confidence_level": confidence_level,
+            }
+            continue
+
+        latest_quantity = quantities[-1]
+
+        if weeks == 1:
+            forecasts[product_id] = {
+                "forecast_quantities": [
+                    latest_quantity
+                ] * num_weeks,
+                "trend": "STABLE",
+                "confidence_level": confidence_level,
+            }
+            continue
+
+        avg_delta, trend = _avg_delta_and_trend(quantities)
+
+        forecast_quantities = []
+        previous = latest_quantity
+
+        for _ in range(num_weeks):
+            next_value = previous + avg_delta
+
+            if next_value < Decimal("0"):
+                next_value = Decimal("0")
+
+            forecast_quantities.append(next_value)
+            previous = next_value
+
+        forecasts[product_id] = {
+            "forecast_quantities": forecast_quantities,
+            "trend": trend,
+            "confidence_level": confidence_level,
         }
 
     return forecasts
@@ -417,31 +565,26 @@ def get_forecast_timeseries(
     product_id: int | None = None,
 ) -> dict:
     """
-    Build a chart series per product with one historical point per
-    qualifying sales transaction
-    (get_transaction_historical_demand()), followed by exactly one
-    forecast point (calculate_forecast()'s predicted_demand for
-    that same product). No historical/forecast values are
-    recalculated here - both come straight from the shared data
-    layers.
+    Build a weekly series per product with one historical point
+    per calendar week of qualifying sales transactions
+    (get_weekly_historical_demand(), zero-filled from the
+    product's first to last qualifying week), followed by exactly
+    WEEKLY_FORECAST_WEEKS forecast points (calculate_weekly_
+    forecast() for that same product). No historical/forecast
+    values are recalculated here - both come straight from the
+    shared data layers, and this one series is the single source
+    the forecast table and the forecast chart both render from.
 
-    The two layers are intentionally different grains: the graph
-    shows every transaction, while the forecast is still computed
-    from monthly totals. The forecast value is never re-derived
-    from transaction quantities, and monthly totals are never
-    plotted as if they were single transactions.
-
-    The forecast point's period is the first day of the calendar
-    month immediately after the product's own latest transaction
-    month, so it always sorts after the last historical point. A
-    product with no history has no historical points, and its
-    forecast point falls on the month immediately after today
+    Forecast week 1 starts the week immediately after the
+    product's own latest historical week, so it always sorts
+    after the last historical point; weeks 2 and 3 follow
+    consecutively. A product with no history has no historical
+    points, and week 1 falls on the week immediately after today's
     (there is no transaction date to anchor to).
     """
 
-    monthly_historical_demand = get_monthly_historical_demand(db)
-    forecasts = calculate_forecast(monthly_historical_demand)
-    historical_transactions = get_transaction_historical_demand(db)
+    weekly_historical_demand = get_weekly_historical_demand(db)
+    forecasts = calculate_weekly_forecast(weekly_historical_demand)
 
     products_statement = (
         select(Product)
@@ -456,24 +599,26 @@ def get_forecast_timeseries(
 
     products = list(db.scalars(products_statement).all())
 
-    today = date.today()
+    today_week_start = _week_start(date.today())
 
     product_series = []
 
     for product in products:
-        history = historical_transactions.get(product.id, [])
+        history = weekly_historical_demand.get(product.id, [])
         forecast = forecasts.get(
             product.id,
-            {"forecast_quantity": Decimal("0")},
+            {
+                "forecast_quantities": [
+                    Decimal("0")
+                ] * WEEKLY_FORECAST_WEEKS,
+                "trend": "NO_DATA",
+                "confidence_level": Decimal("0.00"),
+            },
         )
 
         points = [
             {
                 "period": item["period"],
-                "transaction_id": item["transaction_id"],
-                "transaction_number": item[
-                    "transaction_number"
-                ],
                 "historical_sales": item["quantity"],
                 "quantity_produced": item[
                     "quantity_produced"
@@ -484,41 +629,35 @@ def get_forecast_timeseries(
             for item in history
         ]
 
-        if history:
-            last_year, last_month = (
-                int(part)
-                for part in history[-1]["period"].split("-")[:2]
-            )
-            forecast_year, forecast_month = _next_month(
-                last_year,
-                last_month,
-            )
-        else:
-            forecast_year, forecast_month = _next_month(
-                today.year,
-                today.month,
+        last_week = (
+            date.fromisoformat(history[-1]["period"])
+            if history
+            else today_week_start
+        )
+
+        week = _next_week(last_week)
+
+        for forecast_quantity in forecast["forecast_quantities"]:
+            points.append(
+                {
+                    "period": week.strftime("%Y-%m-%d"),
+                    "historical_sales": None,
+                    "quantity_produced": None,
+                    "predicted_demand": forecast_quantity,
+                    "is_forecast": True,
+                }
             )
 
-        points.append(
-            {
-                "period": (
-                    f"{forecast_year:04d}-{forecast_month:02d}-01"
-                ),
-                "transaction_id": None,
-                "transaction_number": None,
-                "historical_sales": None,
-                "quantity_produced": None,
-                "predicted_demand": forecast[
-                    "forecast_quantity"
-                ],
-                "is_forecast": True,
-            }
-        )
+            week = _next_week(week)
 
         product_series.append(
             {
                 "product_id": product.id,
                 "product_name": product.name,
+                "trend": forecast["trend"],
+                "confidence_level": forecast[
+                    "confidence_level"
+                ],
                 "series": points,
             }
         )

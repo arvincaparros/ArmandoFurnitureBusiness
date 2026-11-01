@@ -49,40 +49,40 @@ vi.mock('@mantine/charts', () => ({
   },
 }))
 
-// The adviser's 9 "Door ( 60x210 )" sales, in API order, plus the one
-// forecast point - the same fixture as forecastAdapter.test.ts.
+// 2026-01-05 is a Monday: 3 historical weeks (one zero-filled gap)
+// followed by exactly the 3 forecast weeks GET /api/forecast/
+// timeseries always returns - the same fixture shape as
+// forecastAdapter.test.ts.
 const sale = (
   date: string,
   fullDate: string,
   sold: number,
-  transactionNumber: string,
 ): ForecastChartData => ({
   date,
   fullDate,
   isForecast: false,
-  transactionNumber,
   quantityProduced: sold,
   historicalDemand: sold,
 })
 
-const forecastRow: ForecastChartData = {
-  date: 'Nov 01',
-  fullDate: 'Nov 01, 2026',
+const forecastWeek = (
+  date: string,
+  fullDate: string,
+  predicted: number,
+): ForecastChartData => ({
+  date,
+  fullDate,
   isForecast: true,
-  forecastedDemand: 9.5,
-}
+  forecastedDemand: predicted,
+})
 
-const DOOR_ROWS: ForecastChartData[] = [
-  sale('Aug 23', 'Aug 23, 2026', 1, 'TRX-000140'),
-  sale('Aug 27', 'Aug 27, 2026', 4, 'TRX-000153'),
-  sale('Aug 30', 'Aug 30, 2026', 3, 'TRX-000158'),
-  sale('Sep 06', 'Sep 06, 2026', 5, 'TRX-000169'),
-  sale('Sep 16', 'Sep 16, 2026', 5, 'TRX-000186'),
-  sale('Sep 20', 'Sep 20, 2026', 5, 'TRX-000191'),
-  sale('Sep 28', 'Sep 28, 2026', 3, 'TRX-000203'),
-  sale('Oct 06', 'Oct 06, 2026', 4, 'TRX-000215'),
-  sale('Oct 14', 'Oct 14, 2026', 5, 'TRX-000226'),
-  forecastRow,
+const WEEKLY_ROWS: ForecastChartData[] = [
+  sale('Jan 05', 'Jan 05, 2026', 10),
+  sale('Jan 12', 'Jan 12, 2026', 0),
+  sale('Jan 19', 'Jan 19, 2026', 20),
+  forecastWeek('Jan 26', 'Jan 26, 2026', 25),
+  forecastWeek('Feb 02', 'Feb 02, 2026', 30),
+  forecastWeek('Feb 09', 'Feb 09, 2026', 35),
 ]
 
 const renderChart = (data: ForecastChartData[]): CapturedChartProps => {
@@ -127,112 +127,81 @@ const renderTooltip = (row: ForecastChartData) => {
 
 describe('ForecastChart x-axis', () => {
   it('plots every row and keeps each one on its own x slot', () => {
-    const chart = renderChart(DOOR_ROWS)
+    const chart = renderChart(WEEKLY_ROWS)
 
     expect(screen.getByTestId('line-chart')).toBeInTheDocument()
 
-    // 9 transactions + 1 forecast: no row is dropped for the axis.
-    expect(chart.data).toHaveLength(10)
+    // 3 historical weeks + 3 forecast weeks: no row is dropped.
+    expect(chart.data).toHaveLength(6)
     expect(chart.dataKey).toBe('axisKey')
 
     const axisKeys = chart.data.map((row) => row.axisKey)
 
-    expect(new Set(axisKeys).size).toBe(10)
+    expect(new Set(axisKeys).size).toBe(6)
   })
 
   it('labels each slot with the short month-and-day date', () => {
-    const chart = renderChart(DOOR_ROWS)
+    const chart = renderChart(WEEKLY_ROWS)
     const formatTick = chart.xAxisProps?.tickFormatter
 
     expect(formatTick).toBeTypeOf('function')
 
-    const labels = chart.data.map((row) =>
-      formatTick?.(row.axisKey),
-    )
+    const labels = chart.data.map((row) => formatTick?.(row.axisKey))
 
     expect(labels).toEqual([
-      'Aug 23',
-      'Aug 27',
-      'Aug 30',
-      'Sep 06',
-      'Sep 16',
-      'Sep 20',
-      'Sep 28',
-      'Oct 06',
-      'Oct 14',
-      'Nov 01',
+      'Jan 05',
+      'Jan 12',
+      'Jan 19',
+      'Jan 26',
+      'Feb 02',
+      'Feb 09',
     ])
   })
 
   it('thins dense labels without removing points', () => {
-    const chart = renderChart(DOOR_ROWS)
+    const chart = renderChart(WEEKLY_ROWS)
 
-    // First and last ticks always survive, so the forecast date stays
-    // labelled however many transactions are plotted.
+    // First and last ticks always survive, so the final forecast week
+    // stays labelled however many weeks are plotted.
     expect(chart.xAxisProps?.interval).toBe('preserveStartEnd')
     expect(chart.xAxisProps?.minTickGap).toBe(12)
-  })
-
-  it('keeps two transactions on the same date as two points', () => {
-    const chart = renderChart([
-      sale('Aug 23', 'Aug 23, 2026', 1, 'TRX-000140'),
-      sale('Aug 23', 'Aug 23, 2026', 4, 'TRX-000153'),
-      forecastRow,
-    ])
-
-    expect(chart.data).toHaveLength(3)
-
-    const formatTick = chart.xAxisProps?.tickFormatter
-
-    // Same visible label, different x slots - neither point is hidden
-    // behind the other, and both keep their own transaction.
-    expect(chart.data.map((row) => formatTick?.(row.axisKey))).toEqual([
-      'Aug 23',
-      'Aug 23',
-      'Nov 01',
-    ])
-    expect(new Set(chart.data.map((row) => row.axisKey)).size).toBe(3)
-    expect(chart.data[0].transactionNumber).not.toBe(
-      chart.data[1].transactionNumber,
-    )
   })
 })
 
 describe('ForecastChart tooltip', () => {
-  it('shows the full transaction date and the quantity sold', () => {
-    renderChart(DOOR_ROWS)
-    renderTooltip(DOOR_ROWS[0])
+  it('shows the full week date and the quantity sold', () => {
+    renderChart(WEEKLY_ROWS)
+    renderTooltip(WEEKLY_ROWS[0])
 
-    expect(screen.getByText('Aug 23, 2026')).toBeInTheDocument()
+    expect(screen.getByText('Jan 05, 2026')).toBeInTheDocument()
     expect(
-      screen.getByText('Quantity sold: 1 units'),
+      screen.getByText('Quantity sold: 10 units'),
     ).toBeInTheDocument()
     expect(
-      screen.getByText('Quantity produced: 1 units'),
+      screen.getByText('Quantity produced: 10 units'),
     ).toBeInTheDocument()
-    expect(screen.getByText('TRX-000140')).toBeInTheDocument()
   })
 
-  it('labels the forecast row as forecast, using its API date', () => {
-    renderChart(DOOR_ROWS)
-    renderTooltip(forecastRow)
+  it('labels a forecast week as forecast, using its own API date', () => {
+    renderChart(WEEKLY_ROWS)
+    renderTooltip(WEEKLY_ROWS[3])
 
-    expect(screen.getByText('Nov 01, 2026')).toBeInTheDocument()
+    expect(screen.getByText('Jan 26, 2026')).toBeInTheDocument()
     expect(
-      screen.getByText('Forecasted demand: 9.5 units'),
+      screen.getByText('Forecasted demand: 25 units'),
     ).toBeInTheDocument()
     expect(screen.queryByText(/Quantity sold/)).toBeNull()
   })
 })
 
 describe('ForecastChart series', () => {
-  it('keeps the forecast dashed and separately labelled', () => {
-    const chart = renderChart(DOOR_ROWS)
+  it('keeps the forecast dashed, separately labelled, and connects to the last historical week', () => {
+    const chart = renderChart(WEEKLY_ROWS)
 
     expect(chart.series).toEqual([
       {
         name: 'historicalDemand',
-        label: 'Historical Demand (Transaction)',
+        label: 'Historical Demand (Weekly)',
       },
       {
         name: 'forecastedDemand',
@@ -242,12 +211,19 @@ describe('ForecastChart series', () => {
       },
     ])
 
-    // The dashed segment starts on the last real transaction, which
-    // still reports its own sale in the tooltip.
-    expect(chart.data[8].isForecast).toBe(false)
-    expect(chart.data[8].forecastedDemand).toBe(
-      chart.data[8].historicalDemand,
+    // The dashed segment starts on the last historical week (index 2,
+    // "Jan 19"), which still reports its own weekly total.
+    expect(chart.data[2].isForecast).toBe(false)
+    expect(chart.data[2].forecastedDemand).toBe(
+      chart.data[2].historicalDemand,
     )
-    expect(chart.data[9].isForecast).toBe(true)
+
+    // All three forecast weeks follow it.
+    expect(chart.data.slice(3).every((row) => row.isForecast)).toBe(
+      true,
+    )
+    expect(
+      chart.data.slice(3).map((row) => row.forecastedDemand),
+    ).toEqual([25, 30, 35])
   })
 })
