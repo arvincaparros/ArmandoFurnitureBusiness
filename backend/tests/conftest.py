@@ -1,9 +1,61 @@
-import pytest
+import os
+from pathlib import Path
 
-from fastapi.testclient import TestClient
+from dotenv import load_dotenv
 
-from main import app
-from app.database.connection import SessionLocal
+
+# --- Test database isolation -------------------------------------------
+#
+# MUST run before any `app.*` or `main` import below: connection.py reads
+# DATABASE_URL at import time, so by the time SessionLocal exists the
+# choice of database is already locked in. load_dotenv() inside
+# connection.py will NOT override what we set here (override=False is
+# its default), so backend/.env's development URL can never win.
+#
+# This is an exact-match ALLOWLIST (must equal "armando_furniture_test"),
+# not a "reject armando_furniture" denylist - a denylist only catches the
+# one name it was written for and would silently let a typo'd or
+# differently-named database through. The allowlist rejects every name
+# except the one intended test database, including "armando_furniture"
+# and any production database, by construction.
+_TEST_DATABASE_NAME = "armando_furniture_test"
+
+load_dotenv(
+    Path(__file__).resolve().parents[1] / ".env.test",
+    override=True,
+)
+
+_TEST_DATABASE_URL = os.environ.get("TEST_DATABASE_URL")
+
+if not _TEST_DATABASE_URL:
+    raise RuntimeError(
+        "TEST_DATABASE_URL is not configured. Copy "
+        "backend/.env.test.example to backend/.env.test and set it to "
+        f"the {_TEST_DATABASE_NAME} database. Tests must never run "
+        "against the development database."
+    )
+
+_resolved_name = (
+    _TEST_DATABASE_URL.rsplit("/", 1)[-1].split("?")[0]
+)
+
+if _resolved_name != _TEST_DATABASE_NAME:
+    raise RuntimeError(
+        f"Refusing to run: TEST_DATABASE_URL resolves to "
+        f"'{_resolved_name}', not {_TEST_DATABASE_NAME}. Tests must "
+        "never run against the development or production database - "
+        f"point backend/.env.test's TEST_DATABASE_URL at "
+        f"{_TEST_DATABASE_NAME} specifically."
+    )
+
+os.environ["DATABASE_URL"] = _TEST_DATABASE_URL
+
+import pytest  # noqa: E402
+
+from fastapi.testclient import TestClient  # noqa: E402
+
+from main import app  # noqa: E402
+from app.database.connection import SessionLocal, engine  # noqa: E402
 
 from datetime import datetime
 from decimal import Decimal

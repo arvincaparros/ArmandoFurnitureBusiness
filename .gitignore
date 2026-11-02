@@ -9,6 +9,7 @@ backend/__pycache__/
 
 # Environment
 backend/.env
+backend/.env.test
 frontend/.env
 .env
 
