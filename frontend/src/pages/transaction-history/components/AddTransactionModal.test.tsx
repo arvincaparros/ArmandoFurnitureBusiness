@@ -61,7 +61,7 @@ const renderModal = ({
 }: RenderOptions = {}) => {
   const onClose = vi.fn()
 
-  render(
+  const { rerender } = render(
     <MantineProvider>
       <AddTransactionModal
         opened
@@ -76,7 +76,43 @@ const renderModal = ({
     </MantineProvider>,
   )
 
-  return { onSave, onClose }
+  // Exposed so a test can simulate the page re-rendering the SAME
+  // open modal with an updated inventory snapshot (e.g. after a sale
+  // or an apply is recorded and GET /api/inventory is refetched) -
+  // React preserves this component's state (like the selected
+  // productId) across a rerender of the same element, exactly as it
+  // would in the real app while the modal stays open.
+  const rerenderWithProps = (
+    overrides: RenderOptions = {},
+  ) => {
+    const merged = {
+      transaction,
+      onSave,
+      stockByProductId,
+      producedByProductId,
+      isStockValidationEnabled,
+      ...overrides,
+    }
+
+    rerender(
+      <MantineProvider>
+        <AddTransactionModal
+          opened
+          products={products}
+          transaction={merged.transaction ?? null}
+          stockByProductId={merged.stockByProductId}
+          producedByProductId={merged.producedByProductId}
+          isStockValidationEnabled={
+            merged.isStockValidationEnabled
+          }
+          onClose={onClose}
+          onSave={merged.onSave}
+        />
+      </MantineProvider>,
+    )
+  }
+
+  return { onSave, onClose, rerenderWithProps }
 }
 
 const setNumber = async (label: string, value: string) => {
@@ -223,7 +259,12 @@ describe('AddTransactionModal', () => {
   // opening balance has been reviewed. Both figures come from
   // GET /api/inventory; nothing is recomputed here.
 
-  it('shows Quantity Produced as read-only and filled from applied production', async () => {
+  it('shows Quantity Produced as read-only and filled from the product\'s available production balance', async () => {
+    // Quantity Produced must reflect available stock (opening + all
+    // applied production - all sales, continuous), NOT
+    // producedByProductId's per-cycle drawdown - the two are
+    // deliberately different here (10 vs 15) to prove the field binds
+    // to the correct one.
     renderModal({
       producedByProductId: { 1: 10 },
       stockByProductId: { 1: 15 },
@@ -237,7 +278,52 @@ describe('AddTransactionModal', () => {
     ) as HTMLInputElement
 
     expect(producedInput).toHaveAttribute('readonly')
-    expect(producedInput.value).toBe('10')
+    expect(producedInput.value).toBe('15')
+  })
+
+  it('displays the continuous available balance through an apply -> sell -> apply sequence (Apply 10 -> 10, sell 4 -> 6, apply 5 more -> 11)', async () => {
+    // Step 1: Apply 10 units. Available balance is now 10.
+    const { rerenderWithProps } = renderModal({
+      stockByProductId: { 1: 10 },
+      isStockValidationEnabled: true,
+    })
+
+    await selectProduct('Test Chair')
+
+    expect(
+      (
+        screen.getByLabelText(
+          /quantity produced/i,
+        ) as HTMLInputElement
+      ).value,
+    ).toBe('10')
+
+    // Step 2: Record a sale of 4. The backend ledger reduces available
+    // stock to 6 (10 - 4); the page refetches GET /api/inventory and
+    // re-renders this same open modal with the new snapshot.
+    rerenderWithProps({ stockByProductId: { 1: 6 } })
+
+    expect(
+      (
+        screen.getByLabelText(
+          /quantity produced/i,
+        ) as HTMLInputElement
+      ).value,
+    ).toBe('6')
+
+    // Step 3: Apply another 5 units. The new apply ADDS to the
+    // existing 6 (never replaces it) - available stock becomes 11.
+    rerenderWithProps({ stockByProductId: { 1: 11 } })
+
+    // Opening Add Transaction and selecting the product now must
+    // display 11, exactly matching the approved example.
+    expect(
+      (
+        screen.getByLabelText(
+          /quantity produced/i,
+        ) as HTMLInputElement
+      ).value,
+    ).toBe('11')
   })
 
   it('shows available stock for the selected product', async () => {

@@ -40,10 +40,17 @@ interface AddTransactionModalProps {
   products: ProductSummary[]
   transaction?: Transaction | null
 
-  // product_id -> available stock across all cycles, and product_id
-  // -> this cycle's unclaimed applied production. Both come from
-  // GET /api/inventory via useTransactions.
+  // product_id -> available stock across all cycles (opening + all
+  // applied production - all sales, continuous, never reset). Drives
+  // both the Quantity Produced display below and the Quantity Sold
+  // max/validation. Comes from GET /api/inventory via useTransactions.
   stockByProductId: Record<number, number>
+  // product_id -> this cycle's unclaimed applied production. Kept in
+  // the prop shape for compatibility with the caller (TransactionHistoryPage.tsx
+  // still passes it, used by nothing else there) - deliberately unused
+  // in this component: it is a per-cycle drawdown, not available
+  // stock, and using it for the Quantity Produced display was the bug
+  // this field's binding below was changed to fix.
   producedByProductId: Record<number, number>
   isStockValidationEnabled: boolean
 
@@ -81,7 +88,6 @@ const AddTransactionModal = ({
   products,
   transaction,
   stockByProductId,
-  producedByProductId,
   isStockValidationEnabled,
   onClose,
   onSave,
@@ -124,18 +130,20 @@ const AddTransactionModal = ({
     setError(null)
   }, [transaction, opened])
 
-  // Server-computed on create (see app/services/transaction.py::
-  // create_transaction, which auto-fills it from the ledger as a
-  // per-cycle drawdown and ignores anything sent here). Shown
-  // read-only so the user can see what will be recorded without being
-  // able to desynchronise it. In edit mode the stored value is shown
-  // as-is: update_transaction deliberately does not re-derive it,
-  // because re-deriving would reshuffle the drawdown across every row
-  // in the cycle and rewrite settled history.
+  // Displays the product's current available production balance
+  // (opening + all applied production - all sales, continuous,
+  // never reset - see services/inventory.py::get_available_stock) -
+  // NOT producedByProductId's per-cycle drawdown, which is a
+  // different figure that resets at a cycle boundary and drains as
+  // sales attribute against it. This field is purely a display
+  // preview: quantity_produced is never sent in the create/update
+  // request (see handleSave below), so this has no effect on what
+  // the backend actually records. In edit mode the stored value is
+  // shown as-is, unchanged from before.
   const displayedQuantityProduced = isEditMode
     ? (transaction?.quantityProduced ?? 0)
     : productId !== null
-      ? (producedByProductId[productId] ?? 0)
+      ? (stockByProductId[productId] ?? 0)
       : 0
 
   const availableStock =
