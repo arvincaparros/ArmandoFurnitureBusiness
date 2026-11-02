@@ -88,15 +88,17 @@ def test_quantity_produced_is_auto_filled_from_applied_production(
     _cleanup_sales(db, product.id)
 
 
-def test_a_second_sale_in_the_same_cycle_records_zero_produced(
+def test_a_second_sale_in_the_same_cycle_records_remaining_available_stock(
     client, db, cleanup_opening_inventory, cleanup_applications,
     transaction_cycle, test_products,
 ):
     """
-    The anti-inflation rule. Two sales after one apply of 10 must sum
-    to 10 produced, not 20 - otherwise Demand Forecasting's produced
-    series grows with the number of transactions recorded rather than
-    with actual production.
+    quantity_produced now mirrors all-time available stock AT THE
+    MOMENT of each sale, not a per-cycle drawdown: after apply 10 and
+    a first sale of 3, available stock is 7 before the second sale
+    runs, so the second sale's saved quantity_produced is 7 - not 0
+    (the old anti-inflation drawdown value) and not 10 again (that
+    would mean the second sale's own prior row count).
     """
 
     product = test_products[0]
@@ -120,31 +122,26 @@ def test_a_second_sale_in_the_same_cycle_records_zero_produced(
         Decimal("10")
     )
     assert Decimal(second.json()["quantity_produced"]) == (
-        Decimal("0")
+        Decimal("7")
     )
-
-    total_produced = db.query(
-        SalesTransaction.quantity_produced
-    ).filter(
-        SalesTransaction.product_id == product.id,
-        SalesTransaction.production_cycle_id
-        == transaction_cycle.id,
-    ).all()
-
-    assert sum(
-        row[0] for row in total_produced
-    ) == Decimal("10")
 
     _cleanup_sales(db, product.id)
 
 
-def test_quantity_produced_is_never_available_stock(
+# Inverted per the Quantity Produced requirement: quantity_produced
+# must now EQUAL available stock, including opening inventory - the
+# opposite of this test's original premise (see
+# test_a_second_sale_in_the_same_cycle_records_remaining_available_stock
+# for the matching per-cycle-drawdown reversal). Same scenario,
+# opposite outcome.
+def test_quantity_produced_includes_opening_stock(
     client, db, cleanup_opening_inventory, cleanup_applications,
     transaction_cycle, test_products,
 ):
     """
-    Explicitly forbidden by the spec. With 40 units of opening stock
-    and only 6 newly produced, the recorded produced figure must be 6.
+    With 40 units of opening stock and 6 newly produced, available
+    stock before this sale is 46 - and quantity_produced must record
+    46, not just the 6 newly produced this cycle.
     """
 
     product = test_products[0]
@@ -158,7 +155,7 @@ def test_quantity_produced_is_never_available_stock(
     )
 
     assert Decimal(response.json()["quantity_produced"]) == (
-        Decimal("6")
+        Decimal("46")
     )
 
     _cleanup_sales(db, product.id)
@@ -514,9 +511,14 @@ def test_editing_a_zero_produced_row_does_not_crash(
 ):
     """
     update_transaction reconstructs the per-unit production cost by
-    dividing the stored total by quantity_produced. The drawdown rule
-    makes 0 a normal stored value for the second sale in a cycle, so
-    that division is a live ZeroDivisionError (a 500) without this fix.
+    dividing the stored total by quantity_produced, guarded by
+    `elif transaction.quantity_produced:` precisely because a stored
+    0 is still possible - a legacy row, or one edited directly - even
+    though create_transaction itself can no longer save one (a
+    successful sale always implies pre-sale available stock > 0, so
+    quantity_produced is now always positive going forward). Built
+    directly rather than via two sales in a cycle, since that no
+    longer produces a 0 under the current create-time rule.
     """
 
     product = test_products[0]
@@ -524,20 +526,26 @@ def test_editing_a_zero_produced_row_does_not_crash(
     _review_opening(db, product.id, 0, "M")
     _apply_production(db, transaction_cycle.id, product.id, 10)
 
-    client.post(
-        "/api/transactions",
-        json=_sale_payload(product.id, 31, 3),
+    zero_produced_row = SalesTransaction(
+        transaction_number="TRX-ZEROPROD",
+        product_id=product.id,
+        production_cycle_id=transaction_cycle.id,
+        transaction_date=datetime(2026, 10, 31),
+        quantity=Decimal("2"),
+        quantity_produced=Decimal("0"),
+        unit_price=Decimal("100.00"),
+        total_sales=Decimal("200.00"),
+        production_cost=Decimal("0.00"),
+        unit_profit=Decimal("100.0000"),
+        total_profit=Decimal("200.0000"),
     )
 
-    second = client.post(
-        "/api/transactions",
-        json=_sale_payload(product.id, 31, 2),
-    ).json()
-
-    assert Decimal(second["quantity_produced"]) == Decimal("0")
+    db.add(zero_produced_row)
+    db.commit()
+    db.refresh(zero_produced_row)
 
     response = client.patch(
-        f"/api/transactions/{second['id']}",
+        f"/api/transactions/{zero_produced_row.id}",
         json={"quantity": 1},
     )
 
@@ -632,3 +640,119 @@ def test_editing_a_pre_rollout_row_leaves_it_unattributed(
     finally:
         db.delete(legacy)
         db.commit()
+
+
+# --- Cross-cycle quantity_produced (the PA-0001 / Cycle 939 bug) -----------
+#
+# Reproduces the real scenario that motivated this fix: production
+# applied under one cycle, a sale recorded under a DIFFERENT, later
+# cycle created afterward to cover today's date. quantity_produced
+# must reflect all-time available stock across both cycles, not only
+# production applied within the sale's own resolved cycle.
+
+
+def test_production_in_one_cycle_and_sale_in_a_later_cycle(
+    client, db, cleanup_opening_inventory, cleanup_applications,
+    two_cycles, test_products,
+):
+    first, second = two_cycles
+    product = test_products[0]
+    _cleanup_sales(db, product.id)
+    _review_opening(db, product.id, 0, "P")
+
+    # All production lives in the FIRST cycle only - second has none.
+    _apply_production(db, first.id, product.id, 5)
+
+    # This date resolves to the SECOND cycle (Nov 6-13), a cycle with
+    # zero production of its own.
+    response = client.post(
+        "/api/transactions",
+        json={
+            "product_id": product.id,
+            "transaction_date": "2026-11-07T00:00:00",
+            "quantity": 2,
+            "unit_price": 100,
+            "production_cost": 0,
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    assert response.json()["production_cycle_id"] == second.id
+
+    # quantity_produced equals available stock AT THE MOMENT of
+    # creation (opening 0 + produced 5 from the first cycle - sold 0
+    # so far = 5) - not the second cycle's own (empty) production,
+    # which is what previously saved 0 despite 5 units being
+    # genuinely available.
+    assert Decimal(response.json()["quantity_produced"]) == (
+        Decimal("5")
+    )
+
+    db.expire_all()
+
+    from app.services.inventory import (
+        get_available_stock_for_product,
+    )
+
+    # Available stock correctly decreases after the sale, all-time,
+    # regardless of which cycle the sale landed in.
+    assert get_available_stock_for_product(
+        db, product.id,
+    ) == Decimal("3")
+
+    _cleanup_sales(db, product.id)
+
+
+def test_multiple_applications_across_different_cycles_accumulate(
+    client, db, cleanup_opening_inventory, cleanup_applications,
+    two_cycles, test_products,
+):
+    """
+    Production applied in two SEPARATE cycles must both count toward
+    the same all-time balance - accumulating, never one cycle's
+    application overwriting or shadowing the other's.
+    """
+
+    first, second = two_cycles
+    product = test_products[0]
+    _cleanup_sales(db, product.id)
+    _review_opening(db, product.id, 0, "Q")
+
+    _apply_production(db, first.id, product.id, 5)
+    _apply_production(db, second.id, product.id, 4)
+
+    db.expire_all()
+
+    from app.services.inventory import (
+        get_available_stock_for_product,
+    )
+
+    assert get_available_stock_for_product(
+        db, product.id,
+    ) == Decimal("9")
+
+    # A sale recorded against the second cycle must auto-fill from
+    # the combined 9, not just the second cycle's own 4.
+    response = client.post(
+        "/api/transactions",
+        json={
+            "product_id": product.id,
+            "transaction_date": "2026-11-07T00:00:00",
+            "quantity": 1,
+            "unit_price": 100,
+            "production_cost": 0,
+        },
+    )
+
+    assert response.status_code == 201, response.text
+    assert Decimal(response.json()["quantity_produced"]) == (
+        Decimal("9")
+    )
+
+    db.expire_all()
+
+    assert get_available_stock_for_product(
+        db, product.id,
+    ) == Decimal("8")
+
+    _cleanup_sales(db, product.id)

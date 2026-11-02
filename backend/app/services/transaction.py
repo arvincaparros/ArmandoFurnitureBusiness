@@ -16,7 +16,6 @@ from app.schemas.transaction import (
 )
 from app.services.inventory import (
     get_available_stock_for_product,
-    get_unattributed_produced,
     lock_product_for_stock_update,
 )
 from app.services.opening_inventory import (
@@ -434,21 +433,21 @@ def create_transaction(
             "or reduce the quantity sold."
         )
 
-    # Server-computed, ignoring any client-sent value. This is the
-    # production NEWLY applied in this cycle that no transaction has
-    # claimed yet - a drawdown, so the first sale after an apply
-    # carries the new units and later sales in the same cycle carry 0.
-    # Never available stock: that spans every cycle and includes
-    # opening inventory, so using it here would report old units as
-    # newly produced and overstate what this cycle produced. (R1: the
-    # forecast chart reads production from the ledger, not from this
-    # column, but the column must still not overstate production -
-    # it drives this transaction's production cost.)
-    quantity_produced = get_unattributed_produced(
-        db,
-        production_cycle.id,
-        product.id,
-    )
+    # Server-computed, ignoring any client-sent value - and now the
+    # SAME all-time available balance the Add Transaction modal
+    # already displays (opening + production applied in ANY cycle -
+    # sales across all time), not a per-cycle drawdown. A cycle-local
+    # drawdown undercounts the moment a sale's own cycle differs from
+    # the cycle production was actually applied to (e.g. production
+    # applied under an old cycle, a sale recorded once a new cycle
+    # covers today's date) - exactly the mismatch that produced a
+    # saved 0 despite 5 units being genuinely available. Computed
+    # BEFORE this sale's own row exists, so it is pre-sale stock, the
+    # same value `available_stock` above was just validated against -
+    # reused directly rather than recomputed. (R1: the forecast chart
+    # reads production from the ledger, not from this column, so
+    # widening what this column means does not affect it.)
+    quantity_produced = available_stock
 
     values = calculate_transaction_values(
         quantity_produced,

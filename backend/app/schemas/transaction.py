@@ -10,17 +10,19 @@ class SalesTransactionCreate(BaseModel):
     transaction_date: datetime
 
     # SERVER-COMPUTED - app/services/transaction.py::create_transaction
-    # overwrites whatever arrives here with
-    # inventory.py::get_unattributed_produced for this product in the
-    # transaction's own cycle. Accepted-and-ignored rather than
-    # forbidden so existing clients and scripts that still send it keep
-    # working; optional so new clients can simply omit it.
+    # overwrites whatever arrives here with the product's all-time
+    # available stock (inventory.py::get_available_stock_for_product)
+    # at the moment of this sale - the same figure the Add Transaction
+    # modal already displays, across every cycle, not only production
+    # applied within the transaction's own cycle. Accepted-and-ignored
+    # rather than forbidden so existing clients and scripts that still
+    # send it keep working; optional so new clients can simply omit
+    # it.
     #
-    # gt=0 was deliberately dropped: under the drawdown rule the
-    # SECOND sale in a cycle legitimately records 0 newly-produced
-    # units, which is what keeps the per-cycle produced sum equal to
-    # actual production instead of multiplying with the number of
-    # transactions recorded.
+    # ge=0 (not gt=0) is kept for the same reason it was dropped from
+    # strict positivity originally - this field's value is always
+    # discarded, so its own constraint only bounds what a now-ignored
+    # client payload may contain, never what gets stored.
     quantity_produced: Decimal | None = Field(
         default=None,
         ge=0,
