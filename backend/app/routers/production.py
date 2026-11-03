@@ -225,15 +225,19 @@ def optimize_production(
     
     started_at = datetime.now()
 
-    # Computed ONCE here and reused for both the solve and the
-    # response below, so they can never disagree about how much of
-    # each resource earlier applications in this cycle have already
-    # spent. This is the same figure apply_optimization has validated
-    # proposals against since the ledger was introduced
-    # (get_cycle_consumed_by_resource) - Generate now solves against
-    # it too, instead of the cycle's full original capacity every
-    # time. Empty on a cycle's first generation, exactly reproducing
-    # today's behavior.
+    # Generate must return an independent, repeatable proposal based
+    # on this cycle's CURRENT declared resource capacities - never
+    # shrunk by what earlier applications in this same cycle have
+    # already consumed. That protection belongs to apply_optimization
+    # alone, which re-derives and revalidates this same figure for
+    # itself at Apply time (see its own get_cycle_consumed_by_resource
+    # call) - a plan Generate is happy to propose can still be
+    # correctly rejected there if the cycle doesn't actually have that
+    # much left. Computed here only for the utilization/bottleneck
+    # preview below (build_optimization_result), so that preview can
+    # still honestly show >100% utilization when this fresh proposal,
+    # combined with what's already consumed, would exceed capacity -
+    # it just no longer shrinks the proposal itself.
     already_consumed_by_resource_id = get_cycle_consumed_by_resource(
         db,
         cycle_id,
@@ -257,9 +261,6 @@ def optimize_production(
             data["requirements"],
             optimization_data.objective.value,
             forecast=forecast,
-            already_consumed_by_resource_id=(
-                already_consumed_by_resource_id
-            ),
         )
 
     except ValueError as exc:

@@ -5,6 +5,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from app.database.models import Product, SalesTransaction
+from app.services.allocation import get_allocations
 from app.services.opening_inventory import (
     get_opening_quantities,
     get_reviewed_opening_inventory_set,
@@ -278,6 +279,19 @@ def get_inventory_overview(db: Session) -> dict:
         else {}
     )
 
+    # One row per product, wholesale-replaced on every Apply (see
+    # allocation.py::get_allocations and apply_optimization) - the
+    # single most recent batch size, never a running total like
+    # cycle_produced above.
+    latest_applied_quantity = (
+        {
+            allocation.product_id: allocation.quantity
+            for allocation in get_allocations(db, cycle.id)
+        }
+        if cycle is not None
+        else {}
+    )
+
     products = db.scalars(
         select(Product)
         .where(Product.is_active.is_(True))
@@ -316,6 +330,11 @@ def get_inventory_overview(db: Session) -> dict:
                 ),
                 "cycle_sold": cycle_sold.get(
                     product.id, Decimal("0"),
+                ),
+                "latest_applied_quantity": (
+                    latest_applied_quantity.get(
+                        product.id, Decimal("0"),
+                    )
                 ),
             }
             for product in products

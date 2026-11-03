@@ -201,6 +201,18 @@ const useTransactions = (
       ]),
     ),
 
+    // The single most recent successful Apply's quantity per
+    // product - NOT cumulative like cycle_produced above (a second
+    // Apply of 47 more units makes cycle_produced 94, this stays
+    // 47). What AddTransactionModal's "Quantity Produced" field
+    // shows for a new transaction.
+    latestAppliedQuantityByProductId: Object.fromEntries(
+      (inventoryQuery.data?.products ?? []).map((row) => [
+        row.product_id,
+        Number(row.latest_applied_quantity),
+      ]),
+    ),
+
     isStockValidationEnabled:
       inventoryQuery.data?.stock_validation_enabled ?? false,
 

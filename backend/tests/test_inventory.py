@@ -379,6 +379,7 @@ def test_inventory_endpoint_reports_all_three_figures(
         "available_stock",
         "cycle_produced",
         "cycle_sold",
+        "latest_applied_quantity",
     ):
         assert field in row
 
@@ -613,3 +614,81 @@ def test_available_stock_accumulates_multiple_applications_on_or_after_effective
     assert get_available_stock_for_product(
         db, product.id,
     ) == Decimal("14")
+
+
+def test_latest_applied_quantity_reflects_only_the_most_recent_apply(
+    client, db, cleanup_applications, optimization_cycle, test_products,
+):
+    """
+    latest_applied_quantity must track only the SINGLE most recent
+    Apply for a product (ProductionAllocation.quantity - wholesale-
+    replaced on every Apply), never the cumulative within-cycle total
+    cycle_produced reports. This is what Add Transaction's "Quantity
+    Produced" field reads: a second Apply of the same batch size must
+    still display that one batch, not a running sum.
+    """
+
+    from app.database.models import CycleResource
+
+    chair = next(
+        product for product in test_products
+        if product.name == "Test Chair"
+    )
+
+    def _chair_row():
+        payload = client.get("/api/inventory").json()
+
+        return next(
+            item for item in payload["products"]
+            if item["product_id"] == chair.id
+        )
+
+    assert client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize",
+        json={"objective": "MAX_PROFIT"},
+    ).status_code == 200
+
+    assert client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize/apply",
+    ).status_code == 200
+
+    first_row = _chair_row()
+
+    assert Decimal(
+        first_row["latest_applied_quantity"]
+    ) == Decimal("12.0000")
+    assert Decimal(first_row["cycle_produced"]) == Decimal(
+        "12.0000"
+    )
+
+    # Restored Generate-independence workflow: generate the second
+    # batch BEFORE topping up capacity (see the ordering note in
+    # test_production_apply_ledger.py), then top up so the second
+    # Apply has fresh material to consume.
+    assert client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize",
+        json={"objective": "MAX_PROFIT"},
+    ).status_code == 200
+
+    for cycle_resource in db.query(CycleResource).filter(
+        CycleResource.production_cycle_id == optimization_cycle.id
+    ).all():
+        cycle_resource.available_quantity = (
+            cycle_resource.available_quantity * Decimal("3")
+        )
+
+    db.commit()
+
+    assert client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize/apply",
+    ).status_code == 200
+
+    second_row = _chair_row()
+
+    # The same batch size again (12) - never the running sum (24).
+    assert Decimal(
+        second_row["latest_applied_quantity"]
+    ) == Decimal("12.0000")
+    assert Decimal(second_row["cycle_produced"]) == Decimal(
+        "24.0000"
+    )

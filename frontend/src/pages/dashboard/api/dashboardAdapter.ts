@@ -264,10 +264,14 @@ export function buildDashboardRecommendations(
 
 // --- Resource utilization bar chart -----------------------------------
 //
-// utilization_rate is used directly, unmodified (0-100, already
+// utilization_rate is otherwise used directly, unmodified (already
 // per-resource comparable) - no normalization into pie-slice shares,
 // since a horizontal bar chart doesn't need values to sum to 100 the
-// way a pie's would.
+// way a pie's would. Capped to 100 for display (approved business
+// rule, mirrored from resource-utilization-report/api/
+// utilizationAdapter.ts): the backend figure is the TRUE, uncapped
+// consumption ratio - repeated Apply can genuinely push it well past
+// 100% now - but this chart must never show more than a full bar.
 
 export function buildDashboardResourceUtilization(
   utilization: ResourceUtilizationResponse | null | undefined,
@@ -278,6 +282,9 @@ export function buildDashboardResourceUtilization(
 
   return utilization.resources.map((resource) => ({
     name: resource.resource_name,
-    value: parseDecimal(resource.utilization_rate) ?? 0,
+    value: Math.min(
+      parseDecimal(resource.utilization_rate) ?? 0,
+      100,
+    ),
   }))
 }

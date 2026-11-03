@@ -26,6 +26,16 @@ class ProductInventoryResponse(BaseModel):
     cycle_produced: Decimal
     cycle_sold: Decimal
 
+    # The quantity from the single most recent successful Apply for
+    # this product in the CURRENT cycle (ProductionAllocation.quantity
+    # - wholesale-replaced on every Apply, never summed). Distinct
+    # from cycle_produced above, which accumulates every application
+    # this cycle: a second Apply of 47 more units makes cycle_produced
+    # 94, while this stays 47. 0 when this product has no allocation
+    # in the current cycle (no Apply yet, or its last Apply gave it
+    # zero units).
+    latest_applied_quantity: Decimal
+
 
 class InventoryOverviewResponse(BaseModel):
     # Null when no production cycle exists yet, in which case every

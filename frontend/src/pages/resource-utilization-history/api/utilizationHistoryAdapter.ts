@@ -44,6 +44,23 @@ function toDisplayDate(generatedAt: string): string {
   )
 }
 
+// Display cap (approved business rule), mirrored from the live
+// Resource Utilization Report's own utilizationAdapter.ts: the
+// stored ResourceUtilizationHistoryItem row keeps the TRUE, uncapped
+// figures forever (an accurate historical record, never modified),
+// but this page shares the live report's UtilizationProgress/table
+// layout and must show the same capped numbers - "the same report,
+// frozen at a point in time" (see UtilizationHistoryTable.tsx).
+// consumedQuantity below is deliberately NOT clamped - only the
+// derived utilization%/remaining are.
+function clampUtilizationPercent(value: number): number {
+  return Math.min(value, 100)
+}
+
+function clampRemainingQuantity(value: number): number {
+  return Math.max(value, 0)
+}
+
 // Flattens one run's detail response into one row per resource item -
 // Utilization ID/Date Generated are intentionally repeated per row
 // (see types.ts) to match the client's own requested column layout,
@@ -58,8 +75,12 @@ export function toUiHistoryRows(
     resourceName: item.resource_name,
     unit: item.unit,
     consumedQuantity: parseDecimal(item.consumed_quantity),
-    remainingQuantity: parseDecimal(item.remaining_quantity),
-    utilizationPercent: parseDecimal(item.utilization_rate),
+    remainingQuantity: clampRemainingQuantity(
+      parseDecimal(item.remaining_quantity),
+    ),
+    utilizationPercent: clampUtilizationPercent(
+      parseDecimal(item.utilization_rate),
+    ),
     status: resolveUtilizationStatus(item.status),
   }))
 }

@@ -810,16 +810,28 @@ def test_apply_optimization_saves_allocations(
     assert allocations[1].quantity == Decimal("12.0000")
 
 
-# --- Apply capacity revalidation --------------------------------------------
+# --- Apply capacity revalidation (removed by the approved -------------------
+#     business-rule change - these now prove Apply succeeds instead) --------
 
 
-def test_apply_optimization_rejects_when_capacity_reduced_after_generation(
+def test_apply_optimization_succeeds_when_capacity_reduced_after_generation(
     client,
     db,
     optimization_cycle,
     test_products,
     test_resources,
 ):
+    """
+    Approved business-rule change: Apply used to re-validate the
+    saved plan against CURRENT capacity and reject it if a resource's
+    available_quantity dropped below what the plan needs (stale-plan
+    revalidation, implemented via the same remaining-capacity
+    shortage check the business-rule change removes). It no longer
+    does - the plan is applied as generated, and the real shortfall
+    shows up honestly in resource utilization instead of blocking the
+    apply.
+    """
+
     optimize_response = client.post(
         f"/api/production-cycles/{optimization_cycle.id}/optimize",
         json={"objective": "MAX_PROFIT"},
@@ -840,28 +852,46 @@ def test_apply_optimization_rejects_when_capacity_reduced_after_generation(
             f"/api/production-cycles/{optimization_cycle.id}/optimize/apply"
         )
 
-        assert apply_response.status_code == 400
-        detail = apply_response.json()["detail"]
-        assert "Epoxy" in detail
-        assert "regenerate" in detail.lower()
+        assert apply_response.status_code == 200, apply_response.text
 
-        # Rejected before anything was touched.
         allocations = db.query(ProductionAllocation).filter(
             ProductionAllocation.production_cycle_id == optimization_cycle.id
         ).all()
-        assert allocations == []
+        assert allocations != []
+
+        utilization = client.get(
+            f"/api/resource-utilization/{optimization_cycle.id}"
+        ).json()
+
+        epoxy_usage = next(
+            item for item in utilization["resources"]
+            if item["resource_name"] == "Test Epoxy"
+        )
+
+        # Required ~6 Epoxy (12 chairs x 0.5) against only 0.1 declared
+        # - the shortfall is reported, not hidden or blocked.
+        assert Decimal(epoxy_usage["remaining_quantity"]) < Decimal("0")
     finally:
         epoxy_cycle_resource.available_quantity = original_available
         db.commit()
 
 
-def test_apply_optimization_rejects_when_requirement_changed_after_generation(
+def test_apply_optimization_succeeds_when_requirement_changed_after_generation(
     client,
     db,
     optimization_cycle,
     test_products,
     test_resources,
 ):
+    """
+    Same business-rule change as above, for the other staleness
+    source: a product's resource requirement increasing after
+    Generate. The saved plan is still applied as generated, at the
+    OLD per-unit requirement baked into its recommended_quantity -
+    Apply re-derives consumption from the CURRENT requirement, so the
+    real, now-larger draw is what gets recorded.
+    """
+
     optimize_response = client.post(
         f"/api/production-cycles/{optimization_cycle.id}/optimize",
         json={"objective": "MAX_PROFIT"},
@@ -879,9 +909,14 @@ def test_apply_optimization_rejects_when_requirement_changed_after_generation(
     ).first()
     original_quantity_required = requirement.quantity_required
     # The generated plan recommends 12 chairs at the OLD requirement
-    # (0.5 Epoxy/unit = 6, within the 8 available) - bumping it to 100
-    # makes that same quantity require 1200 Epoxy, far over capacity.
-    requirement.quantity_required = Decimal("100.0000")
+    # (0.5 Epoxy/unit = 6, within the 8 available) - bumping it to 20
+    # makes that same quantity require 240 Epoxy (3000% of the 8
+    # available), far over capacity but still comfortably inside the
+    # resource_utilization_history_items.utilization_rate column's
+    # own Numeric(6, 2) range (max 9999.99%) - see this task's report
+    # for the separate, pre-existing precision-limit finding an even
+    # larger over-consumption would hit.
+    requirement.quantity_required = Decimal("20.0000")
     db.commit()
 
     try:
@@ -889,14 +924,26 @@ def test_apply_optimization_rejects_when_requirement_changed_after_generation(
             f"/api/production-cycles/{optimization_cycle.id}/optimize/apply"
         )
 
-        assert apply_response.status_code == 400
-        detail = apply_response.json()["detail"]
-        assert "Epoxy" in detail
+        assert apply_response.status_code == 200, apply_response.text
 
         allocations = db.query(ProductionAllocation).filter(
             ProductionAllocation.production_cycle_id == optimization_cycle.id
         ).all()
-        assert allocations == []
+        assert allocations != []
+
+        application = db.query(ProductionApplication).filter(
+            ProductionApplication.production_cycle_id
+            == optimization_cycle.id
+        ).order_by(ProductionApplication.id.desc()).first()
+
+        epoxy_item = next(
+            item for item in application.resource_items
+            if item.resource_name == "Test Epoxy"
+        )
+
+        # 12 chairs x the NEW requirement (20) = 240, recorded in
+        # full - never capped to the 8 actually declared.
+        assert epoxy_item.consumed_quantity == Decimal("240.0000")
     finally:
         requirement.quantity_required = original_quantity_required
         db.commit()
@@ -1010,25 +1057,14 @@ def _triple_cycle_capacity(db, cycle_id):
 
 
 def _prepare_second_apply(client, db, cycle_id):
-    """
-    Top up capacity BEFORE generating the second plan, not after:
-    /optimize is now ledger-aware (it solves against what is actually
-    LEFT of each resource after the first apply, not the cycle's full
-    original capacity - see production.py's incremental-capacity fix),
-    so a plan generated before the top-up would correctly size itself
-    to near-nothing and stay that way even once capacity is raised
-    afterward. Tripling first gives the second generation real
-    remaining capacity to plan against.
-    """
-
-    _triple_cycle_capacity(db, cycle_id)
-
     response = client.post(
         f"/api/production-cycles/{cycle_id}/optimize",
         json={"objective": "MAX_PROFIT"},
     )
 
     assert response.status_code == 200, response.text
+
+    _triple_cycle_capacity(db, cycle_id)
 
 
 def test_apply_optimization_is_repeatable(
@@ -1082,21 +1118,15 @@ def test_apply_optimization_is_repeatable(
 
     assert len(allocations) == 2
 
-    # Values changed from before the incremental-capacity fix (both
-    # were 12.0000): /optimize now solves the second plan against
-    # what is actually left after tripling (3x - the first apply's
-    # own consumption), not the cycle's full original capacity, so it
-    # correctly uses more of the real remaining material than the old,
-    # consumption-blind solve did.
     assert allocations[0].product_id == products[
         "Test Chair"
     ].id
-    assert allocations[0].quantity == Decimal("34.0000")
+    assert allocations[0].quantity == Decimal("12.0000")
 
     assert allocations[1].product_id == products[
         "Test Bed Frame"
     ].id
-    assert allocations[1].quantity == Decimal("22.0000")
+    assert allocations[1].quantity == Decimal("12.0000")
 
 
 def test_optimize_invalid_objective(client, optimization_cycle):
@@ -2487,22 +2517,17 @@ def test_feasibility_needs_reoptimization_false_after_reapply(
     )
     assert patch_response.status_code == 200
 
-    # Labor was fully consumed by the first apply, so the reoptimize
-    # needs fresh capacity too - /optimize is now ledger-aware (it
-    # solves against what is actually LEFT after the first apply, not
-    # the cycle's full original capacity), so this must happen BEFORE
-    # reoptimize, not after, or the generated plan sizes itself to
-    # near-nothing and stays that way regardless of a later top-up.
-    # Still happens before the reapply below, so applied_at from that
-    # reapply lands after every cycle_resource.updated_at here and
-    # needs_reoptimization stays False.
-    _triple_cycle_capacity(db, optimization_cycle.id)
-
     reoptimize_response = client.post(
         f"/api/production-cycles/{optimization_cycle.id}/optimize",
         json={"objective": "MAX_PROFIT"},
     )
     assert reoptimize_response.status_code == 200
+
+    # Labor was fully consumed by the first apply, so the reapply needs
+    # fresh capacity as well as the fresh run it already generates.
+    # Done AFTER the reoptimize so applied_at still lands after every
+    # cycle_resource.updated_at and needs_reoptimization stays False.
+    _triple_cycle_capacity(db, optimization_cycle.id)
 
     reapply_response = client.post(
         f"/api/production-cycles/{optimization_cycle.id}/optimize/apply"
@@ -2630,20 +2655,15 @@ def test_apply_optimization_rolls_back_on_mid_transaction_failure(
     }
     assert all(ts is not None for ts in original_applied_at.values())
 
-    # Fresh capacity BEFORE the second /optimize, not after: /optimize
-    # is now ledger-aware (it solves against what is actually LEFT
-    # after the first apply, not the cycle's full original capacity),
-    # so topping up afterward would leave an already-generated,
-    # already-too-small plan unchanged - and the second apply would
-    # then be turned away by the incremental capacity/empty-plan check
-    # before ever reaching the patched call this test means to exercise.
-    _triple_cycle_capacity(db, optimization_cycle.id)
-
     second_optimize = client.post(
         f"/api/production-cycles/{optimization_cycle.id}/optimize",
         json={"objective": "MAX_PROFIT"},
     )
     assert second_optimize.status_code == 200
+
+    # Fresh capacity so the second apply reaches the patched call
+    # instead of being turned away by the incremental capacity check.
+    _triple_cycle_capacity(db, optimization_cycle.id)
 
     def _boom(*args, **kwargs):
         raise RuntimeError("simulated failure during apply")

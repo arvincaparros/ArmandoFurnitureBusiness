@@ -45,11 +45,12 @@ interface RenderOptions {
   ) => Promise<void>
   stockByProductId?: Record<number, number>
   producedByProductId?: Record<number, number>
+  latestAppliedQuantityByProductId?: Record<number, number>
   isStockValidationEnabled?: boolean
 }
 
 // Takes an options object since Task 15: the modal now requires the
-// three inventory props, and the new cases vary them. The default is
+// inventory props, and the new cases vary them. The default is
 // validation OFF with empty maps, which is exactly how the four
 // pre-Task-15 tests behaved, so none of their expectations change.
 const renderModal = ({
@@ -57,6 +58,7 @@ const renderModal = ({
   onSave = vi.fn().mockResolvedValue(undefined),
   stockByProductId = {},
   producedByProductId = {},
+  latestAppliedQuantityByProductId = {},
   isStockValidationEnabled = false,
 }: RenderOptions = {}) => {
   const onClose = vi.fn()
@@ -69,6 +71,9 @@ const renderModal = ({
         transaction={transaction}
         stockByProductId={stockByProductId}
         producedByProductId={producedByProductId}
+        latestAppliedQuantityByProductId={
+          latestAppliedQuantityByProductId
+        }
         isStockValidationEnabled={isStockValidationEnabled}
         onClose={onClose}
         onSave={onSave}
@@ -90,6 +95,7 @@ const renderModal = ({
       onSave,
       stockByProductId,
       producedByProductId,
+      latestAppliedQuantityByProductId,
       isStockValidationEnabled,
       ...overrides,
     }
@@ -102,6 +108,9 @@ const renderModal = ({
           transaction={merged.transaction ?? null}
           stockByProductId={merged.stockByProductId}
           producedByProductId={merged.producedByProductId}
+          latestAppliedQuantityByProductId={
+            merged.latestAppliedQuantityByProductId
+          }
           isStockValidationEnabled={
             merged.isStockValidationEnabled
           }
@@ -259,15 +268,16 @@ describe('AddTransactionModal', () => {
   // opening balance has been reviewed. Both figures come from
   // GET /api/inventory; nothing is recomputed here.
 
-  it('shows Quantity Produced as read-only and filled from the product\'s available production balance', async () => {
-    // Quantity Produced must reflect available stock (opening + all
-    // applied production - all sales, continuous), NOT
-    // producedByProductId's per-cycle drawdown - the two are
-    // deliberately different here (10 vs 15) to prove the field binds
-    // to the correct one.
+  it('shows Quantity Produced as read-only and filled from the latest applied batch, not cumulative stock', async () => {
+    // Quantity Produced must reflect the single most recent Apply
+    // (latestAppliedQuantityByProductId), NOT stockByProductId's
+    // continuous all-cycles balance nor producedByProductId's
+    // per-cycle drawdown - all three are deliberately different here
+    // (10, 15, 7) to prove the field binds to the correct one.
     renderModal({
       producedByProductId: { 1: 10 },
       stockByProductId: { 1: 15 },
+      latestAppliedQuantityByProductId: { 1: 7 },
       isStockValidationEnabled: true,
     })
 
@@ -278,13 +288,13 @@ describe('AddTransactionModal', () => {
     ) as HTMLInputElement
 
     expect(producedInput).toHaveAttribute('readonly')
-    expect(producedInput.value).toBe('15')
+    expect(producedInput.value).toBe('7')
   })
 
-  it('displays the continuous available balance through an apply -> sell -> apply sequence (Apply 10 -> 10, sell 4 -> 6, apply 5 more -> 11)', async () => {
-    // Step 1: Apply 10 units. Available balance is now 10.
+  it('shows the latest applied batch size, never cumulative, across repeated applies in the same cycle (47 -> 47 -> 35, not 94 or 129)', async () => {
+    // Step 1: First batch applied - 47 units.
     const { rerenderWithProps } = renderModal({
-      stockByProductId: { 1: 10 },
+      latestAppliedQuantityByProductId: { 1: 47 },
       isStockValidationEnabled: true,
     })
 
@@ -296,12 +306,14 @@ describe('AddTransactionModal', () => {
           /quantity produced/i,
         ) as HTMLInputElement
       ).value,
-    ).toBe('10')
+    ).toBe('47')
 
-    // Step 2: Record a sale of 4. The backend ledger reduces available
-    // stock to 6 (10 - 4); the page refetches GET /api/inventory and
-    // re-renders this same open modal with the new snapshot.
-    rerenderWithProps({ stockByProductId: { 1: 6 } })
+    // Step 2: Second batch applied - another 47 units.
+    // ProductionAllocation is wholesale-replaced, not summed, so this
+    // must still read 47 - never 94.
+    rerenderWithProps({
+      latestAppliedQuantityByProductId: { 1: 47 },
+    })
 
     expect(
       (
@@ -309,21 +321,23 @@ describe('AddTransactionModal', () => {
           /quantity produced/i,
         ) as HTMLInputElement
       ).value,
-    ).toBe('6')
+    ).toBe('47')
 
-    // Step 3: Apply another 5 units. The new apply ADDS to the
-    // existing 6 (never replaces it) - available stock becomes 11.
-    rerenderWithProps({ stockByProductId: { 1: 11 } })
+    // Step 3: Third batch applied - 35 units. Even though cumulative
+    // stock (stockByProductId) would have kept growing across all
+    // three applies, this field tracks only the latest batch.
+    rerenderWithProps({
+      latestAppliedQuantityByProductId: { 1: 35 },
+      stockByProductId: { 1: 129 },
+    })
 
-    // Opening Add Transaction and selecting the product now must
-    // display 11, exactly matching the approved example.
     expect(
       (
         screen.getByLabelText(
           /quantity produced/i,
         ) as HTMLInputElement
       ).value,
-    ).toBe('11')
+    ).toBe('35')
   })
 
   it('shows available stock for the selected product', async () => {

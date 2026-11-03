@@ -8,6 +8,11 @@ export interface InventorySliceRow {
   product_id: number
   available_stock: string
   cycle_produced: string
+  // The single most recent successful Apply's quantity for this
+  // product in the current cycle - wholesale-replaced on every
+  // Apply, never summed. Distinct from cycle_produced above, which
+  // accumulates every application this cycle.
+  latest_applied_quantity: string
 }
 
 export interface InventorySliceResponse {

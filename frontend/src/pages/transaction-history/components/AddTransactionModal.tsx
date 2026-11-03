@@ -52,6 +52,12 @@ interface AddTransactionModalProps {
   // stock, and using it for the Quantity Produced display was the bug
   // this field's binding below was changed to fix.
   producedByProductId: Record<number, number>
+  // product_id -> the single most recent successful Apply's quantity
+  // in the current cycle (ProductionAllocation.quantity, wholesale-
+  // replaced on every Apply - see useTransactions.ts). Drives the
+  // Quantity Produced display below: a second Apply of 47 more units
+  // must still show 47, never a running total.
+  latestAppliedQuantityByProductId: Record<number, number>
   isStockValidationEnabled: boolean
 
   onClose: () => void
@@ -88,6 +94,7 @@ const AddTransactionModal = ({
   products,
   transaction,
   stockByProductId,
+  latestAppliedQuantityByProductId,
   isStockValidationEnabled,
   onClose,
   onSave,
@@ -130,20 +137,21 @@ const AddTransactionModal = ({
     setError(null)
   }, [transaction, opened])
 
-  // Displays the product's current available production balance
-  // (opening + all applied production - all sales, continuous,
-  // never reset - see services/inventory.py::get_available_stock) -
-  // NOT producedByProductId's per-cycle drawdown, which is a
-  // different figure that resets at a cycle boundary and drains as
-  // sales attribute against it. This field is purely a display
-  // preview: quantity_produced is never sent in the create/update
-  // request (see handleSave below), so this has no effect on what
-  // the backend actually records. In edit mode the stored value is
-  // shown as-is, unchanged from before.
+  // Displays the single most recent successful Apply's quantity for
+  // this product (latestAppliedQuantityByProductId - wholesale-
+  // replaced on every Apply, see useTransactions.ts) - NOT
+  // stockByProductId's continuous all-cycles balance, nor
+  // producedByProductId's per-cycle drawdown: both of those
+  // accumulate (a second Apply of 47 more units would read 94 from
+  // either), while this must still read 47. This field is purely a
+  // display preview: quantity_produced is never sent in the
+  // create/update request (see handleSave below), so this has no
+  // effect on what the backend actually records. In edit mode the
+  // stored value is shown as-is, unchanged from before.
   const displayedQuantityProduced = isEditMode
     ? (transaction?.quantityProduced ?? 0)
     : productId !== null
-      ? (stockByProductId[productId] ?? 0)
+      ? (latestAppliedQuantityByProductId[productId] ?? 0)
       : 0
 
   const availableStock =

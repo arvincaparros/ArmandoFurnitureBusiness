@@ -25,6 +25,33 @@ function parseDecimal(value: string): number {
   return Number.isFinite(parsed) ? parsed : 0
 }
 
+// Display cap (approved business rule): the backend's
+// utilization_rate/remaining_quantity are the TRUE, uncapped figures
+// - consumption can genuinely exceed declared capacity now that
+// repeated Apply is allowed (see optimization.py::apply_optimization),
+// and that truth is exactly what's preserved in
+// ProductionApplicationResourceItem and every historical snapshot.
+// This report's cards/table/charts/progress bars must never show
+// more than 100% utilized or less than zero remaining, though -
+// clamped here, at the display boundary, rather than anywhere the
+// true figures are computed or stored. totalConsumed below is
+// deliberately NOT clamped: actual consumption is always shown as-is,
+// only the derived utilization%/remaining are capped.
+function clampUtilizationPercent(value: number): number {
+  return Math.min(value, 100)
+}
+
+function clampRemainingQuantity(value: number): number {
+  return Math.max(value, 0)
+}
+
+// Same cap, for the "Total Labor/Machine Hours Used" summary cards:
+// displayed used = min(actual used, capacity). Capacity is passed
+// through unchanged by the caller - never clamped itself.
+function clampUsedHours(used: number, capacity: number): number {
+  return Math.min(used, capacity)
+}
+
 // Single-item mapper reused for the main resources list, the at-risk
 // list, and the most-constrained resource - all three are the exact
 // same backend shape (ResourceUtilizationItem).
@@ -36,11 +63,15 @@ function toUiResource(
     resourceName: resource.resource_name,
     unit: resource.unit,
     totalConsumed: parseDecimal(resource.consumed_quantity),
-    totalRemaining: parseDecimal(resource.remaining_quantity),
-    // Used directly, unmodified - already a 0-100 percentage
-    // computed by the backend (consumed / available * 100). Not
-    // renormalized, not recalculated.
-    utilizationPercent: parseDecimal(resource.utilization_rate),
+    totalRemaining: clampRemainingQuantity(
+      parseDecimal(resource.remaining_quantity),
+    ),
+    // The backend computes this as consumed / available * 100 (not
+    // renormalized or recalculated here) - clamped to 100 for
+    // display per the approved capping rule.
+    utilizationPercent: clampUtilizationPercent(
+      parseDecimal(resource.utilization_rate),
+    ),
     status: resolveUtilizationStatus(resource.status),
   }
 }
@@ -54,19 +85,35 @@ function toUiResource(
 export function toUiSummary(
   data: ResourceUtilizationResponse,
 ): UtilizationSummary {
+  const laborCapacity = parseDecimal(
+    data.total_labor_hours_capacity,
+  )
+  const machineCapacity = parseDecimal(
+    data.total_machine_hours_capacity,
+  )
+
   return {
     materialResourceCount: data.material_resource_count,
     mostConstrained: data.most_constrained_resource
       ? toUiResource(data.most_constrained_resource)
       : null,
-    laborUsed: parseDecimal(data.total_labor_hours_used),
-    laborCapacity: parseDecimal(
-      data.total_labor_hours_capacity,
+    // Capped to the corresponding capacity for display (approved
+    // business rule, same as totalRemaining/utilizationPercent
+    // above): the backend figure is the TRUE, uncapped total across
+    // every labor/machine resource - repeated Apply can genuinely
+    // push it well past capacity now - but "Total Labor/Machine
+    // Hours Used" must never show more used than the capacity shown
+    // right next to it. Capacity itself is never clamped.
+    laborUsed: clampUsedHours(
+      parseDecimal(data.total_labor_hours_used),
+      laborCapacity,
     ),
-    machineUsed: parseDecimal(data.total_machine_hours_used),
-    machineCapacity: parseDecimal(
-      data.total_machine_hours_capacity,
+    laborCapacity,
+    machineUsed: clampUsedHours(
+      parseDecimal(data.total_machine_hours_used),
+      machineCapacity,
     ),
+    machineCapacity,
   }
 }
 

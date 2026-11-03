@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest'
 
 import {
   buildDashboardStats,
+  buildDashboardResourceUtilization,
   findLatestOptimalRun,
   summarizeAppliedAllocation,
 } from './dashboardAdapter'
@@ -12,6 +13,8 @@ import type {
   OptimizationHistoryResult,
   ProductSummary,
   ProductionAllocationFinancials,
+  ResourceUtilizationItem,
+  ResourceUtilizationResponse,
 } from './dashboardTypes'
 
 function makeResult(id: number): OptimizationHistoryResult {
@@ -225,5 +228,79 @@ describe('dashboard buildDashboardStats fallback', () => {
       'Recommended quantity × selling price, latest optimal plan',
     )
     expect(statById(stats, 'expected-profit').value).toBe('₱120,000')
+  })
+})
+
+function makeUtilizationItem(
+  overrides: Partial<ResourceUtilizationItem> = {},
+): ResourceUtilizationItem {
+  return {
+    resource_id: 1,
+    resource_name: 'Test Labor',
+    resource_type: 'labor',
+    unit: 'hours',
+    available_quantity: '500.0000',
+    consumed_quantity: '250.0000',
+    remaining_quantity: '250.0000',
+    utilization_rate: '50.00',
+    ...overrides,
+  }
+}
+
+function makeUtilizationResponse(
+  resources: ResourceUtilizationItem[],
+): ResourceUtilizationResponse {
+  return {
+    cycle_id: 1,
+    overall_utilization_rate: '0.00',
+    total_raw_materials_consumed: '0',
+    total_labor_hours_used: '0',
+    total_labor_hours_capacity: '0',
+    total_machine_hours_used: '0',
+    total_machine_hours_capacity: '0',
+    resources,
+    bottlenecks: [],
+  }
+}
+
+describe('buildDashboardResourceUtilization display capping', () => {
+  it('passes through 50% utilization unchanged', () => {
+    const [bar] = buildDashboardResourceUtilization(
+      makeUtilizationResponse([
+        makeUtilizationItem({ utilization_rate: '50.00' }),
+      ]),
+    )
+
+    expect(bar.value).toBe(50)
+  })
+
+  it('passes through exactly 100% utilization unchanged', () => {
+    const [bar] = buildDashboardResourceUtilization(
+      makeUtilizationResponse([
+        makeUtilizationItem({ utilization_rate: '100.00' }),
+      ]),
+    )
+
+    expect(bar.value).toBe(100)
+  })
+
+  it('caps 120% actual consumption down to 100% for the bar chart', () => {
+    const [bar] = buildDashboardResourceUtilization(
+      makeUtilizationResponse([
+        makeUtilizationItem({ utilization_rate: '120.00' }),
+      ]),
+    )
+
+    expect(bar.value).toBe(100)
+  })
+
+  it('caps 300% actual consumption down to 100% for the bar chart', () => {
+    const [bar] = buildDashboardResourceUtilization(
+      makeUtilizationResponse([
+        makeUtilizationItem({ utilization_rate: '300.00' }),
+      ]),
+    )
+
+    expect(bar.value).toBe(100)
   })
 })

@@ -25,8 +25,6 @@ from app.services.production_application import (
 from app.services.production_calculation import (
     BOTTLENECK_REMAINING_THRESHOLD,
     calculate_resource_requirements_for_quantities,
-    find_resource_capacity_shortages,
-    format_capacity_shortage_message,
 )
 from app.services.resource_utilization import (
     calculate_resource_utilization,
@@ -1805,15 +1803,15 @@ def apply_optimization(
             "Production cycle has no resources configured"
         )
 
-    # Serialises concurrent applies for this cycle. Two parallel
-    # clicks would otherwise both read the same already-consumed
-    # offset, both pass the capacity check, and both append a
-    # ledger row - double-counting units into available stock. The
-    # uq_production_application_run constraint catches the
-    # identical-run case regardless, but two DIFFERENT runs applied
-    # simultaneously would slip past it, so the lock is what makes
-    # incremental capacity actually incremental. Held until this
-    # function's commit/rollback.
+    # Serialises concurrent applies for this cycle. Without it, two
+    # parallel clicks could interleave their ProductionAllocation
+    # delete+insert and ledger append, corrupting the "one row per
+    # product, latest apply wins" invariant. The
+    # uq_production_application_run constraint catches a double
+    # application of the SAME run regardless, but two DIFFERENT runs
+    # applied simultaneously would slip past it, so the lock is what
+    # keeps each apply's read-check-write atomic relative to the
+    # next. Held until this function's commit/rollback.
     locked_cycle = db.execute(
         select(ProductionCycle)
         .where(ProductionCycle.id == cycle_id)
@@ -1823,11 +1821,11 @@ def apply_optimization(
     if locked_cycle is None:
         raise ValueError("Production cycle not found")
 
-    # Read once, right after the lock, and reused below both to
-    # explain an all-zero plan (which resource has nothing left) and
-    # to revalidate the proposed allocation against current capacity -
-    # the same value either way, since nothing writes to the ledger
-    # between here and this function's own commit/rollback.
+    # Read once, right after the lock, and reused below to explain an
+    # all-zero plan (which resource has nothing left, if any) - no
+    # longer used to validate the proposed allocation against
+    # remaining capacity (see the business-rule comment further
+    # down), only for that explanatory message.
     already_consumed = get_cycle_consumed_by_resource(db, cycle_id)
 
     optimization_run = (
@@ -1940,53 +1938,34 @@ def apply_optimization(
             "results. Generate a new production plan instead."
         )
 
-    # Revalidate the ENTIRE proposed allocation against current
-    # resource state before touching the database at all - the saved
-    # OptimizationResult rows reflect whatever CycleResource/
-    # ProductResourceRequirement looked like the last time /optimize
-    # ran, which may no longer be true by the time Apply is clicked
-    # (a resource's capacity or active state changed, or a product's
-    # requirements changed, in between). find_resource_capacity_
-    # shortages treats an inactive resource as zero capacity here too,
-    # matching add_resource_constraints. Checked before the delete
-    # below runs, so a stale/now-infeasible plan is rejected atomically
-    # - nothing about the existing allocation is touched.
     proposed_quantities = {
         allocation["product_id"]: Decimal(str(allocation["quantity"]))
         for allocation in allocations
     }
 
-    # INCREMENTAL since the production ledger exists: capacity
-    # already consumed by earlier applications in THIS cycle is
-    # deducted first, so a second application cannot re-spend the
-    # first's materials. A cycle with no prior application gets an
-    # empty offset and behaves exactly as before. (already_consumed
-    # was read once, right after the lock above - reused here, not
-    # re-queried.)
-    shortages = find_resource_capacity_shortages(
-        db,
-        cycle_id,
-        proposed_quantities,
-        already_consumed_by_resource_id=already_consumed,
-    )
-
-    if shortages:
-        raise ValueError(
-            format_capacity_shortage_message(
-                shortages,
-                "Cannot apply this production plan - the cycle does "
-                "not have enough remaining resource capacity "
-                "(previous applications in this cycle have already "
-                "consumed part of it). Increase the resource "
-                "quantities or regenerate the Production Plan",
-            )
-        )
+    # Business-rule change (approved): Apply no longer rejects a plan
+    # for exceeding what's left of a resource's declared capacity
+    # after earlier applications this cycle - students explicitly
+    # want Generate -> Apply -> Generate -> Apply... repeatable in the
+    # same cycle, with no resource replenishment or new cycle required
+    # in between. A remaining-capacity shortage check used to run here
+    # (find_resource_capacity_shortages with already_consumed) and
+    # raise before any write; it has been removed outright, not
+    # loosened - nothing computes or inspects a shortage for this
+    # purpose anymore. Resource consumption is still recorded exactly
+    # as consumed below (never capped, never reset), and utilization
+    # reporting still shows the true, uncapped total - including well
+    # over 100% - via calculate_optimized_resource_usage /
+    # _remaining_cycle_capacity, which were already never floored for
+    # exactly this reason. Every OTHER guard above (summary-only run,
+    # no product-level results, duplicate application for this run)
+    # is untouched.
 
     # What this application will consume, recorded on the ledger so
-    # the NEXT application in this cycle is offset by it. Computed
-    # from the same helper find_resource_capacity_shortages just
-    # validated against, so the recorded consumption and the
-    # validated consumption can never be two different numbers.
+    # the NEXT application in this cycle is offset by it - the exact
+    # quantities this plan requires, regardless of whether the cycle
+    # actually has that much declared capacity left (no longer
+    # validated against remaining capacity - see the comment above).
     consumption = calculate_resource_requirements_for_quantities(
         db,
         proposed_quantities,
@@ -2066,11 +2045,12 @@ def apply_optimization(
         # together atomically.
         #
         # Deliberately a SECOND call to
-        # get_cycle_consumed_by_resource: the one above is the offset
-        # this apply was VALIDATED against (excludes this apply);
-        # this one is the figure the snapshot should SHOW (includes
-        # it, via the flush inside save_production_application). Do
-        # not collapse them.
+        # get_cycle_consumed_by_resource: the one above (already_
+        # consumed) excludes this apply - it's only used for the
+        # all-zero-plan explanation earlier; this one is the figure
+        # the snapshot should SHOW (includes this apply too, via the
+        # flush inside save_production_application). Do not collapse
+        # them.
         cumulative_consumed = get_cycle_consumed_by_resource(
             db,
             cycle_id,

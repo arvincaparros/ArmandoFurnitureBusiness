@@ -114,6 +114,7 @@ const renderPage = (
     isDeleting: false,
     stockByProductId: {},
     producedByProductId: {},
+    latestAppliedQuantityByProductId: {},
     isStockValidationEnabled: false,
     ...overrides,
   } as unknown as ReturnType<typeof useTransactions>)
