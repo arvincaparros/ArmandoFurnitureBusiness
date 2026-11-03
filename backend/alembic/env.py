@@ -25,6 +25,8 @@ from app.database import models  # noqa: E402
 
 from app.database.alembic_target import (  # noqa: E402
     DEV_OPT_IN_VAR,
+    PRODUCTION_DATABASE_NAME_VAR,
+    PRODUCTION_OPT_IN_VAR,
     resolve_migration_url,
 )
 
@@ -57,11 +59,25 @@ if _allow_dev_migration:
         _backend_dir / ".env",
     ).get("DATABASE_URL")
 
+_allow_production_migration = os.environ.get(PRODUCTION_OPT_IN_VAR) in (
+    "1",
+    "true",
+    "TRUE",
+    "yes",
+)
+
+# Read directly from the real process environment, same as
+# DATABASE_URL - there is no backend/.env file on the production
+# platform to source this from.
+_production_database_name = os.environ.get(PRODUCTION_DATABASE_NAME_VAR)
+
 _resolved_url, _resolved_database_name = resolve_migration_url(
     preset_url=_preset_database_url,
     test_url=_test_database_url,
     dev_url=_dev_database_url,
     allow_dev=_allow_dev_migration,
+    allow_production=_allow_production_migration,
+    production_database_name=_production_database_name,
 )
 
 # Verify the effective target BEFORE any DDL executes: this module
@@ -77,6 +93,24 @@ if _allow_dev_migration:
                 "!! DEVELOPMENT MIGRATION OPT-IN ACTIVE",
                 "!! This run will execute migration DDL against "
                 f"'{_resolved_database_name}' - the DEVELOPMENT "
+                "database.",
+                "!! Ctrl+C now if this was not intentional.",
+                "!" * 70,
+                "",
+            ]
+        ),
+        file=sys.stderr,
+    )
+
+if _allow_production_migration:
+    print(
+        "\n".join(
+            [
+                "",
+                "!" * 70,
+                "!! PRODUCTION MIGRATION OPT-IN ACTIVE",
+                "!! This run will execute migration DDL against "
+                f"'{_resolved_database_name}' - the PRODUCTION "
                 "database.",
                 "!! Ctrl+C now if this was not intentional.",
                 "!" * 70,

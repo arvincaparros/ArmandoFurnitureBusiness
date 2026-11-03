@@ -15,6 +15,8 @@ import pytest
 from app.database.alembic_target import (
     DEV_DATABASE_NAME,
     DEV_OPT_IN_VAR,
+    PRODUCTION_DATABASE_NAME_VAR,
+    PRODUCTION_OPT_IN_VAR,
     TEST_DATABASE_NAME,
     resolve_migration_url,
 )
@@ -25,6 +27,15 @@ DEV_URL = f"postgresql://postgres:postgres@127.0.0.1:5433/{DEV_DATABASE_NAME}"
 SCRATCH_URL = (
     "postgresql://postgres:postgres@127.0.0.1:5433/"
     "armando_furniture_scratch"
+)
+# Deliberately the SAME database name as DEV_URL, on a different host -
+# this mirrors the real incident: Render's production database happens
+# to be named identically to the local development convention. The
+# production opt-in must still work correctly in exactly this case, and
+# must remain fully independent of the dev opt-in.
+PRODUCTION_URL = (
+    f"postgresql://produser:fakeprodpass@render-prod-host:5432/"
+    f"{DEV_DATABASE_NAME}"
 )
 
 
@@ -143,3 +154,105 @@ def test_database_name_parsed_correctly_with_query_string():
 
     assert resolved_url == url_with_query
     assert resolved_name == TEST_DATABASE_NAME
+
+
+def test_allow_production_with_matching_declared_name_resolves_to_preset_url():
+    resolved_url, resolved_name = resolve_migration_url(
+        preset_url=PRODUCTION_URL,
+        test_url=TEST_URL,
+        dev_url=None,
+        allow_dev=False,
+        allow_production=True,
+        production_database_name=DEV_DATABASE_NAME,
+    )
+
+    assert resolved_url == PRODUCTION_URL
+    assert resolved_name == DEV_DATABASE_NAME
+
+
+def test_allow_production_without_declared_name_raises():
+    with pytest.raises(RuntimeError, match=PRODUCTION_DATABASE_NAME_VAR):
+        resolve_migration_url(
+            preset_url=PRODUCTION_URL,
+            test_url=TEST_URL,
+            dev_url=None,
+            allow_dev=False,
+            allow_production=True,
+            production_database_name=None,
+        )
+
+
+def test_allow_production_without_preset_url_raises():
+    """
+    Proves production migrations never silently fall back to the test
+    database URL just because DATABASE_URL happens to be unset.
+    """
+
+    with pytest.raises(RuntimeError, match=PRODUCTION_OPT_IN_VAR):
+        resolve_migration_url(
+            preset_url=None,
+            test_url=TEST_URL,
+            dev_url=None,
+            allow_dev=False,
+            allow_production=True,
+            production_database_name=DEV_DATABASE_NAME,
+        )
+
+
+def test_allow_production_with_mismatched_declared_name_is_refused():
+    """
+    The core "wrong database" catch: the operator's declared intent
+    (production_database_name) and the actual DATABASE_URL target must
+    agree, even though both are individually well-formed.
+    """
+
+    with pytest.raises(
+        RuntimeError, match="armando_furniture_staging"
+    ):
+        resolve_migration_url(
+            preset_url=PRODUCTION_URL,
+            test_url=TEST_URL,
+            dev_url=None,
+            allow_dev=False,
+            allow_production=True,
+            production_database_name="armando_furniture_staging",
+        )
+
+
+def test_allow_production_cannot_target_test_database_name():
+    """
+    Even a self-consistent declaration (declared name matches the
+    actual URL) must still be refused if that name is the reserved
+    test database name - production must never be pointed at the
+    disposable automated-test database.
+    """
+
+    with pytest.raises(RuntimeError, match=TEST_DATABASE_NAME):
+        resolve_migration_url(
+            preset_url=TEST_URL,
+            test_url=TEST_URL,
+            dev_url=None,
+            allow_dev=False,
+            allow_production=True,
+            production_database_name=TEST_DATABASE_NAME,
+        )
+
+
+def test_allow_dev_and_allow_production_together_is_refused():
+    """
+    An ambiguous combination of opt-ins must raise rather than silently
+    picking one - consistent with this module's "raise loudly rather
+    than guess" design.
+    """
+
+    with pytest.raises(
+        RuntimeError, match=f"{DEV_OPT_IN_VAR}.*{PRODUCTION_OPT_IN_VAR}"
+    ):
+        resolve_migration_url(
+            preset_url=PRODUCTION_URL,
+            test_url=TEST_URL,
+            dev_url=DEV_URL,
+            allow_dev=True,
+            allow_production=True,
+            production_database_name=DEV_DATABASE_NAME,
+        )

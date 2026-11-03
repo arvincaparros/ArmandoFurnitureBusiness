@@ -14,6 +14,8 @@ exactly how a migration ends up running against the wrong database.
 TEST_DATABASE_NAME = "armando_furniture_test"
 DEV_DATABASE_NAME = "armando_furniture"
 DEV_OPT_IN_VAR = "ALEMBIC_ALLOW_DEV_MIGRATION"
+PRODUCTION_OPT_IN_VAR = "ALEMBIC_ALLOW_PRODUCTION_MIGRATION"
+PRODUCTION_DATABASE_NAME_VAR = "ALEMBIC_PRODUCTION_DATABASE_NAME"
 
 
 def _database_name(url: str) -> str:
@@ -32,6 +34,8 @@ def resolve_migration_url(
     test_url: str | None,
     dev_url: str | None,
     allow_dev: bool,
+    allow_production: bool = False,
+    production_database_name: str | None = None,
 ) -> tuple[str, str]:
     """
     Decide which database Alembic migrations may run against, and
@@ -45,7 +49,72 @@ def resolve_migration_url(
     with the opt-in active, `dev_url` is checked against
     DEV_DATABASE_NAME exactly as strictly as the default path checks
     its result against TEST_DATABASE_NAME.
+
+    The production opt-in (`allow_production`) is independent of the
+    development opt-in and carries its own confirmation: the operator
+    must separately declare, via `production_database_name`
+    (PRODUCTION_DATABASE_NAME_VAR), which database name they intend to
+    target. That declared name is cross-checked against the database
+    name `preset_url` (the real, platform-injected DATABASE_URL)
+    actually resolves to - two independently-set values have to agree
+    before any DDL runs. This catches both a missing opt-in AND a
+    DATABASE_URL pointed somewhere the operator didn't intend, even
+    with the opt-in active. There is no hardcoded production database
+    name constant (unlike dev/test) because we don't control what the
+    real hosting platform names it - so the declared name is the only
+    anchor, and it is never allowed to equal TEST_DATABASE_NAME, which
+    is reserved for the disposable automated-test database. Production
+    never falls back to `test_url`: it must always resolve from the
+    real `preset_url`.
     """
+
+    if allow_dev and allow_production:
+        raise RuntimeError(
+            f"Both {DEV_OPT_IN_VAR} and {PRODUCTION_OPT_IN_VAR} are "
+            "set. These opt-ins are mutually exclusive - unset "
+            "whichever one does not apply to this run."
+        )
+
+    if allow_production:
+        if not production_database_name:
+            raise RuntimeError(
+                f"{PRODUCTION_OPT_IN_VAR} is set, but "
+                f"{PRODUCTION_DATABASE_NAME_VAR} was not. The "
+                "production opt-in requires you to explicitly declare "
+                "the database name you intend to target, so it can be "
+                "checked against what DATABASE_URL actually resolves "
+                "to."
+            )
+
+        if production_database_name == TEST_DATABASE_NAME:
+            raise RuntimeError(
+                f"{PRODUCTION_DATABASE_NAME_VAR} is set to "
+                f"{TEST_DATABASE_NAME!r} - that name is reserved for "
+                "the disposable automated-test database and must "
+                "never be targeted by a production migration run."
+            )
+
+        if not preset_url:
+            raise RuntimeError(
+                f"{PRODUCTION_OPT_IN_VAR} is set, but no DATABASE_URL "
+                "is present in the environment. Production migrations "
+                "must resolve DATABASE_URL from the real platform "
+                "environment, never from backend/.env.test."
+            )
+
+        resolved_name = _database_name(preset_url)
+
+        if resolved_name != production_database_name:
+            raise RuntimeError(
+                f"{PRODUCTION_OPT_IN_VAR} is set, but DATABASE_URL "
+                f"resolves to '{resolved_name}', which does not match "
+                f"{PRODUCTION_DATABASE_NAME_VAR}="
+                f"'{production_database_name}'. Refusing to run "
+                "migrations until the declared target and the actual "
+                "connection target agree."
+            )
+
+        return preset_url, resolved_name
 
     if allow_dev:
         if not dev_url:
