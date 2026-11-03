@@ -200,15 +200,14 @@ describe('ForecastChart tooltip', () => {
     expect(screen.queryByText(/Applied production/)).toBeNull()
   })
 
-  it('shows the applied production units for a production week', () => {
+  it('shows only the date for a production week - no Applied Production line', () => {
     renderChart(WEEKLY_ROWS)
     renderTooltip(WEEKLY_ROWS[0])
 
     expect(screen.getByText('Jan 05, 2026')).toBeInTheDocument()
-    expect(
-      screen.getByText('Applied production: 12 units'),
-    ).toBeInTheDocument()
+    expect(screen.queryByText(/Applied production/)).toBeNull()
     expect(screen.queryByText(/Quantity sold/)).toBeNull()
+    expect(screen.queryByText(/Forecasted demand/)).toBeNull()
   })
 
   it('labels a forecast week as forecast, using its own API date', () => {
@@ -232,14 +231,9 @@ describe('ForecastChart series', () => {
         name: 'historicalDemand',
         label: 'Historical Demand (Weekly)',
       },
-      // Task 21: the ledger-sourced production line sits between the
-      // two existing series. teal is distinct from both themes'
-      // primary and from the forecast's grape/blue.
-      {
-        name: 'producedQuantity',
-        label: 'Applied Production',
-        color: 'teal.6',
-      },
+      // The Applied Production series was removed from the graph
+      // (and its legend entry with it) - only Historical Demand and
+      // Forecasted Demand are plotted now.
       {
         name: 'forecastedDemand',
         label: 'Forecasted Demand',
@@ -282,13 +276,17 @@ describe('ForecastChart production series', () => {
       screen.queryByText(/No sales or production recorded/),
     ).not.toBeInTheDocument()
 
+    // The chart still renders (production alone is plottable data,
+    // not an empty product) but no longer has its own Applied
+    // Production series/legend entry - only Historical Demand and
+    // Forecasted Demand are ever plotted now.
     expect(
       chart.series.map((entry) => entry.label),
-    ).toContain('Applied Production')
+    ).not.toContain('Applied Production')
 
     expect(
       chart.series.map((entry) => entry.name),
-    ).toContain('producedQuantity')
+    ).not.toContain('producedQuantity')
   })
 
   it('still explains an entirely empty product', () => {
@@ -310,12 +308,12 @@ describe('ForecastChart production series', () => {
     ).toBeInTheDocument()
   })
 
-  it('shows the applied production figure in the tooltip', () => {
+  it('no longer shows an applied production figure in the tooltip', () => {
     renderChart([productionRow, forecastRow])
     renderTooltip(productionRow)
 
     expect(
-      screen.getByText(/Applied production: 6 units/),
-    ).toBeInTheDocument()
+      screen.queryByText(/Applied production/),
+    ).toBeNull()
   })
 })

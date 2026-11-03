@@ -11,7 +11,6 @@ interface ForecastChartProps {
 }
 
 const HISTORICAL_SERIES = 'historicalDemand'
-const PRODUCED_SERIES = 'producedQuantity'
 const FORECAST_SERIES = 'forecastedDemand'
 
 // Shape recharts hands to a series' `dot` renderer.
@@ -86,12 +85,6 @@ const ForecastTooltip = ({ payload }: ChartTooltipProps) => {
       {row.pointType === 'FORECAST' && (
         <Text size="xs" c="dimmed">
           Forecasted demand: {row.forecastedDemand ?? 0} units
-        </Text>
-      )}
-
-      {row.pointType === 'PRODUCTION' && (
-        <Text size="xs" c="dimmed">
-          Applied production: {row.producedQuantity ?? 0} units
         </Text>
       )}
 
@@ -219,11 +212,6 @@ const ForecastChart = ({
         {
           name: HISTORICAL_SERIES,
           label: 'Historical Demand (Weekly)',
-        },
-        {
-          name: PRODUCED_SERIES,
-          label: 'Applied Production',
-          color: 'teal.6',
         },
         {
           name: FORECAST_SERIES,
