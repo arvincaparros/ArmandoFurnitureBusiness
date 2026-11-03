@@ -667,6 +667,26 @@ describe('ResourcesPage resource-update notification', () => {
     ).toBeInTheDocument()
   })
 
+  it('tells the user references are removed along with the resource, not that deletion is refused', async () => {
+    await openInactiveView()
+
+    await userEvent.click(
+      screen.getByLabelText(/delete epoxy permanently/i),
+    )
+
+    const dialog = await screen.findByRole('dialog')
+
+    expect(
+      within(dialog).getByText(
+        /removed along with it/i,
+      ),
+    ).toBeInTheDocument()
+
+    expect(
+      within(dialog).queryByText(/deletion is refused/i),
+    ).not.toBeInTheDocument()
+  })
+
   it('does not offer permanent delete on an active resource', async () => {
     renderPage()
 
@@ -773,8 +793,14 @@ describe('ResourcesPage resource-update notification', () => {
   })
 
   it('surfaces the backend reason and keeps the resource when deletion is blocked', async () => {
+    // Product requirements and production cycle references no longer
+    // block a permanent delete (they cascade instead) - the only
+    // remaining 409 this modal can still receive is the resource
+    // somehow becoming active again between opening it and
+    // confirming, so that's what this test's mocked rejection models.
     const detail =
-      "'Epoxy' cannot be deleted permanently because it is still used by resource requirements on Dining Table. Remove those first."
+      'This resource is still active and cannot be deleted ' +
+      'permanently. Deactivate it first, then delete it.'
 
     permanentlyDeleteResourceMock.mockRejectedValueOnce(
       new AxiosError(

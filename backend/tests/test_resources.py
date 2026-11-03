@@ -1252,22 +1252,23 @@ def test_permanent_delete_removes_unreferenced_inactive_resource(
     assert _resource_row_count(db) == original_count
 
 
-def test_permanent_delete_blocked_by_product_requirement_preserves_it(
+def test_permanent_delete_of_inactive_resource_cascades_product_requirement(
     client, db,
 ):
     """
-    The cascade regression that matters most: a bare
-    db.delete(resource) would take every referencing
-    ProductResourceRequirement row with it - a product BOM line - with
-    no error at all. The delete must be refused and the requirement
-    row must still be there afterwards.
+    product_resource_requirements.resource_id is ON DELETE CASCADE.
+    For an already-inactive resource this is no longer a blocker: the
+    requirement row is a current BOM line, not history, and
+    optimization.py already treats an inactive resource's capacity as
+    zero - so permanent delete now cascades through it rather than
+    refusing.
     """
     resource_id = _create_test_resource(
-        client, "Permanent Delete Requirement Guard",
+        client, "Permanent Delete Requirement Cascade",
     )
 
     product = Product(
-        name="Permanent Delete Guard Product",
+        name="Permanent Delete Cascade Product",
         selling_price=Decimal("1000.00"),
         labor_cost=Decimal("0.00"),
         is_active=True,
@@ -1297,45 +1298,39 @@ def test_permanent_delete_blocked_by_product_requirement_preserves_it(
         f"/api/resources/{resource_id}/permanent"
     )
 
-    assert response.status_code == 409
+    assert response.status_code == 204
 
-    detail = response.json()["detail"]
-
-    # Actionable: names the blocking product, and says the caller has
-    # to clear it rather than this endpoint doing it for them.
-    assert "Permanent Delete Guard Product" in detail
-    assert "resource requirements" in detail.lower()
-
-    # Nothing was destroyed - neither the BOM line nor the resource.
+    # The resource AND the requirement row it cascaded are both gone.
     assert (
         db.query(ProductResourceRequirement)
         .filter(ProductResourceRequirement.id == requirement_id)
         .count()
-    ) == 1
+    ) == 0
 
     assert (
         db.query(Resource)
         .filter(Resource.id == resource_id)
         .count()
-    ) == 1
+    ) == 0
 
-    db.query(ProductResourceRequirement).filter(
-        ProductResourceRequirement.id == requirement_id
-    ).delete(synchronize_session=False)
+    # The product itself is untouched - only its BOM line for the
+    # deleted resource is gone.
+    assert db.get(Product, product.id) is not None
+
     db.query(Product).filter(Product.id == product.id).delete()
-    db.query(Resource).filter(Resource.id == resource_id).delete()
     db.commit()
 
 
-def test_permanent_delete_blocked_by_cycle_resource_preserves_it(
+def test_permanent_delete_of_inactive_resource_cascades_cycle_resource(
     client, db,
 ):
     """
-    cycle_resources.resource_id is ON DELETE CASCADE too, so the same
-    guard has to cover a production cycle availability/pricing row.
+    cycle_resources.resource_id is ON DELETE CASCADE too, and the same
+    reasoning applies: a cycle's availability/pricing row for an
+    already-inactive resource no longer blocks permanent delete.
     """
     resource_id = _create_test_resource(
-        client, "Permanent Delete Cycle Guard",
+        client, "Permanent Delete Cycle Cascade",
     )
 
     cycle = _create_cycle(db)
@@ -1361,29 +1356,25 @@ def test_permanent_delete_blocked_by_cycle_resource_preserves_it(
         f"/api/resources/{resource_id}/permanent"
     )
 
-    assert response.status_code == 409
-
-    detail = response.json()["detail"]
-
-    assert f"#{cycle.id}" in detail
-    assert "production cycle" in detail.lower()
+    assert response.status_code == 204
 
     assert (
         db.query(CycleResource)
         .filter(CycleResource.id == cycle_resource_id)
         .count()
-    ) == 1
+    ) == 0
 
     assert (
         db.query(Resource)
         .filter(Resource.id == resource_id)
         .count()
-    ) == 1
+    ) == 0
+
+    # The cycle itself is untouched - only its resource row for the
+    # deleted resource is gone.
+    assert db.get(ProductionCycle, cycle.id) is not None
 
     _delete_cycle(db, cycle)
-
-    db.query(Resource).filter(Resource.id == resource_id).delete()
-    db.commit()
 
 
 def test_permanent_delete_preserves_utilization_history(client, db):

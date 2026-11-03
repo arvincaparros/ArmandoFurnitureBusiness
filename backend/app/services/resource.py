@@ -2,13 +2,7 @@ from sqlalchemy import func, select
 from sqlalchemy.exc import IntegrityError
 from sqlalchemy.orm import Session
 
-from app.database.models import (
-    CycleResource,
-    Product,
-    ProductionCycle,
-    ProductResourceRequirement,
-    Resource,
-)
+from app.database.models import Resource
 from app.schemas.resource import ResourceCreate, ResourceUpdate
 
 
@@ -197,108 +191,38 @@ def delete_resource(
         raise
 
 
-def find_resource_references(
-    db: Session,
-    resource: Resource,
-) -> dict[str, list[str]]:
-    """
-    The rows that must BLOCK a permanent delete rather than be taken
-    down with it.
-
-    Both of these FKs are ON DELETE CASCADE in the database
-    (`product_resource_requirements.resource_id` and
-    `cycle_resources.resource_id`), so a bare `db.delete(resource)`
-    would silently destroy them - product BOM lines and a cycle's
-    availability/price - with no error and no audit trail. The
-    optimizer would then solve against incomplete recipes and still
-    return a plausible-looking plan. So the guard lives here, in the
-    application, and the cascade is never relied on as the deletion
-    mechanism.
-
-    `resource_utilization_history_items` is deliberately NOT checked:
-    its FK is ON DELETE SET NULL and every field a history view
-    renders (resource_name/resource_type/unit plus the calculated
-    quantities) is snapshotted onto the row at creation time, so that
-    history stays complete and fully displayable after the Resource
-    it pointed at is gone. See the ResourceUtilizationHistoryItem
-    docstring in app/database/models.py.
-
-    Returns display-ready labels, not ids, so the 409 can name
-    exactly what the caller has to clear first.
-    """
-
-    product_names = list(
-        db.scalars(
-            select(Product.name)
-            .join(
-                ProductResourceRequirement,
-                ProductResourceRequirement.product_id == Product.id,
-            )
-            .where(
-                ProductResourceRequirement.resource_id == resource.id
-            )
-            .order_by(Product.name)
-        ).all()
-    )
-
-    cycle_labels = [
-        f"#{cycle_id} ({cycle_date:%Y-%m-%d})"
-        for cycle_id, cycle_date in db.execute(
-            select(
-                ProductionCycle.id,
-                ProductionCycle.cycle_date,
-            )
-            .join(
-                CycleResource,
-                CycleResource.production_cycle_id
-                == ProductionCycle.id,
-            )
-            .where(CycleResource.resource_id == resource.id)
-            .order_by(ProductionCycle.id)
-        ).all()
-    ]
-
-    return {
-        "products": product_names,
-        "production_cycles": cycle_labels,
-    }
-
-
-def format_resource_reference_message(
-    resource: Resource,
-    references: dict[str, list[str]],
-) -> str:
-    blockers = []
-
-    if references["products"]:
-        blockers.append(
-            "resource requirements on "
-            + ", ".join(references["products"])
-        )
-
-    if references["production_cycles"]:
-        blockers.append(
-            "availability and pricing in production cycle "
-            + ", ".join(references["production_cycles"])
-        )
-
-    return (
-        f"'{resource.name}' cannot be deleted permanently because it "
-        "is still used by " + "; and ".join(blockers) + ". Remove "
-        "those first - this endpoint never deletes them for you. "
-        "Resource utilization history is always kept and never "
-        "blocks deletion."
-    )
-
-
 def permanently_delete_resource(
     db: Session,
     resource: Resource,
 ) -> None:
     """
     Removes the catalogue row outright - the one path in this module
-    that is NOT reversible. Both guards run before any write, so a
-    rejected call leaves the database byte-identical.
+    that is NOT reversible. Only ever reachable for an already
+    inactive resource (the one guard that remains); an active
+    resource is refused so the caller must deactivate it first as a
+    separate, deliberate step.
+
+    No reference check runs beyond that. `product_resource_requirements
+    .resource_id` and `cycle_resources.resource_id` are both ON DELETE
+    CASCADE in the database, so deleting the resource takes its BOM
+    lines and its per-cycle availability/pricing rows with it. Neither
+    is history: a BOM line just states what an ACTIVE product recipe
+    currently needs, and `optimization.py` already treats an inactive
+    resource's cycle_resource as zero capacity (`if cycle_resource.
+    resource.is_active`) - so once a resource is inactive, its
+    requirement and cycle rows are already contributing nothing to
+    any plan the optimizer can produce. Cascading them away on
+    permanent delete changes no feasibility outcome; it only removes
+    now-meaningless rows that would otherwise dangle forever once
+    their resource is gone, since there is no "deactivate a BOM line"
+    concept to clean them up any other way.
+
+    `resource_utilization_history_items` and
+    `production_application_resource_items` are both ON DELETE SET
+    NULL, and every field either history view renders is snapshotted
+    onto the row at creation time - see both models' docstrings in
+    app/database/models.py. Neither is touched by this cascade, and
+    both stay fully readable afterward with resource_id simply nulled.
 
     Succeeding here frees the resource's name: `create_resource`
     blocks a name held by ANY existing row, active or soft-deleted
@@ -311,13 +235,6 @@ def permanently_delete_resource(
 
     if resource.is_active:
         raise ValueError(PERMANENT_DELETE_ACTIVE_ERROR)
-
-    references = find_resource_references(db, resource)
-
-    if references["products"] or references["production_cycles"]:
-        raise ValueError(
-            format_resource_reference_message(resource, references)
-        )
 
     try:
         db.delete(resource)

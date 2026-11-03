@@ -59,13 +59,13 @@ const PermanentDeleteResourceModal = ({
     try {
       await onConfirm()
     } catch (deleteError) {
-      // A 409 carries the backend's specific reason as its detail -
-      // which product requirements or production cycles still
-      // reference this resource - and getApiErrorMessage surfaces
-      // that string as-is. The fallback only applies when the error
-      // has no usable detail at all, so a blocked delete always
-      // tells the user what to clear rather than just that it
-      // failed. The modal deliberately stays open on failure.
+      // Product requirements and production cycle references no
+      // longer block this - the only remaining 409 is the resource
+      // somehow becoming active again between opening this modal and
+      // confirming. getApiErrorMessage surfaces the backend's detail
+      // as-is; the fallback only applies when the error has no
+      // usable detail at all. The modal deliberately stays open on
+      // failure.
       setError(
         getApiErrorMessage(
           deleteError,
@@ -113,9 +113,9 @@ const PermanentDeleteResourceModal = ({
               </List.Item>
 
               <List.Item>
-                If any product requirement or production cycle
-                still uses it, the deletion is refused and nothing
-                is changed.
+                Any product resource requirement or production
+                cycle availability/pricing entry still referencing
+                it is removed along with it.
               </List.Item>
             </List>
           </Stack>
