@@ -53,10 +53,21 @@ def get_optimization_data(
     cycle resources needed by the optimization model.
     """
 
+    # Determinism fix: ordered explicitly, like products_statement
+    # below already was - without this, Postgres does not guarantee
+    # row order for a query with no ORDER BY, so the ILP model built
+    # from these rows (variable/constraint insertion order) could
+    # differ between two Generate calls with otherwise identical
+    # inputs, which is exactly the kind of difference that can select
+    # a different tied-optimal solution. Ordered by id (insertion
+    # order), not resource_id, so it stays stable even if a resource
+    # is swapped out for another on the same cycle.
     cycle_resources_statement = select(
         CycleResource
     ).where(
         CycleResource.production_cycle_id == cycle_id
+    ).order_by(
+        CycleResource.id
     )
 
     cycle_resources = db.scalars(
@@ -75,6 +86,10 @@ def get_optimization_data(
             "requirements": [],
         }
 
+    # Determinism fix: same reasoning as cycle_resources_statement
+    # above - ordered by id so the ILP's constraint-building loops
+    # (add_resource_constraints, calculate_unit_profit, etc.) see
+    # these rows in a stable, repeatable order across Generate calls.
     requirements_statement = (
         select(
             ProductResourceRequirement,
@@ -89,6 +104,9 @@ def get_optimization_data(
             ProductResourceRequirement.resource_id.in_(
                 resource_ids
             )
+        )
+        .order_by(
+            ProductResourceRequirement.id
         )
     )
 
@@ -639,10 +657,13 @@ def add_profit_objective(
     products,
     requirements,
     cycle_resources,
-) -> None:
+):
     """
-    Set the optimization objective to maximize
-    total production profit.
+    Set the optimization objective to maximize total production
+    profit. Returns the profit expression itself, so a caller that
+    later needs to lock this exact value in as a floor (see
+    _resolve_profit_ties_deterministically) can reuse it directly
+    rather than reconstructing an equivalent expression by hand.
     """
 
     profit_expression = pulp.lpSum(
@@ -658,6 +679,317 @@ def add_profit_objective(
     )
 
     problem += profit_expression
+
+    return profit_expression
+
+
+# Same floating-point-noise tolerance as _FAIRNESS_EPSILON below, kept
+# as its own named constant rather than shared: this one guards
+# whatever value _lock_primary_objective_and_resolve's caller just
+# locked in (a profit, or Stage 3's profit-of-covered-set) carried
+# from one solve into the next solve's hard floor - not a fairness
+# ratio - same numeric magnitude of noise, different quantities,
+# kept conceptually separate.
+_DETERMINISM_LOCK_EPSILON = 1e-6
+
+# Deterministic tie-break fallback only (never an actual model bound):
+# used solely to size a weight when a product's true upper bound
+# cannot be computed from its own requirements (should not happen in
+# practice - every product reaching the solver has at least one
+# ProductResourceRequirement, by construction of get_optimization_data's
+# product selection - this exists purely as a defensive fallback).
+_TIE_BREAK_FALLBACK_BOUND = 1_000_000
+
+
+def _product_quantity_upper_bound(
+    product,
+    requirements,
+    cycle_resources,
+    forecast: dict[int, Decimal] | None,
+    already_consumed_by_resource_id: dict[int, Decimal] | None,
+) -> int:
+    """
+    A safe, never-too-small upper bound on how many units of this
+    product the model could possibly assign - used only to size the
+    deterministic tie-break weights in _assign_tie_break_weights,
+    never as an actual constraint on the model itself.
+
+    Computed as if this product had each of its required resources
+    entirely to itself, ignoring every other product's competing
+    draw on the same pool. That can only overstate the true
+    achievable quantity, never understate it - which is the one
+    property the weighting scheme actually depends on (an
+    underestimate here could let a lower-priority product's weighted
+    contribution exceed a higher-priority one's, breaking the
+    intended tie-break order).
+    """
+
+    cycle_resource_by_id = {
+        cycle_resource.resource_id: cycle_resource
+        for cycle_resource in cycle_resources
+    }
+
+    bounds = []
+
+    for requirement, _resource in requirements:
+        if requirement.product_id != product.id:
+            continue
+
+        if requirement.quantity_required <= 0:
+            continue
+
+        cycle_resource = cycle_resource_by_id.get(
+            requirement.resource_id
+        )
+
+        if cycle_resource is None:
+            bounds.append(0)
+            continue
+
+        remaining = _remaining_cycle_capacity(
+            cycle_resource,
+            already_consumed_by_resource_id,
+        )
+
+        bounds.append(
+            int(remaining // requirement.quantity_required)
+        )
+
+    if forecast is not None:
+        ceiling = forecast.get(product.id)
+
+        if ceiling is not None:
+            bounds.append(int(ceiling))
+
+    if not bounds:
+        return _TIE_BREAK_FALLBACK_BOUND
+
+    return max(0, min(bounds))
+
+
+def _weights_from_bounds(
+    ordered_products,
+    bounds_by_id: dict[int, int],
+) -> dict[int, int]:
+    """
+    Shared recursive core of the documented, stable tie-break rule
+    (approved business requirement): among every solution that
+    achieves the same locked primary value, prefer the one that
+    favors the LOWEST product_id as much as possible; among whatever
+    that leaves undecided, prefer the next-lowest product_id, and so
+    on. `ordered_products` must already be sorted ascending by id.
+
+    Each product's weight, assigned from the highest id backward, is
+    built to strictly exceed the combined maximum possible
+    contribution of every lower-priority (higher-id) product's
+    weighted term (using `bounds_by_id` as each product's own true
+    upper bound on its term). That guarantees true lexicographic
+    preference by ascending id - gaining even one unit of a
+    higher-priority product's term always outweighs any combination
+    of lower-priority ones - not merely an approximation of it.
+
+    Limitation: the weights grow with the product of per-product
+    bounds, so with very many products and/or very large per-product
+    bounds at the same time, the largest weight could exceed what the
+    solver's underlying double-precision arithmetic represents
+    exactly. This is safe for realistic furniture-catalog sizes
+    (comfortably so for the double-digit product counts this
+    application targets, and exact for a binary 0/1 bound - see
+    _assign_binary_tie_break_weights - up to roughly 50 products).
+    It never risks the locked primary value itself - that is enforced
+    by a hard constraint in _lock_primary_objective_and_resolve, not
+    by this objective - the only possible effect in that edge case is
+    an imprecise tie-break choice, never a wrong primary value.
+    """
+
+    weights: dict[int, int] = {}
+    cumulative_lower_priority_contribution = 0
+
+    for product in reversed(ordered_products):
+        weight = cumulative_lower_priority_contribution + 1
+        weights[product.id] = weight
+        cumulative_lower_priority_contribution += (
+            bounds_by_id[product.id] * weight
+        )
+
+    return weights
+
+
+def _assign_tie_break_weights(
+    products,
+    requirements,
+    cycle_resources,
+    forecast: dict[int, Decimal] | None,
+    already_consumed_by_resource_id: dict[int, Decimal] | None,
+) -> dict[int, int]:
+    """
+    _weights_from_bounds specialized for an open-ended INTEGER
+    quantity decision (Phase 1's single solve, Stage 5) - each
+    product's bound is its own true resource/forecast-derived upper
+    bound (_product_quantity_upper_bound), since an open quantity
+    variable's term can range anywhere up to that.
+    """
+
+    ordered_products = sorted(
+        products,
+        key=lambda product: product.id,
+    )
+
+    bounds_by_id = {
+        product.id: _product_quantity_upper_bound(
+            product,
+            requirements,
+            cycle_resources,
+            forecast,
+            already_consumed_by_resource_id,
+        )
+        for product in ordered_products
+    }
+
+    return _weights_from_bounds(ordered_products, bounds_by_id)
+
+
+def _assign_binary_tie_break_weights(
+    products,
+) -> dict[int, int]:
+    """
+    _weights_from_bounds specialized for a BINARY coverage decision
+    (Stage 3) - each product's own term is 0 or 1, so its bound is
+    trivially 1, and the general recursive formula degenerates
+    exactly to the classic "prefer the lower-indexed binary choice"
+    power-of-two weighting (1, 2, 4, 8, ...) - exact for any
+    realistic product catalog (comfortably within double-precision's
+    exact integer range for up to roughly 50 products).
+    """
+
+    ordered_products = sorted(
+        products,
+        key=lambda product: product.id,
+    )
+
+    bounds_by_id = {
+        product.id: 1
+        for product in ordered_products
+    }
+
+    return _weights_from_bounds(ordered_products, bounds_by_id)
+
+
+def _lock_primary_objective_and_resolve(
+    problem: pulp.LpProblem,
+    primary_expression,
+    tie_break_expression,
+    stage_name: str,
+) -> float:
+    """
+    The generic two-stage determinism mechanism (approved business
+    requirement): `problem` has just been solved to Optimal with
+    `primary_expression` as its objective. This locks that exact
+    value in as a hard floor (never a ceiling - nothing above it was
+    ever feasible under the constraints already in `problem`, so this
+    can only pin the value, never reduce it - satisfying "never let
+    the secondary objective reduce the primary value" structurally,
+    not just by convention) and re-solves for `tie_break_expression`
+    instead, so that whenever more than one solution shares the
+    primary value, every Generate run with the same inputs picks the
+    SAME one.
+
+    A no-op in effect whenever the primary-maximizing (or minimizing)
+    solution is already unique: the floor constraint then leaves
+    exactly one feasible point, and this second solve simply
+    re-confirms it.
+
+    Returns the locked primary value - the caller must report THIS,
+    never problem.objective.value() after this function returns (the
+    objective has been replaced by `tie_break_expression` by then).
+    """
+
+    locked_value = problem.objective.value()
+
+    problem += (
+        primary_expression
+        >= locked_value - _DETERMINISM_LOCK_EPSILON,
+        f"{stage_name}_primary_floor",
+    )
+
+    problem.setObjective(tie_break_expression)
+
+    _solve_stage_or_raise(
+        problem,
+        f"{stage_name} (deterministic tie-break)",
+    )
+
+    return locked_value
+
+
+def _resolve_profit_ties_deterministically(
+    problem: pulp.LpProblem,
+    products,
+    requirements,
+    cycle_resources,
+    forecast: dict[int, Decimal] | None,
+    already_consumed_by_resource_id: dict[int, Decimal] | None,
+    variables: dict[int, pulp.LpVariable],
+    profit_expression,
+    stage_name: str,
+) -> float:
+    """
+    Phase 1's single solve / Stage 5's tie-break: profit is the
+    primary value, the ascending-id quantity weights
+    (_assign_tie_break_weights) are the tie-break. See
+    _lock_primary_objective_and_resolve for the shared mechanism.
+    """
+
+    weights = _assign_tie_break_weights(
+        products,
+        requirements,
+        cycle_resources,
+        forecast,
+        already_consumed_by_resource_id,
+    )
+
+    tie_break_expression = pulp.lpSum(
+        variables[product.id] * weights[product.id]
+        for product in products
+    )
+
+    return _lock_primary_objective_and_resolve(
+        problem,
+        profit_expression,
+        tie_break_expression,
+        stage_name,
+    )
+
+
+def _resolve_coverage_ties_deterministically(
+    problem: pulp.LpProblem,
+    products,
+    coverage_variables: dict[int, pulp.LpVariable],
+    profit_of_covered_expression,
+    stage_name: str,
+) -> float:
+    """
+    Stage 3's tie-break: total profit of the covered set (at 1 unit
+    each) is the primary value, the ascending-id BINARY weights
+    (_assign_binary_tie_break_weights) are the tie-break - preferring,
+    among every coverage pattern that ties on profitability, the one
+    that covers the lowest product_id(s) it can. See
+    _lock_primary_objective_and_resolve for the shared mechanism.
+    """
+
+    weights = _assign_binary_tie_break_weights(products)
+
+    tie_break_expression = pulp.lpSum(
+        coverage_variables[product.id] * weights[product.id]
+        for product in products
+    )
+
+    return _lock_primary_objective_and_resolve(
+        problem,
+        profit_of_covered_expression,
+        tie_break_expression,
+        stage_name,
+    )
 
 def _is_minimum_demand_vector_feasible(
     products,
@@ -719,8 +1051,15 @@ def _solve_stage_or_raise(
     problem: pulp.LpProblem,
     stage_name: str,
 ) -> None:
+    # threads=1 is made explicit here (CBC already defaults to single-
+    # threaded when PuLP is not told otherwise, but an un-stated
+    # default is still a determinism risk if that default ever
+    # changes in a future CBC/PuLP version) - every stage of the
+    # adaptive model, and the deterministic tie-break re-solve, goes
+    # through this one function, so this single call site is enough
+    # to cover all of them consistently.
     problem.solve(
-        pulp.PULP_CBC_CMD(msg=False)
+        pulp.PULP_CBC_CMD(msg=False, threads=1)
     )
 
     status = pulp.LpStatus[problem.status]
@@ -926,6 +1265,16 @@ def _solve_stage3_profitability_tiebreak(
     standing in for "quantity" here is exactly equivalent to the
     plan's `x_i = y_i` pinning, without a redundant second variable).
 
+    Determinism fix: unlike Stages 1/2/4 (each returns only a scalar
+    count/ratio, unique by definition even when the underlying
+    assignment achieving it is not), this stage returns the actual
+    covered_ids SET - an identity-level decision that Stage 4's
+    shortfall targets and Stage 5's lower bounds both depend on
+    directly. If more than one coverage pattern ties on profitability,
+    _resolve_coverage_ties_deterministically locks that exact profit
+    in and re-solves for the documented ascending-product-id
+    tie-break, so the SAME pattern is chosen every time.
+
     Returns ONLY the resulting covered-product-id set - no quantity
     value from this stage is ever read by any later stage. This is
     deliberate: Stage 3 decides WHO is guaranteed coverage, never HOW
@@ -975,7 +1324,7 @@ def _solve_stage3_profitability_tiebreak(
         "total_coverage_floor",
     )
 
-    problem += pulp.lpSum(
+    profit_of_covered_expression = pulp.lpSum(
         coverage_variables[product.id]
         * float(
             calculate_unit_profit(
@@ -987,8 +1336,18 @@ def _solve_stage3_profitability_tiebreak(
         for product in products
     )
 
+    problem += profit_of_covered_expression
+
     _solve_stage_or_raise(
         problem, "Stage 3 (profitability coverage tie-break)"
+    )
+
+    _resolve_coverage_ties_deterministically(
+        problem,
+        products,
+        coverage_variables,
+        profit_of_covered_expression,
+        "adaptive_stage3",
     )
 
     covered_ids: set[int] = set()
@@ -1209,7 +1568,7 @@ def _solve_stage5_final_profit(
             f"fairness_ratio_lock_{product_id}",
         )
 
-    add_profit_objective(
+    profit_expression = add_profit_objective(
         problem,
         variables,
         products,
@@ -1218,6 +1577,22 @@ def _solve_stage5_final_profit(
     )
 
     _solve_stage_or_raise(problem, "Stage 5 (final profit maximization)")
+
+    # Determinism fix, Stage 2: the solve just above established the
+    # maximum achievable profit for this stage. Lock it in and
+    # re-solve for a deterministic tie-break among every allocation
+    # that shares it - see _resolve_profit_ties_deterministically.
+    objective_value = _resolve_profit_ties_deterministically(
+        problem,
+        products,
+        requirements,
+        cycle_resources,
+        forecast,
+        already_consumed_by_resource_id,
+        variables,
+        profit_expression,
+        "adaptive_stage5",
+    )
 
     allocations = []
 
@@ -1257,7 +1632,10 @@ def _solve_stage5_final_profit(
     return {
         "status": "Optimal",
         "allocations": allocations,
-        "objective_value": problem.objective.value(),
+        # The locked-in profit value from above - NOT problem.
+        # objective.value(), which after the tie-break re-solve now
+        # holds the secondary (tie-break) objective's value instead.
+        "objective_value": objective_value,
     }
 
 
@@ -1394,7 +1772,7 @@ def _solve_with_hard_minimum_demand(
             forecast,
         )
 
-    add_profit_objective(
+    profit_expression = add_profit_objective(
         problem,
         variables,
         products,
@@ -1403,7 +1781,7 @@ def _solve_with_hard_minimum_demand(
     )
 
     problem.solve(
-        pulp.PULP_CBC_CMD(msg=False)
+        pulp.PULP_CBC_CMD(msg=False, threads=1)
     )
 
     solver_status = pulp.LpStatus[
@@ -1424,6 +1802,22 @@ def _solve_with_hard_minimum_demand(
         raise ValueError(
             f"Production optimization failed with status: {solver_status}"
         )
+
+    # Determinism fix, Stage 2: Stage 1 above just established the
+    # maximum achievable profit. Lock it in and re-solve for a
+    # deterministic tie-break among every allocation that shares it -
+    # see _resolve_profit_ties_deterministically's own docstring.
+    objective_value = _resolve_profit_ties_deterministically(
+        problem,
+        products,
+        requirements,
+        cycle_resources,
+        forecast,
+        already_consumed_by_resource_id,
+        variables,
+        profit_expression,
+        "hard_minimum",
+    )
 
     allocations = []
 
@@ -1465,7 +1859,10 @@ def _solve_with_hard_minimum_demand(
     return {
         "status": solver_status,
         "allocations": allocations,
-        "objective_value": problem.objective.value(),
+        # The locked-in Stage 1 profit value - NOT problem.objective.
+        # value(), which after the tie-break re-solve above now holds
+        # the secondary (tie-break) objective's value, not profit.
+        "objective_value": objective_value,
     }
 
 
