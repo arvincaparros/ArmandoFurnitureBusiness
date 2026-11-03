@@ -1,11 +1,13 @@
 import {
   Boxes,
+  ClipboardCheck,
   Factory,
   FileBarChart,
   History,
   LayoutDashboard,
   Package,
   TrendingUp,
+  Warehouse,
 } from 'lucide-react'
 
 import type { LucideIcon } from 'lucide-react'
@@ -36,6 +38,16 @@ export const navigation: NavigationItem[] = [
     label: 'Production',
     path: '/production',
     icon: Factory,
+  },
+  {
+    label: 'Opening Stock',
+    path: '/opening-inventory',
+    icon: ClipboardCheck,
+  },
+  {
+    label: 'Inventory',
+    path: '/inventory',
+    icon: Warehouse,
   },
   {
     label: 'Forecast',

@@ -50,14 +50,24 @@ ForecastHistoryRun.model_rebuild()
 
 
 class ForecastTimeSeriesPoint(BaseModel):
-    # Historical points are one per calendar week (Monday start) of
-    # qualifying sales transactions, zero-filled for weeks with no
-    # qualifying sales. The trailing forecast points have no sales
-    # behind them, and their "period" is each forecasted week's
-    # Monday start date.
+    # point_type is the authoritative kind discriminator:
+    #   SALE       - one calendar week's sold total (zero-filled).
+    #                historical_sales carries the quantity SOLD.
+    #                quantity_produced is always None here - produced
+    #                figures live on the matching PRODUCTION point for
+    #                the same week, never duplicated onto this one.
+    #   PRODUCTION - one calendar week's produced total, summed from
+    #                every production application applied that week,
+    #                plus any pre-rollout (production_cycle_id IS NULL)
+    #                sale's own stored quantity_produced for that week
+    #                - its only production record, since it predates
+    #                the ledger. Never zero-filled: a week with no
+    #                production has no PRODUCTION point at all.
+    #   FORECAST   - one of the three trailing weekly projections.
+    # is_forecast is kept, unchanged, for every existing consumer: it
+    # is True exactly when point_type == "FORECAST".
     period: str
-    transaction_id: int | None = None
-    transaction_number: str | None = None
+    point_type: str
     historical_sales: Decimal | None = None
     quantity_produced: Decimal | None = None
     predicted_demand: Decimal | None = None
@@ -67,9 +77,9 @@ class ForecastTimeSeriesPoint(BaseModel):
 class ProductTimeSeries(BaseModel):
     product_id: int
     product_name: str
-    # Computed once from the product's weekly historical series and
-    # shared by every forecast point in `series` below - never
-    # recomputed per point.
+    # Computed once from the product's weekly SOLD series and shared
+    # by every forecast point in `series` below - never recomputed
+    # per point.
     trend: str
     confidence_level: Decimal
     series: list[ForecastTimeSeriesPoint]

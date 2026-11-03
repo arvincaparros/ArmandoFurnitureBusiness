@@ -8,14 +8,17 @@ import {
 import type {
   ForecastTimeSeriesPoint,
   ForecastTimeSeriesResponse,
+  ProductTimeSeriesResponse,
 } from './forecastTypes'
 
 // 2026-01-05 is a Monday, used as the weekly anchor throughout so
 // boundaries are easy to verify by eye.
 //
-// 3 historical weeks (one zero-filled gap), then exactly 3 forecast
-// weeks: quantities [10, 0, 20] -> avg_delta = (20-10)/2 = 5 ->
-// 25, 30, 35.
+// 3 historical sale weeks (one zero-filled gap), two of which also
+// have their own PRODUCTION point (a week with zero production gets
+// no PRODUCTION point at all - see forecastTypes.ts), then exactly 3
+// forecast weeks: sold quantities [10, 0, 20] -> avg_delta =
+// (20-10)/2 = 5 -> 25, 30, 35.
 const HISTORICAL_WEEKS: readonly [
   period: string,
   sold: string,
@@ -26,14 +29,26 @@ const HISTORICAL_WEEKS: readonly [
   ['2026-01-19', '20.0000', '22.0000'],
 ]
 
-function toHistoricalPoint(
-  [period, sold, produced]: readonly [string, string, string],
+function toSalePoint(
+  [period, sold]: readonly [string, string, string],
 ): ForecastTimeSeriesPoint {
   return {
     period,
-    transaction_id: null,
-    transaction_number: null,
+    point_type: 'SALE',
     historical_sales: sold,
+    quantity_produced: null,
+    predicted_demand: null,
+    is_forecast: false,
+  }
+}
+
+function toProductionPoint(
+  [period, , produced]: readonly [string, string, string],
+): ForecastTimeSeriesPoint {
+  return {
+    period,
+    point_type: 'PRODUCTION',
+    historical_sales: null,
     quantity_produced: produced,
     predicted_demand: null,
     is_forecast: false,
@@ -43,8 +58,7 @@ function toHistoricalPoint(
 const FORECAST_WEEKS: readonly ForecastTimeSeriesPoint[] = [
   {
     period: '2026-01-26',
-    transaction_id: null,
-    transaction_number: null,
+    point_type: 'FORECAST',
     historical_sales: null,
     quantity_produced: null,
     predicted_demand: '25.0000',
@@ -52,8 +66,7 @@ const FORECAST_WEEKS: readonly ForecastTimeSeriesPoint[] = [
   },
   {
     period: '2026-02-02',
-    transaction_id: null,
-    transaction_number: null,
+    point_type: 'FORECAST',
     historical_sales: null,
     quantity_produced: null,
     predicted_demand: '30.0000',
@@ -61,13 +74,31 @@ const FORECAST_WEEKS: readonly ForecastTimeSeriesPoint[] = [
   },
   {
     period: '2026-02-09',
-    transaction_id: null,
-    transaction_number: null,
+    point_type: 'FORECAST',
     historical_sales: null,
     quantity_produced: null,
     predicted_demand: '35.0000',
     is_forecast: true,
   },
+]
+
+// Only the two non-zero-production weeks (Jan 05, Jan 19) get a
+// PRODUCTION point, matching the "never zero-filled" rule for
+// production documented on ForecastTimeSeriesPoint.
+const CHAIR_SERIES: ForecastTimeSeriesPoint[] = [
+  ...HISTORICAL_WEEKS.flatMap((week) => {
+    const [, , produced] = week
+    const points: ForecastTimeSeriesPoint[] = []
+
+    if (produced !== '0.0000') {
+      points.push(toProductionPoint(week))
+    }
+
+    points.push(toSalePoint(week))
+
+    return points
+  }),
+  ...FORECAST_WEEKS,
 ]
 
 const chairTimeseries: ForecastTimeSeriesResponse = {
@@ -77,31 +108,50 @@ const chairTimeseries: ForecastTimeSeriesResponse = {
       product_name: 'Chair',
       trend: 'INCREASING',
       confidence_level: '66.67',
-      series: [
-        ...HISTORICAL_WEEKS.map(toHistoricalPoint),
-        ...FORECAST_WEEKS,
-      ],
+      series: CHAIR_SERIES,
     },
   ],
 }
 
 describe('toUiForecastChartData', () => {
-  it('turns 3 historical weeks and 3 forecast weeks into 6 points', () => {
-    const data = toUiForecastChartData(chairTimeseries)
+  it('turns historical sale/production weeks and forecast weeks into one point per row', () => {
+    const data = toUiForecastChartData(CHAIR_SERIES)
 
-    expect(data).toHaveLength(6)
+    // 2 production points (Jan 05, Jan 19) + 3 sale points + 3
+    // forecast points = 8 rows. No row is dropped or merged.
+    expect(data).toHaveLength(8)
 
     expect(data.map((point) => point.date)).toEqual([
       'Jan 05',
+      'Jan 05',
       'Jan 12',
+      'Jan 19',
       'Jan 19',
       'Jan 26',
       'Feb 02',
       'Feb 09',
     ])
 
+    expect(data.map((point) => point.pointType)).toEqual([
+      'PRODUCTION',
+      'SALE',
+      'SALE',
+      'PRODUCTION',
+      'SALE',
+      'FORECAST',
+      'FORECAST',
+      'FORECAST',
+    ])
+
     expect(data.map((point) => point.historicalDemand)).toEqual([
-      10, 0, 20, undefined, undefined, undefined,
+      undefined,
+      10,
+      0,
+      undefined,
+      20,
+      undefined,
+      undefined,
+      undefined,
     ])
 
     expect(
@@ -111,14 +161,14 @@ describe('toUiForecastChartData', () => {
   })
 
   it('accounts for every unit and never counts a forecast week as a sale', () => {
-    const data = toUiForecastChartData(chairTimeseries)
+    const data = toUiForecastChartData(CHAIR_SERIES)
 
     const soldUnits = data.reduce(
       (total, point) => total + (point.historicalDemand ?? 0),
       0,
     )
     const producedUnits = data.reduce(
-      (total, point) => total + (point.quantityProduced ?? 0),
+      (total, point) => total + (point.producedQuantity ?? 0),
       0,
     )
 
@@ -142,21 +192,53 @@ describe('toUiForecastChartData', () => {
 
   it('formats the axis day exactly as the API sent it', () => {
     expect(
-      toUiForecastChartData(chairTimeseries).every(
+      toUiForecastChartData(CHAIR_SERIES).every(
         (point) => !point.date.includes('20'),
       ),
     ).toBe(true)
   })
 
-  it('returns no points when the product has no series yet', () => {
-    expect(toUiForecastChartData(undefined)).toEqual([])
+  it('returns no points for an empty series', () => {
+    expect(toUiForecastChartData([])).toEqual([])
+  })
+})
+
+describe('toUiForecastChartData production points', () => {
+  it('plots produced units from PRODUCTION points only, never on a SALE row', () => {
+    const rows = toUiForecastChartData([
+      {
+        period: '2026-10-26',
+        point_type: 'PRODUCTION',
+        historical_sales: null,
+        quantity_produced: '6.0000',
+        predicted_demand: null,
+        is_forecast: false,
+      },
+      {
+        period: '2026-10-28',
+        point_type: 'SALE',
+        historical_sales: '2.0000',
+        quantity_produced: null,
+        predicted_demand: null,
+        is_forecast: false,
+      },
+    ])
+
+    expect(rows[0].pointType).toBe('PRODUCTION')
+    expect(rows[0].producedQuantity).toBe(6)
+    expect(rows[0].historicalDemand).toBeUndefined()
+    expect(rows[0].forecastedDemand).toBeUndefined()
+
+    expect(rows[1].pointType).toBe('SALE')
+    expect(rows[1].producedQuantity).toBeUndefined()
+    expect(rows[1].historicalDemand).toBe(2)
   })
 })
 
 // A second product with zero history: all 3 series points are
 // forecast, no historical points at all - exercises the "no
 // historical week" fallback.
-const diningTableTimeseries = {
+const diningTableTimeseries: ProductTimeSeriesResponse = {
   product_id: 9,
   product_name: 'Dining Table',
   trend: 'NO_DATA',
@@ -164,8 +246,7 @@ const diningTableTimeseries = {
   series: [
     {
       period: '2026-11-02',
-      transaction_id: null,
-      transaction_number: null,
+      point_type: 'FORECAST',
       historical_sales: null,
       quantity_produced: null,
       predicted_demand: '0',
@@ -173,8 +254,7 @@ const diningTableTimeseries = {
     },
     {
       period: '2026-11-09',
-      transaction_id: null,
-      transaction_number: null,
+      point_type: 'FORECAST',
       historical_sales: null,
       quantity_produced: null,
       predicted_demand: '0',
@@ -182,8 +262,7 @@ const diningTableTimeseries = {
     },
     {
       period: '2026-11-16',
-      transaction_id: null,
-      transaction_number: null,
+      point_type: 'FORECAST',
       historical_sales: null,
       quantity_produced: null,
       predicted_demand: '0',
@@ -211,9 +290,10 @@ describe('toUiForecastTableItems', () => {
     const items = toUiForecastTableItems(allProductsTimeseries)
     const chair = items[0]
 
-    // Latest historical week is 2026-01-19 (quantity 20), first
-    // forecast week is 2026-01-26 (predicted 25) - both on one row,
-    // neither blank.
+    // Latest SALE week is 2026-01-19 (quantity 20), first forecast
+    // week is 2026-01-26 (predicted 25) - both on one row, neither
+    // blank, and the interleaved PRODUCTION point for the same week
+    // does not shift which SALE point counts as "latest".
     expect(chair.historicalSales).toBe(20)
     expect(chair.predictedDemand).toBe(25)
     expect(chair.forecastPeriod).toBe('Jan 26 - Feb 1')
@@ -245,8 +325,7 @@ describe('toUiForecastTableItems', () => {
           series: [
             {
               period: '2026-01-26',
-              transaction_id: null,
-              transaction_number: null,
+              point_type: 'FORECAST',
               historical_sales: null,
               quantity_produced: null,
               predicted_demand: '3.857142857142857',
@@ -263,5 +342,52 @@ describe('toUiForecastTableItems', () => {
     // so the table never under-plans production against the
     // forecast.
     expect(items[0].predictedDemand).toBe(4)
+  })
+
+  // This is the regression test for the bug this integration fixes:
+  // toUiForecastTableItems must read the latest SALE point for
+  // Historical Sales, even when a later, non-forecast PRODUCTION
+  // point exists further along in the same series.
+  it('uses the latest SALE point for historicalSales even when a later PRODUCTION point exists', () => {
+    const timeseries: ForecastTimeSeriesResponse = {
+      products: [
+        {
+          product_id: 1,
+          product_name: 'Ordinary Chair',
+          trend: 'STABLE',
+          confidence_level: '80.00',
+          series: [
+            {
+              period: '2026-01-05',
+              point_type: 'SALE',
+              historical_sales: '10',
+              quantity_produced: null,
+              predicted_demand: null,
+              is_forecast: false,
+            },
+            {
+              period: '2026-01-12',
+              point_type: 'PRODUCTION',
+              historical_sales: null,
+              quantity_produced: '5',
+              predicted_demand: null,
+              is_forecast: false,
+            },
+            {
+              period: '2026-01-19',
+              point_type: 'FORECAST',
+              historical_sales: null,
+              quantity_produced: null,
+              predicted_demand: '12',
+              is_forecast: true,
+            },
+          ],
+        },
+      ],
+    }
+
+    const items = toUiForecastTableItems(timeseries)
+
+    expect(items[0].historicalSales).toBe(10)
   })
 })

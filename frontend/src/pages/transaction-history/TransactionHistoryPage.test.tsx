@@ -112,6 +112,9 @@ const renderPage = (
     isUpdating: false,
     deleteTransaction: vi.fn(),
     isDeleting: false,
+    stockByProductId: {},
+    producedByProductId: {},
+    isStockValidationEnabled: false,
     ...overrides,
   } as unknown as ReturnType<typeof useTransactions>)
 

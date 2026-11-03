@@ -15,6 +15,7 @@ from app.services.optimization import (
 from app.database.models import (
     CycleResource,
     ProductionAllocation,
+    ProductionApplication,
     ProductionCycle,
     OptimizationResult,
     OptimizationRun,
@@ -983,6 +984,42 @@ def test_apply_optimization_accepts_unchanged_valid_plan(
     assert apply_response.json()["status"] == "OPTIMAL"
 
 
+# --- Task 6 helpers for a SECOND apply in the same cycle --------------
+#
+# Apply became append-only and INCREMENTAL in Task 6, which changes what
+# a second apply in one cycle needs:
+#   * a FRESH optimization run - re-applying the same run is refused by
+#     the duplicate-application guard (that refusal is covered by
+#     test_production_apply_ledger.py), and
+#   * FRESH raw capacity - the first application's consumption is
+#     deducted before the plan is revalidated.
+# Generate the plan BEFORE topping up: /optimize is not ledger-aware, so
+# a plan generated against raised capacity asks for all of it and still
+# would not fit in what remains after the earlier application.
+
+
+def _triple_cycle_capacity(db, cycle_id):
+    for cycle_resource in db.query(CycleResource).filter(
+        CycleResource.production_cycle_id == cycle_id
+    ).all():
+        cycle_resource.available_quantity = (
+            cycle_resource.available_quantity * Decimal("3")
+        )
+
+    db.commit()
+
+
+def _prepare_second_apply(client, db, cycle_id):
+    response = client.post(
+        f"/api/production-cycles/{cycle_id}/optimize",
+        json={"objective": "MAX_PROFIT"},
+    )
+
+    assert response.status_code == 200, response.text
+
+    _triple_cycle_capacity(db, cycle_id)
+
+
 def test_apply_optimization_is_repeatable(
     db,
     client,
@@ -1003,6 +1040,11 @@ def test_apply_optimization_is_repeatable(
     )
 
     assert first_response.status_code == 200
+
+    # Was a bare second apply of the SAME run, which Task 6 now refuses
+    # by design. What this test actually checks is the state AFTER two
+    # applies, so it is given a fresh plan and fresh materials instead.
+    _prepare_second_apply(client, db, optimization_cycle.id)
 
     second_response = client.post(
         f"/api/production-cycles/{optimization_cycle.id}/optimize/apply",
@@ -2272,6 +2314,8 @@ def test_reapply_refreshes_applied_at(
         ProductionAllocation.production_cycle_id == optimization_cycle.id
     ).first().applied_at
 
+    _prepare_second_apply(client, db, optimization_cycle.id)
+
     second_apply = client.post(
         f"/api/production-cycles/{optimization_cycle.id}/optimize/apply"
     )
@@ -2432,6 +2476,12 @@ def test_feasibility_needs_reoptimization_false_after_reapply(
     )
     assert reoptimize_response.status_code == 200
 
+    # Labor was fully consumed by the first apply, so the reapply needs
+    # fresh capacity as well as the fresh run it already generates.
+    # Done AFTER the reoptimize so applied_at still lands after every
+    # cycle_resource.updated_at and needs_reoptimization stays False.
+    _triple_cycle_capacity(db, optimization_cycle.id)
+
     reapply_response = client.post(
         f"/api/production-cycles/{optimization_cycle.id}/optimize/apply"
     )
@@ -2564,6 +2614,10 @@ def test_apply_optimization_rolls_back_on_mid_transaction_failure(
     )
     assert second_optimize.status_code == 200
 
+    # Fresh capacity so the second apply reaches the patched call
+    # instead of being turned away by the incremental capacity check.
+    _triple_cycle_capacity(db, optimization_cycle.id)
+
     def _boom(*args, **kwargs):
         raise RuntimeError("simulated failure during apply")
 
@@ -2578,6 +2632,25 @@ def test_apply_optimization_rolls_back_on_mid_transaction_failure(
         )
 
     db.rollback()
+
+    # Task 6 put save_production_application INSIDE this same try block,
+    # ahead of the patched call - so the ledger row had already been
+    # flushed when the failure fired. Only the FIRST apply's application
+    # may survive; a second one would mean produced units were counted
+    # into available stock by an apply that never committed. This is the
+    # only test that covers rollback AFTER a ledger write (the dedicated
+    # ledger test covers rejection BEFORE any write).
+    db.expire_all()
+
+    assert (
+        db.query(ProductionApplication)
+        .filter(
+            ProductionApplication.production_cycle_id
+            == optimization_cycle.id
+        )
+        .count()
+        == 1
+    )
 
     after_allocations = {
         allocation.product_id: allocation.quantity

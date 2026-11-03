@@ -68,6 +68,9 @@ const TransactionHistoryPage = () => {
     createTransaction,
     updateTransaction,
     deleteTransaction,
+    stockByProductId,
+    producedByProductId,
+    isStockValidationEnabled,
   } = useTransactions(filter)
 
   const filteredTransactions =
@@ -328,6 +331,9 @@ const TransactionHistoryPage = () => {
           opened={opened}
           products={products}
           transaction={selectedTransaction}
+          stockByProductId={stockByProductId}
+          producedByProductId={producedByProductId}
+          isStockValidationEnabled={isStockValidationEnabled}
           onClose={() => {
             setSelectedTransaction(null)
             setOpened(false)

@@ -11,6 +11,7 @@ import {
   fetchFeasibility,
   fetchOptimizationHistory,
   fetchProductionAllocations,
+  fetchProductionApplications,
   fetchProductSummaries,
   runOptimization,
 } from '../api/productionApi'
@@ -72,6 +73,11 @@ const useProductionAllocation = () => {
   // action calls - so this is deliberately NOT invalidated by the
   // optimize mutation below (see its onSuccess: generating a new
   // preview does not change what's actually allocated).
+  //
+  // Production HISTORY no longer lives here either: every apply
+  // event is a row in the append-only ledger, read by
+  // applicationsQuery below. This key still holds only the
+  // current committed plan.
   const allocationsQueryKey = [
     'production-allocations',
     latestCycleId,
@@ -89,6 +95,17 @@ const useProductionAllocation = () => {
   // this allocation was applied. Shares the ['feasibility', cycleId]
   // query key with useResources.ts::invalidateCycleResources, so a
   // resource edit on that page correctly goes stale here too.
+  const applicationsQueryKey = [
+    'production-applications',
+    latestCycleId,
+  ]
+
+  const applicationsQuery = useQuery({
+    queryKey: applicationsQueryKey,
+    queryFn: () => fetchProductionApplications(latestCycleId!),
+    enabled: latestCycleId !== null,
+  })
+
   const feasibilityQueryKey = ['feasibility', latestCycleId]
 
   const feasibilityQuery = useQuery({
@@ -159,6 +176,38 @@ const useProductionAllocation = () => {
     [historyQuery.data],
   )
 
+  // The backend rejects applying a run that already has a ledger
+  // row (apply_optimization's has_application_for_run guard).
+  // Mirroring that check here is purely so the user is told
+  // BEFORE clicking, rather than by a 400 afterwards - the
+  // server's guard and the uq_production_application_run
+  // constraint remain the real enforcement.
+  const isCurrentPlanApplied = useMemo(() => {
+    if (!latestOptimalRun) {
+      return false
+    }
+
+    return (applicationsQuery.data ?? []).some(
+      (application) =>
+        application.optimization_run_id === latestOptimalRun.id,
+    )
+  }, [applicationsQuery.data, latestOptimalRun])
+
+  const cycleProducedTotal = useMemo(
+    () =>
+      (applicationsQuery.data ?? []).reduce(
+        (runningTotal, application) =>
+          runningTotal +
+          application.product_items.reduce(
+            (itemTotal, item) =>
+              itemTotal + Number(item.quantity_produced),
+            0,
+          ),
+        0,
+      ),
+    [applicationsQuery.data],
+  )
+
   const persistedResult = useMemo(() => {
     if (!latestOptimalRun) {
       return null
@@ -204,6 +253,18 @@ const useProductionAllocation = () => {
       queryClient.invalidateQueries({
         queryKey: allocationsQueryKey,
       })
+
+      // The ledger gained a row, so this cycle's application
+      // list and every derived stock figure go stale.
+      // ['inventory'] is shared with
+      // inventory/hooks/useInventory.ts and
+      // transaction-history/hooks/useTransactions.ts - one key,
+      // every writer invalidates it.
+      queryClient.invalidateQueries({
+        queryKey: applicationsQueryKey,
+      })
+
+      queryClient.invalidateQueries({ queryKey: ['inventory'] })
 
       queryClient.invalidateQueries({
         queryKey: ['resource-utilization', latestCycleId],
@@ -261,7 +322,11 @@ const useProductionAllocation = () => {
     isAllocationError:
       allocationsQuery.isError || productsQuery.isError,
 
-    canApply: latestOptimalRun !== null,
+    canApply:
+      latestOptimalRun !== null && !isCurrentPlanApplied,
+    isCurrentPlanApplied,
+    appliedCount: (applicationsQuery.data ?? []).length,
+    cycleProducedTotal,
     applyToProduction: () => applyMutation.mutateAsync(),
     isApplying: applyMutation.isPending,
     applyError: applyMutation.error,

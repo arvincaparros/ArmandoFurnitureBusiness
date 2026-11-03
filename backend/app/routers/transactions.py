@@ -11,6 +11,9 @@ from app.schemas.transaction import (
     SalesTransactionUpdate,
 )
 from app.services.auth import get_current_user
+from app.services.opening_inventory import (
+    OpeningInventoryRequiredError,
+)
 from app.services.transaction import (
     create_transaction,
     delete_transaction,
@@ -123,6 +126,14 @@ def create_new_transaction(
             data,
         )
 
+    # Before ValueError: this is a precondition the system has not
+    # met yet (409), not a malformed request (400).
+    except OpeningInventoryRequiredError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+
     except ValueError as exc:
         raise HTTPException(
             status_code=status.HTTP_400_BAD_REQUEST,
@@ -150,11 +161,26 @@ def update_existing_transaction(
             detail="Sales transaction not found",
         )
 
-    return update_transaction(
-        db,
-        transaction,
-        data,
-    )
+    try:
+        return update_transaction(
+            db,
+            transaction,
+            data,
+        )
+
+    # Same ordering as create: precondition (409) before malformed
+    # request (400).
+    except OpeningInventoryRequiredError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_400_BAD_REQUEST,
+            detail=str(exc),
+        ) from exc
 
 
 @router.delete(

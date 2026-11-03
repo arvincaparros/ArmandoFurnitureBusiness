@@ -67,6 +67,32 @@ export interface OptimizationHistoryResponse {
 
 // Minimal slice of GET /api/products - only what's needed to resolve
 // product_id -> name for a persisted history run's results.
+// Mirrors backend/app/schemas/production_application.py. One
+// entry per Apply event - the append-only ledger, NOT the
+// current committed allocation (that is
+// ProductionAllocationResponse).
+export interface ProductionApplicationItemResponse {
+  product_id: number
+  quantity_produced: string
+}
+
+export interface ProductionApplicationResourceItemResponse {
+  resource_id: number | null
+  resource_name: string
+  unit: string
+  consumed_quantity: string
+}
+
+export interface ProductionApplicationResponse {
+  id: number
+  application_number: string
+  production_cycle_id: number
+  optimization_run_id: number
+  applied_at: string
+  product_items: ProductionApplicationItemResponse[]
+  resource_items: ProductionApplicationResourceItemResponse[]
+}
+
 export interface ProductSummary {
   id: number
   name: string

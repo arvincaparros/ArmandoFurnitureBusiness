@@ -11,13 +11,20 @@ from app.database.models import (
     Product,
     ProductResourceRequirement,
     ProductionAllocation,
+    ProductionCycle,
     Resource,
 )
 from app.services.optimization_history import (
     get_latest_optimization_history_run,
 )
+from app.services.production_application import (
+    get_cycle_consumed_by_resource,
+    has_application_for_run,
+    save_production_application,
+)
 from app.services.production_calculation import (
     BOTTLENECK_REMAINING_THRESHOLD,
+    calculate_resource_requirements_for_quantities,
     find_resource_capacity_shortages,
     format_capacity_shortage_message,
 )
@@ -1629,6 +1636,24 @@ def apply_optimization(
             "Production cycle has no resources configured"
         )
 
+    # Serialises concurrent applies for this cycle. Two parallel
+    # clicks would otherwise both read the same already-consumed
+    # offset, both pass the capacity check, and both append a
+    # ledger row - double-counting units into available stock. The
+    # uq_production_application_run constraint catches the
+    # identical-run case regardless, but two DIFFERENT runs applied
+    # simultaneously would slip past it, so the lock is what makes
+    # incremental capacity actually incremental. Held until this
+    # function's commit/rollback.
+    locked_cycle = db.execute(
+        select(ProductionCycle)
+        .where(ProductionCycle.id == cycle_id)
+        .with_for_update()
+    ).scalar_one_or_none()
+
+    if locked_cycle is None:
+        raise ValueError("Production cycle not found")
+
     optimization_run = (
         get_latest_optimization_history_run(
             db,
@@ -1661,6 +1686,19 @@ def apply_optimization(
         raise ValueError(
             "This optimization record has no product-level results and "
             "cannot be applied. Generate a new production plan instead."
+        )
+
+    # Duplicate-application guard. Checked here, before anything is
+    # written, so the caller gets an explanatory 400 instead of the
+    # uq_production_application_run IntegrityError - and so a
+    # double-clicked Apply cannot add the same units to available
+    # stock twice. Deliberately phrased as "generate a new plan":
+    # re-applying is never the right remedy, producing more is.
+    if has_application_for_run(db, optimization_run.id):
+        raise ValueError(
+            "This production plan has already been applied "
+            "and cannot be applied again. Generate a new production "
+            "plan to produce more."
         )
 
     allocations = []
@@ -1721,22 +1759,51 @@ def apply_optimization(
         for allocation in allocations
     }
 
+    # INCREMENTAL since the production ledger exists: capacity
+    # already consumed by earlier applications in THIS cycle is
+    # deducted first, so a second application cannot re-spend the
+    # first's materials. A cycle with no prior application gets an
+    # empty offset and behaves exactly as before.
+    already_consumed = get_cycle_consumed_by_resource(db, cycle_id)
+
     shortages = find_resource_capacity_shortages(
         db,
         cycle_id,
         proposed_quantities,
+        already_consumed_by_resource_id=already_consumed,
     )
 
     if shortages:
         raise ValueError(
             format_capacity_shortage_message(
                 shortages,
-                "Cannot apply this production plan - resources or "
-                "requirements have changed since it was generated and "
-                "it is no longer feasible. Please regenerate the "
-                "Production Plan",
+                "Cannot apply this production plan - the cycle does "
+                "not have enough remaining resource capacity "
+                "(previous applications in this cycle have already "
+                "consumed part of it). Increase the resource "
+                "quantities or regenerate the Production Plan",
             )
         )
+
+    # What this application will consume, recorded on the ledger so
+    # the NEXT application in this cycle is offset by it. Computed
+    # from the same helper find_resource_capacity_shortages just
+    # validated against, so the recorded consumption and the
+    # validated consumption can never be two different numbers.
+    consumption = calculate_resource_requirements_for_quantities(
+        db,
+        proposed_quantities,
+    )
+
+    consumed_resources = [
+        {
+            "resource_id": item["resource_id"],
+            "resource_name": item["resource_name"],
+            "unit": item["unit"],
+            "consumed_quantity": item["required_quantity"],
+        }
+        for item in consumption
+    ]
 
     db.query(ProductionAllocation).filter(
         ProductionAllocation.production_cycle_id == cycle_id
@@ -1770,14 +1837,53 @@ def apply_optimization(
         # would still see the pre-apply allocations.
         db.flush()
 
+        # Append-only production history. Written in the SAME
+        # transaction as the ProductionAllocation rows and the
+        # utilization snapshot below, so the current plan, the
+        # production history, and the utilization snapshot can never
+        # disagree about whether this apply happened.
+        save_production_application(
+            db,
+            cycle_id,
+            optimization_run.id,
+            {
+                allocation["product_id"]: Decimal(
+                    str(allocation["quantity"])
+                )
+                for allocation in allocations
+            },
+            consumed_resources,
+        )
+
         # Resource Utilization History is a snapshot of applied
         # production, never of the optimizer's preview - this is the
         # ONLY place it's created (generating a plan does not reach
-        # here). Computed from the allocations just flushed above,
-        # then persisted in the SAME transaction as those allocations
-        # (save_resource_utilization_history does not commit) so both
-        # succeed or both roll back together atomically.
-        utilization = calculate_resource_utilization(db, cycle_id)
+        # here). Passed the cycle's CUMULATIVE ledger consumption
+        # rather than letting it re-derive consumption from
+        # ProductionAllocation: the allocation holds only the latest
+        # plan, so without this the snapshot taken after a second
+        # application would report only that application's share and
+        # show capacity the cycle has already spent. Persisted in the
+        # SAME transaction (save_resource_utilization_history does
+        # not commit) so everything here succeeds or rolls back
+        # together atomically.
+        #
+        # Deliberately a SECOND call to
+        # get_cycle_consumed_by_resource: the one above is the offset
+        # this apply was VALIDATED against (excludes this apply);
+        # this one is the figure the snapshot should SHOW (includes
+        # it, via the flush inside save_production_application). Do
+        # not collapse them.
+        cumulative_consumed = get_cycle_consumed_by_resource(
+            db,
+            cycle_id,
+        )
+
+        utilization = calculate_resource_utilization(
+            db,
+            cycle_id,
+            consumption_override=cumulative_consumed,
+        )
 
         save_resource_utilization_history(
             db,

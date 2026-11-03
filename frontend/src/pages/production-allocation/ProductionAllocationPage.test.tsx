@@ -2,11 +2,16 @@ import { render, screen, waitFor } from '@testing-library/react'
 import { MantineProvider } from '@mantine/core'
 import { Notifications } from '@mantine/notifications'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
+import userEvent from '@testing-library/user-event'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import ProductionAllocationPage from './ProductionAllocationPage'
 import { ThemeProvider } from '../../theme/ThemeContext'
-import { fetchFeasibility } from './api/productionApi'
+import {
+  fetchFeasibility,
+  fetchOptimizationHistory,
+  fetchProductionApplications,
+} from './api/productionApi'
 
 vi.mock('../../hooks/useLatestProductionCycle', () => ({
   default: () => ({ cycleId: 1, hasCycle: true, isLoading: false, isError: false }),
@@ -18,6 +23,7 @@ vi.mock('./api/productionApi', () => ({
   fetchProductionAllocations: vi.fn().mockResolvedValue([
     { id: 1, production_cycle_id: 1, product_id: 1, quantity: '12', total_revenue: '1000', total_cost: '500', total_profit: '500' },
   ]),
+  fetchProductionApplications: vi.fn().mockResolvedValue([]),
   fetchFeasibility: vi.fn(),
   runOptimization: vi.fn(),
   applyOptimization: vi.fn(),
@@ -85,5 +91,96 @@ describe('ProductionAllocationPage re-optimization status', () => {
     })
 
     expect(screen.queryByText(/short by/i)).not.toBeInTheDocument()
+  })
+})
+
+
+describe('ProductionAllocationPage additive apply', () => {
+  it('tells the user Apply will add to this cycle, not replace it', async () => {
+    // A latest OPTIMAL run is required for Apply to be enabled.
+    vi.mocked(fetchOptimizationHistory).mockResolvedValueOnce([
+      {
+        id: 7,
+        status: 'OPTIMAL',
+        is_summary_only: false,
+        results: [
+          {
+            product_id: 1,
+            recommended_quantity: '10.0000',
+            unit_profit: '100.0000',
+            total_profit: '1000.0000',
+          },
+        ],
+      },
+    ] as never)
+
+    renderPage()
+
+    // The page swaps the DISABLED Tooltip-wrapped button for an
+    // enabled one once a latest OPTIMAL run resolves, so the element
+    // has to be re-queried after it becomes enabled - a node captured
+    // beforehand is detached by that swap and clicking it does
+    // nothing.
+    await waitFor(() => {
+      expect(
+        screen.getByRole('button', {
+          name: /apply to production/i,
+        }),
+      ).toBeEnabled()
+    })
+
+    await userEvent.click(
+      screen.getByRole('button', {
+        name: /apply to production/i,
+      }),
+    )
+
+    expect(
+      await screen.findByText(/add .* to this cycle/i),
+    ).toBeInTheDocument()
+
+    expect(
+      screen.queryByText(
+        /replace the current committed allocation/i,
+      ),
+    ).not.toBeInTheDocument()
+  })
+
+  it('explains why Apply is unavailable for an already-applied plan', async () => {
+    vi.mocked(fetchOptimizationHistory).mockResolvedValueOnce([
+      {
+        id: 7,
+        status: 'OPTIMAL',
+        is_summary_only: false,
+        results: [
+          {
+            product_id: 1,
+            recommended_quantity: '10.0000',
+            unit_profit: '100.0000',
+            total_profit: '1000.0000',
+          },
+        ],
+      },
+    ] as never)
+
+    vi.mocked(fetchProductionApplications).mockResolvedValueOnce([
+      {
+        id: 1,
+        application_number: 'PA-0001',
+        production_cycle_id: 1,
+        optimization_run_id: 7,
+        applied_at: '2026-10-30T09:00:00',
+        product_items: [
+          { product_id: 1, quantity_produced: '10.0000' },
+        ],
+        resource_items: [],
+      },
+    ] as never)
+
+    renderPage()
+
+    expect(
+      await screen.findByText(/already been applied/i),
+    ).toBeInTheDocument()
   })
 })

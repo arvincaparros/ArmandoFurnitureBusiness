@@ -39,6 +39,21 @@ interface AddTransactionModalProps {
   opened: boolean
   products: ProductSummary[]
   transaction?: Transaction | null
+
+  // product_id -> available stock across all cycles (opening + all
+  // applied production - all sales, continuous, never reset). Drives
+  // both the Quantity Produced display below and the Quantity Sold
+  // max/validation. Comes from GET /api/inventory via useTransactions.
+  stockByProductId: Record<number, number>
+  // product_id -> this cycle's unclaimed applied production. Kept in
+  // the prop shape for compatibility with the caller (TransactionHistoryPage.tsx
+  // still passes it, used by nothing else there) - deliberately unused
+  // in this component: it is a per-cycle drawdown, not available
+  // stock, and using it for the Quantity Produced display was the bug
+  // this field's binding below was changed to fix.
+  producedByProductId: Record<number, number>
+  isStockValidationEnabled: boolean
+
   onClose: () => void
   onSave: (
     data:
@@ -72,6 +87,8 @@ const AddTransactionModal = ({
   opened,
   products,
   transaction,
+  stockByProductId,
+  isStockValidationEnabled,
   onClose,
   onSave,
 }: AddTransactionModalProps) => {
@@ -82,11 +99,6 @@ const AddTransactionModal = ({
   >(null)
 
   const [date, setDate] = useState('')
-
-  const [
-    quantityProduced,
-    setQuantityProduced,
-  ] = useState(0)
 
   const [quantitySold, setQuantitySold] =
     useState(0)
@@ -104,9 +116,6 @@ const AddTransactionModal = ({
     if (transaction) {
       setProductId(transaction.productId)
       setDate(transaction.date)
-      setQuantityProduced(
-        transaction.quantityProduced,
-      )
       setQuantitySold(transaction.quantitySold)
       setUnitPrice(transaction.unitPrice)
     } else {
@@ -114,7 +123,6 @@ const AddTransactionModal = ({
       setDate(
         new Date().toISOString().split('T')[0],
       )
-      setQuantityProduced(0)
       setQuantitySold(0)
       setUnitPrice(0)
     }
@@ -122,16 +130,45 @@ const AddTransactionModal = ({
     setError(null)
   }, [transaction, opened])
 
+  // Displays the product's current available production balance
+  // (opening + all applied production - all sales, continuous,
+  // never reset - see services/inventory.py::get_available_stock) -
+  // NOT producedByProductId's per-cycle drawdown, which is a
+  // different figure that resets at a cycle boundary and drains as
+  // sales attribute against it. This field is purely a display
+  // preview: quantity_produced is never sent in the create/update
+  // request (see handleSave below), so this has no effect on what
+  // the backend actually records. In edit mode the stored value is
+  // shown as-is, unchanged from before.
+  const displayedQuantityProduced = isEditMode
+    ? (transaction?.quantityProduced ?? 0)
+    : productId !== null
+      ? (stockByProductId[productId] ?? 0)
+      : 0
+
+  const availableStock =
+    productId !== null
+      ? (stockByProductId[productId] ?? 0)
+      : 0
+
+  const exceedsStock =
+    isStockValidationEnabled &&
+    !isEditMode &&
+    productId !== null &&
+    quantitySold > availableStock
+
   // Sales revenue is earned on units SOLD (matches
   // app/services/transaction.py::calculate_transaction_values).
   const estimatedSales = quantitySold * unitPrice
 
+  // quantityProduced > 0 is gone: it is no longer user-controlled,
+  // and 0 is a legitimate value for the second sale in a cycle.
   const isValid =
     productId !== null &&
     date.trim() !== '' &&
-    quantityProduced > 0 &&
     quantitySold > 0 &&
-    unitPrice > 0
+    unitPrice > 0 &&
+    !exceedsStock
 
   const handleSave = async () => {
     if (!isValid || isSubmitting) {
@@ -150,7 +187,6 @@ const AddTransactionModal = ({
         // being reset to zero.
         await onSave({
           transaction_date: `${date}T00:00:00`,
-          quantity_produced: quantityProduced,
           quantity: quantitySold,
           unit_price: unitPrice,
         })
@@ -162,7 +198,6 @@ const AddTransactionModal = ({
         await onSave({
           product_id: productId as number,
           transaction_date: `${date}T00:00:00`,
-          quantity_produced: quantityProduced,
           quantity: quantitySold,
           unit_price: unitPrice,
           production_cost: 0,
@@ -274,13 +309,9 @@ const AddTransactionModal = ({
           <NumberInput
             radius="md"
             label="Quantity Produced"
-            value={quantityProduced}
-            onChange={(value) =>
-              setQuantityProduced(
-                Number(value),
-              )
-            }
-            min={0}
+            value={displayedQuantityProduced}
+            readOnly
+            description="Filled automatically from applied production"
           />
 
           <NumberInput
@@ -293,6 +324,21 @@ const AddTransactionModal = ({
               )
             }
             min={0}
+            max={
+              isStockValidationEnabled && !isEditMode
+                ? availableStock
+                : undefined
+            }
+            error={
+              exceedsStock
+                ? `Only ${availableStock} units are available`
+                : undefined
+            }
+            description={
+              isStockValidationEnabled && productId !== null
+                ? `${availableStock} units available`
+                : undefined
+            }
           />
         </SimpleGrid>
 

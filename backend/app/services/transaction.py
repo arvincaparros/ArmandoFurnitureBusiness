@@ -4,11 +4,23 @@ from decimal import Decimal
 from sqlalchemy import Date, cast, func, select
 from sqlalchemy.orm import Session
 
-from app.database.models import Product, SalesTransaction
+from app.database.models import (
+    Product,
+    ProductionCycle,
+    SalesTransaction,
+)
 from app.schemas.transaction import (
     SalesTransactionCreate,
     SalesTransactionUpdate,
     TransactionRangeMode,
+)
+from app.services.inventory import (
+    get_available_stock_for_product,
+    lock_product_for_stock_update,
+)
+from app.services.opening_inventory import (
+    OpeningInventoryRequiredError,
+    is_stock_validation_enabled,
 )
 
 
@@ -35,6 +47,73 @@ def validate_transaction_date_range(
         raise ValueError(
             "end_date must be greater than or equal to start_date"
         )
+
+
+def resolve_production_cycle_for_date(
+    db: Session,
+    transaction_date: datetime,
+) -> ProductionCycle:
+    """
+    The production cycle a sale belongs to, by date.
+
+    Membership is HALF-OPEN on the end bound:
+    date(start_date) <= date(transaction_date) < date(end_date). That
+    is the only rule under which seed.py's
+    `end_date = start_date + timedelta(days=7)` describes exactly
+    seven days AND back-to-back cycles never overlap - an inclusive
+    end bound would make every boundary date belong to two cycles.
+
+    Compared on the calendar DATE component only: transaction_date
+    arrives from the UI as YYYY-MM-DDT00:00:00 while cycle bounds may
+    carry a time, so a raw timestamp comparison would make cycle
+    membership depend on the submitting browser's clock.
+
+    Raises rather than falling back to the latest cycle. A sale
+    attributed to the wrong cycle silently corrupts that cycle's
+    reported sales and the stock figures derived alongside them, so an
+    unmatched date must be the user's problem to fix, not something
+    the system papers over. Two matching cycles (possible only with
+    hand-created overlapping cycles) are likewise rejected rather than
+    resolved by a tiebreak - picking one would be exactly the silent
+    assignment this function exists to prevent.
+    """
+
+    target_day = transaction_date.date()
+
+    matches = list(
+        db.scalars(
+            select(ProductionCycle)
+            .where(
+                cast(ProductionCycle.start_date, Date)
+                <= target_day,
+                cast(ProductionCycle.end_date, Date) > target_day,
+            )
+            .order_by(ProductionCycle.id)
+        ).all()
+    )
+
+    if not matches:
+        raise ValueError(
+            f"{target_day.isoformat()} does not fall within any "
+            "production cycle. Create or adjust a production cycle "
+            "that covers this date, then record the transaction."
+        )
+
+    if len(matches) > 1:
+        names = ", ".join(
+            f"#{cycle.id} "
+            f"({cycle.start_date.date().isoformat()} to "
+            f"{cycle.end_date.date().isoformat()})"
+            for cycle in matches
+        )
+
+        raise ValueError(
+            f"{target_day.isoformat()} falls within more than one "
+            f"production cycle ({names}). Correct the overlapping "
+            "cycle dates before recording this transaction."
+        )
+
+    return matches[0]
 
 
 # transaction_date is a DateTime column (see
@@ -290,6 +369,25 @@ def create_transaction(
     db: Session,
     transaction_data: SalesTransactionCreate,
 ) -> SalesTransaction:
+    # Checked FIRST, before any other validation (Ruling 28): the gate
+    # is a precondition on the OPERATION, not on the payload, so the
+    # answer is the same regardless of what was submitted.
+    #
+    # AMENDMENT A: this REFUSES the sale rather than skipping
+    # validation. The plan's original Task 10 body wrapped the stock
+    # check in `if is_stock_validation_enabled(db):` and recorded sales
+    # unvalidated until an opening balance was reviewed - that is the
+    # rejected soft gate, because it left a window in which true stock
+    # could go negative and the derived figure's zero-floor would then
+    # hide the deficit instead of preventing it.
+    if not is_stock_validation_enabled(db):
+        raise OpeningInventoryRequiredError(
+            "Opening inventory must be declared and reviewed "
+            "before sales can be recorded. Every active product "
+            "that existed on the effective date needs an explicit "
+            "opening quantity, including zero."
+        )
+
     product = db.get(
         Product,
         transaction_data.product_id,
@@ -303,8 +401,56 @@ def create_transaction(
             "Cannot create transaction for inactive product"
         )
 
+    # Rejects a date that belongs to no cycle (or to more than one)
+    # instead of attributing the sale to the latest cycle - a sale in
+    # the wrong cycle silently corrupts that cycle's reported sales.
+    production_cycle = resolve_production_cycle_for_date(
+        db,
+        transaction_data.transaction_date,
+    )
+
+    # Serialises every stock-changing request for THIS product.
+    # Available stock is a derived SUM, so there is no row constraint
+    # that could reject an oversell: without this lock two concurrent
+    # sales both read the same figure, both find room, and both
+    # commit. Taken BEFORE the stock figure is read, and held until
+    # this function's commit or rollback.
+    lock_product_for_stock_update(db, product.id)
+
+    # Unconditional - see the gate above. Once a complete reviewed
+    # opening balance exists, every sale is validated against stock;
+    # there is no bypass.
+    available_stock = get_available_stock_for_product(
+        db,
+        product.id,
+    )
+
+    if transaction_data.quantity > available_stock:
+        raise ValueError(
+            f"Cannot sell {transaction_data.quantity} units of "
+            f"{product.name} - only {available_stock} units are "
+            "available. Apply a production plan to produce more, "
+            "or reduce the quantity sold."
+        )
+
+    # Server-computed, ignoring any client-sent value - and now the
+    # SAME all-time available balance the Add Transaction modal
+    # already displays (opening + production applied in ANY cycle -
+    # sales across all time), not a per-cycle drawdown. A cycle-local
+    # drawdown undercounts the moment a sale's own cycle differs from
+    # the cycle production was actually applied to (e.g. production
+    # applied under an old cycle, a sale recorded once a new cycle
+    # covers today's date) - exactly the mismatch that produced a
+    # saved 0 despite 5 units being genuinely available. Computed
+    # BEFORE this sale's own row exists, so it is pre-sale stock, the
+    # same value `available_stock` above was just validated against -
+    # reused directly rather than recomputed. (R1: the forecast chart
+    # reads production from the ledger, not from this column, so
+    # widening what this column means does not affect it.)
+    quantity_produced = available_stock
+
     values = calculate_transaction_values(
-        transaction_data.quantity_produced,
+        quantity_produced,
         transaction_data.quantity,
         transaction_data.unit_price,
         transaction_data.production_cost,
@@ -313,8 +459,9 @@ def create_transaction(
     transaction = SalesTransaction(
         transaction_number=generate_transaction_number(db),
         product_id=transaction_data.product_id,
+        production_cycle_id=production_cycle.id,
         transaction_date=transaction_data.transaction_date,
-        quantity_produced=transaction_data.quantity_produced,
+        quantity_produced=quantity_produced,
         quantity=transaction_data.quantity,
         unit_price=transaction_data.unit_price,
         total_sales=values["total_sales"],
@@ -340,6 +487,16 @@ def update_transaction(
     transaction: SalesTransaction,
     transaction_data: SalesTransactionUpdate,
 ) -> SalesTransaction:
+    """
+    quantity_produced is deliberately NOT recomputed on update. It
+    records what was newly produced at the moment the transaction was
+    first recorded; re-deriving it now would reshuffle the drawdown
+    across every row in the cycle and rewrite settled history. A
+    client-sent quantity_produced is still accepted (the field remains
+    on SalesTransactionUpdate) so a genuine correction stays possible,
+    but it is not auto-filled.
+    """
+
     update_data = transaction_data.model_dump(
         exclude_unset=True
     )
@@ -359,6 +516,83 @@ def update_transaction(
         transaction.unit_price,
     )
 
+    transaction_date = update_data.get(
+        "transaction_date",
+        transaction.transaction_date,
+    )
+
+    # Re-resolve the cycle whenever the date moves, with the same
+    # reject-rather-than-guess rule as create - an edited date that
+    # belongs to no cycle must not leave the sale attributed to its
+    # old one.
+    #
+    # (R1) A pre-rollout row is exempt. production_cycle_id IS NULL
+    # is what marks it legacy, and the forecast uses that marker to
+    # decide whose stored quantity_produced it still reports
+    # (services/forecasting.py). Attributing such a row to a cycle
+    # on an unrelated edit would silently drop its produced figure
+    # off the chart - a rewrite of settled history, which the
+    # Global Constraints forbid. It stays unattributed, exactly as
+    # Task 8's migration left it.
+    production_cycle_id = transaction.production_cycle_id
+
+    if (
+        "transaction_date" in update_data
+        and transaction.production_cycle_id is not None
+    ):
+        production_cycle_id = resolve_production_cycle_for_date(
+            db,
+            transaction_date,
+        ).id
+
+    # Same lock, same reason, as create_transaction: the stock figure
+    # about to be checked is a derived SUM with no row constraint
+    # behind it.
+    lock_product_for_stock_update(db, transaction.product_id)
+
+    # AMENDMENT A (closes R-23b): the plan's original body wrapped
+    # everything below in `if is_stock_validation_enabled(db):`, which
+    # would let an edit raise a sale above available stock while no
+    # opening balance had been reviewed - the same soft gate rejected
+    # for create. An edit is a stock-affecting operation, so it is
+    # refused rather than waved through.
+    #
+    # DELETE is deliberately NOT gated: removing a sale only RETURNS
+    # stock, so it can never drive the figure negative, and blocking
+    # corrections would cost something while protecting nothing.
+    if not is_stock_validation_enabled(db):
+        raise OpeningInventoryRequiredError(
+            "Opening inventory must be declared and reviewed "
+            "before sales can be edited. Every active product "
+            "that existed on the effective date needs an explicit "
+            "opening quantity, including zero."
+        )
+
+    product = db.get(Product, transaction.product_id)
+
+    # This row's CURRENT quantity is already deducted from available
+    # stock, so it has to be added back before the proposed quantity
+    # is weighed - otherwise raising 4 to 10 against 10 produced units
+    # reads as a demand for 14 and is wrongly rejected (the same
+    # self-double-counting trap
+    # allocation.py::_validate_proposed_allocation_capacity documents).
+    available_stock = (
+        get_available_stock_for_product(
+            db,
+            transaction.product_id,
+        )
+        + transaction.quantity
+    )
+
+    if quantity > available_stock:
+        raise ValueError(
+            f"Cannot sell {quantity} units of "
+            f"{product.name if product else 'this product'} - "
+            f"only {available_stock} units are available. Apply a "
+            "production plan to produce more, or reduce the "
+            "quantity sold."
+        )
+
     # transaction.production_cost is the stored TOTAL (see
     # calculate_transaction_values). If this request doesn't send a
     # new production_cost, reconstruct the per-unit rate that produced
@@ -366,13 +600,21 @@ def update_transaction(
     # in effect when it was last saved - not the raw stored total
     # itself, which would otherwise be multiplied again below and
     # silently inflate the cost.
+    #
+    # quantity_produced == 0 is a NORMAL stored value since produced
+    # quantities became a per-cycle drawdown (the second sale in a
+    # cycle records 0), so the division has to be guarded: a zero
+    # produced quantity means zero total cost, and any per-unit rate
+    # reproduces that.
     if "production_cost" in update_data:
         production_cost_per_unit = update_data["production_cost"]
-    else:
+    elif transaction.quantity_produced:
         production_cost_per_unit = (
             transaction.production_cost
             / transaction.quantity_produced
         )
+    else:
+        production_cost_per_unit = Decimal("0")
 
     values = calculate_transaction_values(
         quantity_produced,
@@ -384,6 +626,7 @@ def update_transaction(
     for field, value in update_data.items():
         setattr(transaction, field, value)
 
+    transaction.production_cycle_id = production_cycle_id
     transaction.total_sales = values["total_sales"]
     transaction.production_cost = values["production_cost"]
     transaction.unit_profit = values["unit_profit"]

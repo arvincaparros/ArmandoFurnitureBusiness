@@ -14,6 +14,13 @@ interface StatCardProps {
   value: string | number
   icon: LucideIcon
 
+  // Optional scope caption under the value. Added for the Inventory
+  // page, where three cards carry quantities distinguishable only by
+  // scope ("this cycle" vs "all cycles") - without it the three read
+  // as one number measured three ways. Optional, so every existing
+  // call site is unaffected.
+  subtitle?: string
+
   color?: string
 }
 
@@ -31,6 +38,7 @@ const StatCard = ({
   title,
   value,
   icon: Icon,
+  subtitle,
   color = 'blue',
 }: StatCardProps) => {
   const { mode } = useThemeMode()
@@ -91,6 +99,17 @@ const StatCard = ({
       >
         {value}
       </Text>
+
+      {subtitle && (
+        <Text
+          size="xs"
+          mt={4}
+          c={isWood ? undefined : 'dimmed'}
+          style={isWood ? { color: 'var(--ink-400)' } : undefined}
+        >
+          {subtitle}
+        </Text>
+      )}
     </Card>
   )
 }

@@ -1,6 +1,7 @@
 import type {
   ForecastProductResponse,
   ForecastResponse,
+  ForecastTimeSeriesPoint,
   ForecastTimeSeriesResponse,
 } from './forecastTypes'
 import type {
@@ -207,26 +208,27 @@ export function toUiForecastTableItems(
   }
 
   return timeseries.products.map((product) => {
-    const historicalPoints = product.series.filter(
-      (point) => !point.is_forecast,
+    // Filtered to SALE specifically, not merely "not a forecast
+    // point" - a PRODUCTION point is also non-forecast, and picking
+    // it here would read historical_sales as null and silently
+    // report 0 sold for a product that was recently produced but
+    // hasn't sold yet this week.
+    const salePoints = product.series.filter(
+      (point) => point.point_type === 'SALE',
     )
     const forecastPoints = product.series.filter(
       (point) => point.is_forecast,
     )
 
-    const latestHistorical = historicalPoints.at(-1)
+    const latestSale = salePoints.at(-1)
     const firstForecast = forecastPoints[0]
 
     return {
       id: product.product_id,
       furnitureProduct: product.product_name,
-      historicalSales: latestHistorical
-        ? parseDecimal(latestHistorical.historical_sales ?? '0')
+      historicalSales: latestSale
+        ? parseDecimal(latestSale.historical_sales ?? '0')
         : 0,
-      // Furniture is produced in whole units, so a fractional
-      // prediction is rounded up rather than shown as a decimal -
-      // ceil rather than round/floor so the table never under-plans
-      // production against the forecast.
       predictedDemand: firstForecast
         ? Math.ceil(
             parseDecimal(firstForecast.predicted_demand ?? '0'),
@@ -242,29 +244,28 @@ export function toUiForecastTableItems(
 
 // is_forecast is the backend's authoritative historical/forecast
 // boundary marker (see forecastTypes.ts) - branched on directly rather
-// than inferred from which value happens to be non-null.
+// than inferred from which value happens to be non-null. point_type
+// further distinguishes a SALE week from a PRODUCTION week, since
+// both are non-forecast.
 //
 // One row per weekly point, in API order: every historical week keeps
 // its own row and the series ends with the backend's three forecast
-// weeks. Nothing is grouped, deduplicated or sliced here.
+// weeks. Nothing is grouped, deduplicated or sliced here. The caller
+// (see useForecast.ts) picks which product's series to pass in.
 export function toUiForecastChartData(
-  timeseries: ForecastTimeSeriesResponse | undefined,
+  series: ForecastTimeSeriesPoint[],
 ): ForecastChartData[] {
-  const series = timeseries?.products[0]?.series
-
-  if (!series) {
-    return []
-  }
-
   return series.map((point) => ({
     date: formatAxisLabel(point.period),
     fullDate: formatFullDate(point.period),
+    pointType: point.point_type,
     isForecast: point.is_forecast,
-    transactionNumber: point.transaction_number ?? undefined,
-    quantityProduced: parseNullableDecimal(point.quantity_produced),
-    historicalDemand: point.is_forecast
-      ? undefined
-      : parseNullableDecimal(point.historical_sales),
+    historicalDemand: point.point_type === 'SALE'
+      ? parseNullableDecimal(point.historical_sales)
+      : undefined,
+    producedQuantity: point.point_type === 'PRODUCTION'
+      ? parseNullableDecimal(point.quantity_produced)
+      : undefined,
     forecastedDemand: point.is_forecast
       ? parseNullableDecimal(point.predicted_demand)
       : undefined,

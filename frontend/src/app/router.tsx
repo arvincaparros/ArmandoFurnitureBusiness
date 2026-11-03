@@ -23,6 +23,8 @@ import ResourceUtilizationHistoryPage from '../pages/resource-utilization-histor
 import HistoryPage from '../pages/transaction-history/TransactionHistoryPage'
 import OptimizationHistoryPage from '../pages/optimization-history/OptimizationHistoryPage'
 import DemandForecastingPage from '../pages/demand-forecasting/DemandForecastingPage'
+import OpeningInventoryPage from '../pages/opening-inventory/OpeningInventoryPage'
+import InventoryPage from '../pages/inventory/InventoryPage'
 
 const AppRouter = () => {
   return (
@@ -105,6 +107,16 @@ const AppRouter = () => {
             <Route
               path="/demand-forecasting"
               element={<DemandForecastingPage />}
+            />
+
+            <Route
+              path="/opening-inventory"
+              element={<OpeningInventoryPage />}
+            />
+
+            <Route
+              path="/inventory"
+              element={<InventoryPage />}
             />
           </Route>
         </Route>

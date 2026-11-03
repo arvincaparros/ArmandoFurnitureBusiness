@@ -10,6 +10,10 @@ from app.schemas.production import (
 from app.schemas.feasibility import (
     ProductionFeasibilityResponse,
 )
+from app.schemas.production_application import (
+    ProductionApplicationResponse,
+)
+from app.services.production_application import get_applications
 from app.services.production import (
     create_production_cycle,
     delete_production_cycle,
@@ -164,10 +168,17 @@ def delete_existing_production_cycle(
             detail="Production cycle not found",
         )
 
-    delete_production_cycle(
-        db,
-        cycle,
-    )
+    try:
+        delete_production_cycle(
+            db,
+            cycle,
+        )
+
+    except ValueError as exc:
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=str(exc),
+        ) from exc
 
 @router.post(
     "/{cycle_id}/optimize",
@@ -335,6 +346,18 @@ def get_production_feasibility(
             status_code=status.HTTP_400_BAD_REQUEST,
             detail=str(exc),
         ) from exc
+
+@router.get(
+    "/{cycle_id}/applications",
+    response_model=list[ProductionApplicationResponse],
+    summary="List production applications for a cycle",
+)
+def list_production_applications(
+    cycle_id: int,
+    db: Session = Depends(get_db),
+):
+    return get_applications(db, cycle_id)
+
 
 @router.get(
     "/{cycle_id}",

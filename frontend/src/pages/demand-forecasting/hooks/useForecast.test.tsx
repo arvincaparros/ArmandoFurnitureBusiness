@@ -54,14 +54,11 @@ const forecastResponse: ForecastResponse = {
 const salePoint = (
   period: string,
   sold: string,
-  produced: string,
-  number: string,
 ): ForecastTimeSeriesPoint => ({
   period,
-  transaction_id: Number(number.replace(/\D/g, '')),
-  transaction_number: number,
+  point_type: 'SALE',
   historical_sales: sold,
-  quantity_produced: produced,
+  quantity_produced: null,
   predicted_demand: null,
   is_forecast: false,
 })
@@ -71,8 +68,7 @@ const forecastPoint = (
   predicted: string,
 ): ForecastTimeSeriesPoint => ({
   period,
-  transaction_id: null,
-  transaction_number: null,
+  point_type: 'FORECAST',
   historical_sales: null,
   quantity_produced: null,
   predicted_demand: predicted,
@@ -80,18 +76,17 @@ const forecastPoint = (
 })
 
 // The 9 exported "Door ( 60x210 )" sales, one point each, plus the
-// single forecast point - see forecastAdapter.test.ts for the same
-// fixture.
+// single forecast point.
 const DOOR_SALES = [
-  salePoint('2026-08-23', '1.0000', '5.0000', 'TRX-000140'),
-  salePoint('2026-08-27', '4.0000', '4.0000', 'TRX-000153'),
-  salePoint('2026-08-30', '3.0000', '3.0000', 'TRX-000158'),
-  salePoint('2026-09-06', '5.0000', '5.0000', 'TRX-000169'),
-  salePoint('2026-09-16', '5.0000', '5.0000', 'TRX-000186'),
-  salePoint('2026-09-20', '5.0000', '5.0000', 'TRX-000191'),
-  salePoint('2026-09-28', '3.0000', '3.0000', 'TRX-000203'),
-  salePoint('2026-10-06', '4.0000', '4.0000', 'TRX-000215'),
-  salePoint('2026-10-14', '5.0000', '5.0000', 'TRX-000226'),
+  salePoint('2026-08-23', '1.0000'),
+  salePoint('2026-08-27', '4.0000'),
+  salePoint('2026-08-30', '3.0000'),
+  salePoint('2026-09-06', '5.0000'),
+  salePoint('2026-09-16', '5.0000'),
+  salePoint('2026-09-20', '5.0000'),
+  salePoint('2026-09-28', '3.0000'),
+  salePoint('2026-10-06', '4.0000'),
+  salePoint('2026-10-14', '5.0000'),
 ]
 
 // Both products' series, as returned by the unfiltered
@@ -113,7 +108,7 @@ const allTimeseries: ForecastTimeSeriesResponse = {
       trend: 'STABLE',
       confidence_level: '50.00',
       series: [
-        salePoint('2026-05-04', '9.0000', '9.0000', 'TRX-CH-1'),
+        salePoint('2026-05-04', '9.0000'),
         forecastPoint('2026-06-01', '9.0000'),
       ],
     },
@@ -203,24 +198,24 @@ describe('useForecast product selection', () => {
     // product switch.
     expect(fetchForecastTimeseries).toHaveBeenCalledTimes(1)
 
-    // The previous product's transactions are nowhere in the new
-    // series: one of its own sales, then its own forecast point.
+    // The previous product's points are nowhere in the new series:
+    // one of its own sales, then its own forecast point.
     expect(result.current.chartData).toEqual([
       {
         date: 'May 04',
         fullDate: 'May 04, 2026',
+        pointType: 'SALE',
         isForecast: false,
-        transactionNumber: 'TRX-CH-1',
-        quantityProduced: 9,
+        producedQuantity: undefined,
         historicalDemand: 9,
         forecastedDemand: undefined,
       },
       {
         date: 'Jun 01',
         fullDate: 'Jun 01, 2026',
+        pointType: 'FORECAST',
         isForecast: true,
-        transactionNumber: undefined,
-        quantityProduced: undefined,
+        producedQuantity: undefined,
         historicalDemand: undefined,
         forecastedDemand: 9,
       },

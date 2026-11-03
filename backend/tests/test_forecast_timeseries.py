@@ -1,7 +1,7 @@
 from datetime import date, datetime
 from decimal import Decimal
 
-from app.database.models import SalesTransaction
+from app.database.models import Product, SalesTransaction
 from app.services.forecasting import _week_start, _next_week
 
 
@@ -55,9 +55,16 @@ def test_timeseries_weekly_historical_points_sum_within_week_and_zero_fill_gaps(
 ):
     """
     2026-01-05 is a Monday. Two sales inside that same week must be
-    summed into one weekly point; the following week (2026-01-12)
-    has no sales and must still appear, zero-filled; the week after
-    that (2026-01-19) carries its own total.
+    summed into one weekly SALE point; the following week
+    (2026-01-12) has no sales and must still appear, zero-filled; the
+    week after that (2026-01-19) carries its own total.
+
+    This file's _make_transaction defaults quantity_produced to equal
+    quantity and never sets production_cycle_id, so every transaction
+    here is also a legacy row: each week that had a transaction gets
+    its own PRODUCTION point too (sparse - never zero-filled, unlike
+    SALE), independent of and separate from the SALE point for that
+    same week.
     """
 
     chair = test_products[1]
@@ -90,7 +97,18 @@ def test_timeseries_weekly_historical_points_sum_within_week_and_zero_fill_gaps(
             point for point in series if not point["is_forecast"]
         ]
 
-        periods = [point["period"] for point in historical]
+        sale_points = [
+            point
+            for point in historical
+            if point["point_type"] == "SALE"
+        ]
+        production_points = [
+            point
+            for point in historical
+            if point["point_type"] == "PRODUCTION"
+        ]
+
+        periods = [point["period"] for point in sale_points]
 
         assert periods == [
             "2026-01-05",
@@ -100,7 +118,7 @@ def test_timeseries_weekly_historical_points_sum_within_week_and_zero_fill_gaps(
 
         quantities = [
             Decimal(point["historical_sales"])
-            for point in historical
+            for point in sale_points
         ]
 
         assert quantities == [
@@ -108,6 +126,18 @@ def test_timeseries_weekly_historical_points_sum_within_week_and_zero_fill_gaps(
             Decimal("0"),
             Decimal("20"),
         ]
+
+        # The legacy fallback independently reports the same two
+        # weeks' produced totals (2026-01-12 has no transaction at
+        # all, so - unlike SALE - it gets no PRODUCTION point: sparse,
+        # never zero-filled).
+        assert [
+            point["period"] for point in production_points
+        ] == ["2026-01-05", "2026-01-19"]
+        assert [
+            Decimal(point["quantity_produced"])
+            for point in production_points
+        ] == [Decimal("15"), Decimal("20")]
 
     finally:
         _cleanup(db, transactions)
@@ -159,11 +189,30 @@ def test_timeseries_returns_exactly_three_forecast_weeks_after_last_history(
             assert point["historical_sales"] is None
             assert point["quantity_produced"] is None
 
-        # Chronological throughout, forecast strictly after history.
+        # Chronological throughout. Period strings are no longer
+        # unique across the WHOLE series now that a week can carry
+        # both a SALE and a PRODUCTION point (this file's
+        # _make_transaction makes every transaction a legacy row, so
+        # 2026-01-05 and 2026-01-19 each have both) - the real
+        # invariant is that every forecast period comes strictly
+        # after every historical one, and the forecast weeks
+        # themselves are distinct and consecutive.
         all_periods = [point["period"] for point in series]
 
         assert all_periods == sorted(all_periods)
-        assert len(set(all_periods)) == len(all_periods)
+
+        historical_periods = [
+            point["period"]
+            for point in series
+            if not point["is_forecast"]
+        ]
+        forecast_periods = [
+            point["period"] for point in forecast_points
+        ]
+
+        assert max(historical_periods) < min(forecast_periods)
+        assert len(set(forecast_periods)) == len(forecast_periods)
+        assert forecast_periods == sorted(forecast_periods)
 
     finally:
         _cleanup(db, transactions)
@@ -268,9 +317,12 @@ def test_transactions_on_the_same_date_are_summed_into_one_week(
     test_products,
 ):
     """
-    Two sales on one date must be summed into that date's weekly
-    bucket, not kept as separate points - the opposite of the old
-    per-transaction grain.
+    Two sales on one date must be summed into that date's weekly SALE
+    point, not kept as separate points - the opposite of the old
+    per-transaction grain. Both rows are also legacy rows (this
+    file's _make_transaction default), so the legacy fallback must
+    likewise sum their quantity_produced into one weekly PRODUCTION
+    point rather than two.
     """
 
     chair = test_products[1]
@@ -294,10 +346,27 @@ def test_transactions_on_the_same_date_are_summed_into_one_week(
             point for point in series if not point["is_forecast"]
         ]
 
-        assert len(historical) == 1
-        assert historical[0]["period"] == "2026-01-05"
+        sale_points = [
+            point
+            for point in historical
+            if point["point_type"] == "SALE"
+        ]
+        production_points = [
+            point
+            for point in historical
+            if point["point_type"] == "PRODUCTION"
+        ]
+
+        assert len(sale_points) == 1
+        assert sale_points[0]["period"] == "2026-01-05"
         assert Decimal(
-            historical[0]["historical_sales"]
+            sale_points[0]["historical_sales"]
+        ) == Decimal("5")
+
+        assert len(production_points) == 1
+        assert production_points[0]["period"] == "2026-01-05"
+        assert Decimal(
+            production_points[0]["quantity_produced"]
         ) == Decimal("5")
 
     finally:
@@ -321,6 +390,98 @@ def test_timeseries_defaults_to_all_active_products(
     assert test_products[0].id in product_ids
     assert test_products[1].id in product_ids
     assert test_products[2].id in product_ids
+
+
+def test_timeseries_products_ordered_by_id_ascending_and_survives_unrelated_update(
+    client,
+    db,
+):
+    """
+    Regression test for a dropped `.order_by(Product.id)` on
+    get_forecast_timeseries()'s products_statement (present in both
+    merge parents and in every sibling query in this codebase).
+    Without it, Postgres is free to return active products in
+    whatever order a sequential/index scan happens to encounter them
+    in, and nothing stops that order from changing after any
+    unrelated UPDATE to one of the rows - a classic heap-reordering
+    hazard with no ORDER BY.
+
+    Names are deliberately the REVERSE of id order (lowest id gets
+    the alphabetically-last name), so this also catches an
+    accidental `.order_by(Product.name)` or any other
+    not-actually-id ordering - a bare set-membership check (see
+    test_timeseries_defaults_to_all_active_products above) could not
+    tell the difference.
+    """
+
+    products = [
+        Product(
+            name="Zzz Ordering Regression Product",
+            selling_price=Decimal("100.00"),
+            labor_cost=Decimal("0.00"),
+            is_active=True,
+        ),
+        Product(
+            name="Mmm Ordering Regression Product",
+            selling_price=Decimal("100.00"),
+            labor_cost=Decimal("0.00"),
+            is_active=True,
+        ),
+        Product(
+            name="Aaa Ordering Regression Product",
+            selling_price=Decimal("100.00"),
+            labor_cost=Decimal("0.00"),
+            is_active=True,
+        ),
+    ]
+
+    db.add_all(products)
+    db.commit()
+
+    for product in products:
+        db.refresh(product)
+
+    # Inserted in this order, so ids ascend in this same order - the
+    # "Zzz"-named product has the lowest id, "Aaa" the highest.
+    # Name-sorting would reverse this; only id-ascending is correct.
+    expected_order = [product.id for product in products]
+
+    try:
+        response = client.get("/api/forecast/timeseries")
+        assert response.status_code == 200
+
+        returned_ids = [
+            item["product_id"]
+            for item in response.json()["products"]
+            if item["product_id"] in expected_order
+        ]
+
+        assert returned_ids == expected_order
+
+        # Force a physical row rewrite on the middle-id product -
+        # the "unrelated product UPDATE" scenario the dropped
+        # ORDER BY left the response order vulnerable to.
+        products[1].selling_price = Decimal("200.00")
+        db.commit()
+
+        response_after_update = client.get(
+            "/api/forecast/timeseries"
+        )
+        assert response_after_update.status_code == 200
+
+        returned_ids_after_update = [
+            item["product_id"]
+            for item in response_after_update.json()["products"]
+            if item["product_id"] in expected_order
+        ]
+
+        assert returned_ids_after_update == expected_order
+
+    finally:
+        for product in products:
+            db.delete(product)
+
+        db.commit()
 
 
 def test_timeseries_product_filter_returns_only_that_product(

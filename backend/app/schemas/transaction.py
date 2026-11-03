@@ -8,7 +8,26 @@ from pydantic import BaseModel, Field
 class SalesTransactionCreate(BaseModel):
     product_id: int
     transaction_date: datetime
-    quantity_produced: Decimal = Field(gt=0)
+
+    # SERVER-COMPUTED - app/services/transaction.py::create_transaction
+    # overwrites whatever arrives here with the product's all-time
+    # available stock (inventory.py::get_available_stock_for_product)
+    # at the moment of this sale - the same figure the Add Transaction
+    # modal already displays, across every cycle, not only production
+    # applied within the transaction's own cycle. Accepted-and-ignored
+    # rather than forbidden so existing clients and scripts that still
+    # send it keep working; optional so new clients can simply omit
+    # it.
+    #
+    # ge=0 (not gt=0) is kept for the same reason it was dropped from
+    # strict positivity originally - this field's value is always
+    # discarded, so its own constraint only bounds what a now-ignored
+    # client payload may contain, never what gets stored.
+    quantity_produced: Decimal | None = Field(
+        default=None,
+        ge=0,
+    )
+
     quantity: Decimal = Field(gt=0)
     unit_price: Decimal = Field(gt=0)
     # Per-unit production cost - app/services/transaction.py::
@@ -50,6 +69,11 @@ class SalesTransactionResponse(BaseModel):
     id: int
     transaction_number: str
     product_id: int
+
+    # Null only for rows created before this column existed -
+    # see app/database/models.py::SalesTransaction
+    # .production_cycle_id for why those are never backfilled.
+    production_cycle_id: int | None
     transaction_date: datetime
     quantity_produced: Decimal
     quantity: Decimal

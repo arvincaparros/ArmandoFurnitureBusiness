@@ -128,9 +128,7 @@ const useForecast = () => {
     setSelectedProductId,
 
     chartData: toUiForecastChartData(
-      selectedProductSeries
-        ? { products: [selectedProductSeries] }
-        : undefined,
+      selectedProductSeries?.series ?? [],
     ),
     // One row per product (the original table shape) - every
     // product's own latest historical week and first forecast week,

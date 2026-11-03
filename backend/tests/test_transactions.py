@@ -1,8 +1,30 @@
 from datetime import datetime
 from decimal import Decimal
 
-from app.database.models import Product, SalesTransaction
+import pytest
+
+from app.database.models import (
+    OpeningInventoryItem,
+    OpeningInventorySet,
+    Product,
+    SalesTransaction,
+)
 from app.services.transaction import calculate_transaction_values
+from conftest import apply_production_to_cycle, purge_ledger
+
+
+@pytest.fixture(autouse=True)
+def _opening_inventory_gate(complete_opening_inventory):
+    """
+    Task 23: POST /api/transactions is refused with 409 unless a
+    COMPLETE reviewed opening inventory set exists. Every test in
+    this module predates that gate, so one is established for all
+    of them rather than threaded through nine call sites.
+
+    The set itself lives in conftest.py as
+    complete_opening_inventory - shared since Task 8's cycle
+    resolution tests need the same precondition.
+    """
 
 
 def create_test_product(db):
@@ -19,14 +41,22 @@ def create_test_product(db):
     return product
 
 
-def test_create_transaction(client, db):
+def test_create_transaction(client, db, two_cycles):
     product = create_test_product(db)
+
+    # quantity_produced is server-computed now, and a sale
+    # needs stock to exist. Applying exactly 6 units makes
+    # the auto-filled figure equal the 6 this test used to
+    # submit, so every assertion below is unchanged.
+    apply_production_to_cycle(
+        db, two_cycles[0].id, product.id, 6,
+    )
 
     response = client.post(
         "/api/transactions",
         json={
             "product_id": product.id,
-            "transaction_date": "2026-08-10T10:00:00",
+            "transaction_date": "2026-11-02T10:00:00",
             "quantity_produced": "6",
             "quantity": "5",
             "unit_price": "3200.00",
@@ -50,6 +80,12 @@ def test_create_transaction(client, db):
     assert Decimal(data["unit_profit"]) == Decimal("-400.0000")
     assert Decimal(data["total_profit"]) == Decimal("-2000.0000")
 
+    # Scoped purge first: this test applied production for this
+    # product, and production_application_items.product_id is
+    # RESTRICT, so the product cannot be deleted until its own
+    # ledger rows are gone. Scoped to this product only.
+    purge_ledger(db, product_ids=[product.id])
+
     db.delete(product)
     db.commit()
 
@@ -59,7 +95,7 @@ def test_create_transaction_product_not_found(client):
         "/api/transactions",
         json={
             "product_id": 999999,
-            "transaction_date": "2026-08-10T10:00:00",
+            "transaction_date": "2026-11-02T10:00:00",
             "quantity_produced": "6",
             "quantity": "5",
             "unit_price": "3200.00",
@@ -86,7 +122,7 @@ def test_create_transaction_inactive_product(client, db):
         "/api/transactions",
         json={
             "product_id": product.id,
-            "transaction_date": "2026-08-10T10:00:00",
+            "transaction_date": "2026-11-02T10:00:00",
             "quantity_produced": "6",
             "quantity": "5",
             "unit_price": "3200.00",
@@ -201,8 +237,17 @@ def test_get_transaction_not_found(client):
     )
 
 
-def test_update_transaction_recalculates_totals(client, db):
+def test_update_transaction_recalculates_totals(
+    client, db, two_cycles,
+):
     product = create_test_product(db)
+
+    # Task 10/11 made stock validation unconditional, and this test
+    # raises the sold quantity from 5 to 10 - so 10 units have to
+    # exist. Applied through the ledger, which also leaves this row's
+    # production_cycle_id NULL (the PATCH below never touches
+    # transaction_date, so the legacy marker is preserved).
+    apply_production_to_cycle(db, two_cycles[0].id, product.id, 20)
 
     transaction = SalesTransaction(
         transaction_number="TRX-TEST-003",
@@ -244,6 +289,12 @@ def test_update_transaction_recalculates_totals(client, db):
     assert Decimal(data["total_profit"]) == Decimal("0.0000")
 
     db.delete(transaction)
+    db.commit()
+
+    # Scoped purge: the applied production above references this
+    # product, and production_application_items.product_id is RESTRICT.
+    purge_ledger(db, product_ids=[product.id])
+
     db.delete(product)
     db.commit()
 
@@ -294,7 +345,7 @@ def test_create_transaction_rejects_invalid_quantity(client, db):
         "/api/transactions",
         json={
             "product_id": product.id,
-            "transaction_date": "2026-08-10T10:00:00",
+            "transaction_date": "2026-11-02T10:00:00",
             "quantity": "0",
             "unit_price": "3200.00",
             "unit_profit": "800.0000",
@@ -306,28 +357,41 @@ def test_create_transaction_rejects_invalid_quantity(client, db):
     db.delete(product)
     db.commit()
 
-def test_create_transaction_rejects_invalid_quantity_produced(
-    client,
-    db,
+def test_create_transaction_ignores_a_client_sent_quantity_produced(
+    client, db, two_cycles, test_products,
 ):
-    product = create_test_product(db)
+    """
+    Replaces test_create_transaction_rejects_invalid_quantity_produced.
+    quantity_produced is server-computed now (see
+    app/schemas/transaction.py::SalesTransactionCreate), so a
+    client-sent value must be IGNORED rather than rejected - existing
+    callers keep working, and the old "reject a non-positive value"
+    contract no longer applies because the client no longer owns the
+    field.
+    """
+
+    first, _ = two_cycles
+
+    apply_production_to_cycle(db, first.id, test_products[0].id, 3)
 
     response = client.post(
         "/api/transactions",
         json={
-            "product_id": product.id,
-            "transaction_date": "2026-08-10T10:00:00",
-            "quantity_produced": "0",
-            "quantity": "5",
-            "unit_price": "3200.00",
-            "production_cost": "3000.00",
+            "product_id": test_products[0].id,
+            "transaction_date": "2026-11-02T00:00:00",
+            "quantity_produced": 0,
+            "quantity": 1,
+            "unit_price": 100,
+            "production_cost": 0,
         },
     )
 
-    assert response.status_code == 422
+    assert response.status_code == 201
 
-    db.delete(product)
-    db.commit()
+    # The server's drawdown figure wins over the submitted 0.
+    assert Decimal(response.json()["quantity_produced"]) == (
+        Decimal("3")
+    )
 
 
 def test_create_transaction_rejects_invalid_unit_price(client, db):
@@ -337,7 +401,7 @@ def test_create_transaction_rejects_invalid_unit_price(client, db):
         "/api/transactions",
         json={
             "product_id": product.id,
-            "transaction_date": "2026-08-10T10:00:00",
+            "transaction_date": "2026-11-02T10:00:00",
             "quantity": "5",
             "unit_price": "0",
             "unit_profit": "800.0000",
@@ -349,8 +413,18 @@ def test_create_transaction_rejects_invalid_unit_price(client, db):
     db.delete(product)
     db.commit()
 
-def test_production_cost_uses_quantity_produced_not_sold(client, db):
+def test_production_cost_uses_quantity_produced_not_sold(
+    client, db, two_cycles,
+):
     product = create_test_product(db)
+
+    # Applied through the ledger so the auto-filled
+    # quantity_produced is 20 - the figure this test used to
+    # submit. Intent unchanged: cost follows PRODUCED (20),
+    # revenue follows SOLD (15).
+    apply_production_to_cycle(
+        db, two_cycles[0].id, product.id, 20,
+    )
 
     # Validation Case 2: quantity_produced (20) != quantity sold (15) -
     # sales must be based on units sold, production cost on units
@@ -359,7 +433,7 @@ def test_production_cost_uses_quantity_produced_not_sold(client, db):
         "/api/transactions",
         json={
             "product_id": product.id,
-            "transaction_date": "2026-08-10T10:00:00",
+            "transaction_date": "2026-11-02T10:00:00",
             "quantity_produced": "20",
             "quantity": "15",
             "unit_price": "3500.00",
@@ -375,12 +449,24 @@ def test_production_cost_uses_quantity_produced_not_sold(client, db):
     assert Decimal(data["production_cost"]) == Decimal("40000.00")
     assert Decimal(data["total_profit"]) == Decimal("12500.0000")
 
+    # Scoped purge first: this test applied production for this
+    # product, and production_application_items.product_id is
+    # RESTRICT, so the product cannot be deleted until its own
+    # ledger rows are gone. Scoped to this product only.
+    purge_ledger(db, product_ids=[product.id])
+
     db.delete(product)
     db.commit()
 
 
-def test_zero_production_cost_per_unit(client, db):
+def test_zero_production_cost_per_unit(
+    client, db, two_cycles,
+):
     product = create_test_product(db)
+
+    apply_production_to_cycle(
+        db, two_cycles[0].id, product.id, 10,
+    )
 
     # Validation Case 4: a per-unit production cost of 0 must not
     # reduce profit at all.
@@ -388,7 +474,7 @@ def test_zero_production_cost_per_unit(client, db):
         "/api/transactions",
         json={
             "product_id": product.id,
-            "transaction_date": "2026-08-10T10:00:00",
+            "transaction_date": "2026-11-02T10:00:00",
             "quantity_produced": "10",
             "quantity": "10",
             "unit_price": "3500.00",
@@ -403,6 +489,12 @@ def test_zero_production_cost_per_unit(client, db):
     assert Decimal(data["total_sales"]) == Decimal("35000.00")
     assert Decimal(data["production_cost"]) == Decimal("0.00")
     assert Decimal(data["total_profit"]) == Decimal("35000.0000")
+
+    # Scoped purge first: this test applied production for this
+    # product, and production_application_items.product_id is
+    # RESTRICT, so the product cannot be deleted until its own
+    # ledger rows are gone. Scoped to this product only.
+    purge_ledger(db, product_ids=[product.id])
 
     db.delete(product)
     db.commit()
@@ -438,7 +530,7 @@ def test_create_transaction_rejects_negative_production_cost(
         "/api/transactions",
         json={
             "product_id": product.id,
-            "transaction_date": "2026-08-10T10:00:00",
+            "transaction_date": "2026-11-02T10:00:00",
             "quantity_produced": "6",
             "quantity": "5",
             "unit_price": "3200.00",

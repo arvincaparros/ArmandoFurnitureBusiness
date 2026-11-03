@@ -22,7 +22,7 @@ from app.services.auth import (
 )
 
 
-# One representative GET per registered business router (11 routers).
+# One representative GET per registered business router (13 routers).
 PROTECTED_GET_ENDPOINTS = [
     ("dashboard", "/api/dashboard/summary"),
     ("resources", "/api/resources"),
@@ -36,6 +36,8 @@ PROTECTED_GET_ENDPOINTS = [
     ("forecast_history", "/api/forecast/history"),
     ("transactions", "/api/transactions"),
     ("resource_utilization", "/api/resource-utilization"),
+    ("opening_inventory", "/api/opening-inventory"),
+    ("inventory", "/api/inventory"),
 ]
 
 ENDPOINT_IDS = [name for name, _ in PROTECTED_GET_ENDPOINTS]
@@ -122,6 +124,24 @@ UNAUTHENTICATED_WRITE_CASES = [
             "unit_price": "1.00",
             "production_cost": "1.00",
         },
+    ),
+    (
+        "opening_inventory_post",
+        "post",
+        "/api/opening-inventory",
+        {"effective_date": "2026-01-01T00:00:00"},
+    ),
+    (
+        "opening_inventory_patch",
+        "patch",
+        "/api/opening-inventory/999999",
+        {},
+    ),
+    (
+        "opening_inventory_review",
+        "post",
+        "/api/opening-inventory/999999/review",
+        None,
     ),
 ]
 

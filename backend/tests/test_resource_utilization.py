@@ -580,3 +580,55 @@ def test_utilization_after_valid_apply_never_exceeds_capacity(
             item["available_quantity"]
         )
         assert Decimal(item["remaining_quantity"]) >= Decimal("0")
+
+
+def test_consumption_override_replaces_allocation_derived_consumption(
+    db, optimization_cycle, test_resources,
+):
+    """
+    After a second application in a cycle, ProductionAllocation holds
+    only the latest plan - so allocation-derived consumption
+    understates what the cycle has actually spent. The override lets
+    the caller supply the cumulative ledger figure instead.
+    """
+
+    from decimal import Decimal
+
+    from app.services.resource_utilization import (
+        calculate_resource_utilization,
+    )
+
+    wood = next(
+        resource for resource in test_resources
+        if resource.name == "Test Wood"
+    )
+
+    result = calculate_resource_utilization(
+        db,
+        optimization_cycle.id,
+        consumption_override={wood.id: Decimal("7")},
+    )
+
+    wood_row = next(
+        row for row in result["resources"]
+        if row["resource_id"] == wood.id
+    )
+
+    assert wood_row["consumed_quantity"] == Decimal("7")
+    assert wood_row["remaining_quantity"] == (
+        wood_row["available_quantity"] - Decimal("7")
+    )
+
+
+def test_omitting_the_override_preserves_allocation_derived_behaviour(
+    db, optimization_cycle,
+):
+    from app.services.resource_utilization import (
+        calculate_resource_utilization,
+    )
+
+    assert calculate_resource_utilization(
+        db, optimization_cycle.id,
+    ) == calculate_resource_utilization(
+        db, optimization_cycle.id, consumption_override=None,
+    )

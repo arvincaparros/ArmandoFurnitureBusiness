@@ -49,10 +49,10 @@ vi.mock('@mantine/charts', () => ({
   },
 }))
 
-// 2026-01-05 is a Monday: 3 historical weeks (one zero-filled gap)
-// followed by exactly the 3 forecast weeks GET /api/forecast/
-// timeseries always returns - the same fixture shape as
-// forecastAdapter.test.ts.
+// 2026-01-05 is a Monday: a PRODUCTION point and 3 historical SALE
+// weeks (one zero-filled gap), followed by exactly the 3 forecast
+// weeks GET /api/forecast/timeseries always returns - the same
+// fixture shape as forecastAdapter.test.ts.
 const sale = (
   date: string,
   fullDate: string,
@@ -60,9 +60,21 @@ const sale = (
 ): ForecastChartData => ({
   date,
   fullDate,
+  pointType: 'SALE',
   isForecast: false,
-  quantityProduced: sold,
   historicalDemand: sold,
+})
+
+const produced = (
+  date: string,
+  fullDate: string,
+  quantity: number,
+): ForecastChartData => ({
+  date,
+  fullDate,
+  pointType: 'PRODUCTION',
+  isForecast: false,
+  producedQuantity: quantity,
 })
 
 const forecastWeek = (
@@ -72,11 +84,13 @@ const forecastWeek = (
 ): ForecastChartData => ({
   date,
   fullDate,
+  pointType: 'FORECAST',
   isForecast: true,
   forecastedDemand: predicted,
 })
 
 const WEEKLY_ROWS: ForecastChartData[] = [
+  produced('Jan 05', 'Jan 05, 2026', 12),
   sale('Jan 05', 'Jan 05, 2026', 10),
   sale('Jan 12', 'Jan 12, 2026', 0),
   sale('Jan 19', 'Jan 19, 2026', 20),
@@ -84,6 +98,10 @@ const WEEKLY_ROWS: ForecastChartData[] = [
   forecastWeek('Feb 02', 'Feb 02, 2026', 30),
   forecastWeek('Feb 09', 'Feb 09, 2026', 35),
 ]
+
+// A single forecast-only row, reused by the production-series tests
+// below for a product with no history at all.
+const forecastRow = forecastWeek('Nov 01', 'Nov 01, 2026', 0)
 
 const renderChart = (data: ForecastChartData[]): CapturedChartProps => {
   captured.current = null
@@ -131,13 +149,14 @@ describe('ForecastChart x-axis', () => {
 
     expect(screen.getByTestId('line-chart')).toBeInTheDocument()
 
-    // 3 historical weeks + 3 forecast weeks: no row is dropped.
-    expect(chart.data).toHaveLength(6)
+    // 1 production week + 3 historical sale weeks + 3 forecast
+    // weeks: no row is dropped.
+    expect(chart.data).toHaveLength(7)
     expect(chart.dataKey).toBe('axisKey')
 
     const axisKeys = chart.data.map((row) => row.axisKey)
 
-    expect(new Set(axisKeys).size).toBe(6)
+    expect(new Set(axisKeys).size).toBe(7)
   })
 
   it('labels each slot with the short month-and-day date', () => {
@@ -149,6 +168,7 @@ describe('ForecastChart x-axis', () => {
     const labels = chart.data.map((row) => formatTick?.(row.axisKey))
 
     expect(labels).toEqual([
+      'Jan 05',
       'Jan 05',
       'Jan 12',
       'Jan 19',
@@ -169,22 +189,31 @@ describe('ForecastChart x-axis', () => {
 })
 
 describe('ForecastChart tooltip', () => {
-  it('shows the full week date and the quantity sold', () => {
+  it('shows the full week date and the quantity sold, never a production line on a sale row', () => {
     renderChart(WEEKLY_ROWS)
-    renderTooltip(WEEKLY_ROWS[0])
+    renderTooltip(WEEKLY_ROWS[1])
 
     expect(screen.getByText('Jan 05, 2026')).toBeInTheDocument()
     expect(
       screen.getByText('Quantity sold: 10 units'),
     ).toBeInTheDocument()
+    expect(screen.queryByText(/Applied production/)).toBeNull()
+  })
+
+  it('shows the applied production units for a production week', () => {
+    renderChart(WEEKLY_ROWS)
+    renderTooltip(WEEKLY_ROWS[0])
+
+    expect(screen.getByText('Jan 05, 2026')).toBeInTheDocument()
     expect(
-      screen.getByText('Quantity produced: 10 units'),
+      screen.getByText('Applied production: 12 units'),
     ).toBeInTheDocument()
+    expect(screen.queryByText(/Quantity sold/)).toBeNull()
   })
 
   it('labels a forecast week as forecast, using its own API date', () => {
     renderChart(WEEKLY_ROWS)
-    renderTooltip(WEEKLY_ROWS[3])
+    renderTooltip(WEEKLY_ROWS[4])
 
     expect(screen.getByText('Jan 26, 2026')).toBeInTheDocument()
     expect(
@@ -203,6 +232,14 @@ describe('ForecastChart series', () => {
         name: 'historicalDemand',
         label: 'Historical Demand (Weekly)',
       },
+      // Task 21: the ledger-sourced production line sits between the
+      // two existing series. teal is distinct from both themes'
+      // primary and from the forecast's grape/blue.
+      {
+        name: 'producedQuantity',
+        label: 'Applied Production',
+        color: 'teal.6',
+      },
       {
         name: 'forecastedDemand',
         label: 'Forecasted Demand',
@@ -211,19 +248,74 @@ describe('ForecastChart series', () => {
       },
     ])
 
-    // The dashed segment starts on the last historical week (index 2,
-    // "Jan 19"), which still reports its own weekly total.
-    expect(chart.data[2].isForecast).toBe(false)
-    expect(chart.data[2].forecastedDemand).toBe(
-      chart.data[2].historicalDemand,
+    // The dashed segment starts on the last historical week (index 3,
+    // "Jan 19" - index 0 is the production-only week), which still
+    // reports its own weekly total.
+    expect(chart.data[3].isForecast).toBe(false)
+    expect(chart.data[3].forecastedDemand).toBe(
+      chart.data[3].historicalDemand,
     )
 
     // All three forecast weeks follow it.
-    expect(chart.data.slice(3).every((row) => row.isForecast)).toBe(
+    expect(chart.data.slice(4).every((row) => row.isForecast)).toBe(
       true,
     )
     expect(
-      chart.data.slice(3).map((row) => row.forecastedDemand),
+      chart.data.slice(4).map((row) => row.forecastedDemand),
     ).toEqual([25, 30, 35])
+  })
+})
+
+describe('ForecastChart production series', () => {
+  const productionRow: ForecastChartData = {
+    date: 'Oct 26',
+    fullDate: 'Oct 26, 2026',
+    pointType: 'PRODUCTION',
+    isForecast: false,
+    producedQuantity: 6,
+  }
+
+  it('renders the chart when a product has production but no sales', () => {
+    const chart = renderChart([productionRow, forecastRow])
+
+    expect(
+      screen.queryByText(/No sales or production recorded/),
+    ).not.toBeInTheDocument()
+
+    expect(
+      chart.series.map((entry) => entry.label),
+    ).toContain('Applied Production')
+
+    expect(
+      chart.series.map((entry) => entry.name),
+    ).toContain('producedQuantity')
+  })
+
+  it('still explains an entirely empty product', () => {
+    // Only a forecast point: nothing plottable, so the component
+    // returns the message instead of a chart.
+    render(
+      <MantineProvider>
+        <ForecastChart
+          data={[forecastRow]}
+          isLoading={false}
+          isError={false}
+          hasProducts
+        />
+      </MantineProvider>,
+    )
+
+    expect(
+      screen.getByText(/No sales or production recorded/),
+    ).toBeInTheDocument()
+  })
+
+  it('shows the applied production figure in the tooltip', () => {
+    renderChart([productionRow, forecastRow])
+    renderTooltip(productionRow)
+
+    expect(
+      screen.getByText(/Applied production: 6 units/),
+    ).toBeInTheDocument()
   })
 })
