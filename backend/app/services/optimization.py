@@ -171,12 +171,16 @@ def validate_minimum_demand_capacity(
     products,
     cycle_resources,
     requirements,
+    already_consumed_by_resource_id: dict[int, Decimal] | None = None,
 ) -> None:
     """
     Pre-solve check: confirms the exact minimum-demand vector alone
     (every product held at its own minimum, everything else at 0)
-    fits inside this cycle's resource capacities. That single point is
-    a valid feasibility witness for "can every minimum be satisfied
+    fits inside this cycle's REMAINING resource capacities - available
+    minus whatever earlier applications this cycle have already
+    consumed (see _remaining_cycle_capacity; None reproduces the
+    original full-capacity behavior). That single point is a valid
+    feasibility witness for "can every minimum be satisfied
     simultaneously" - resource consumption is strictly additive/
     linear, so if that point already violates a resource cap, no point
     honoring every minimum can exist; if it doesn't, that same point is
@@ -224,10 +228,9 @@ def validate_minimum_demand_capacity(
             Decimal("0"),
         )
 
-        available = (
-            cycle_resource.available_quantity
-            if cycle_resource.resource.is_active
-            else Decimal("0")
+        available = _remaining_cycle_capacity(
+            cycle_resource,
+            already_consumed_by_resource_id,
         )
 
         if required > available:
@@ -419,18 +422,110 @@ def validate_minimum_demand_resource_availability(
             + "."
         )
 
+def _remaining_cycle_capacity(
+    cycle_resource,
+    already_consumed_by_resource_id: dict[int, Decimal] | None,
+) -> Decimal:
+    """
+    What a NEW plan may still draw from this resource this cycle:
+    available_quantity minus whatever earlier applications in this
+    SAME cycle have already consumed (production_application_resource_
+    items, via get_cycle_consumed_by_resource) - never the cycle's
+    full original capacity once anything has been applied. Floored at
+    zero, matching find_resource_capacity_shortages' identical
+    convention on the Apply side, so a resource reduced below what is
+    already consumed reads as fully spent, never a negative bound.
+
+    An inactive resource is still modeled as zero capacity first (see
+    add_resource_constraints' own note) - already_consumed is only
+    ever subtracted from a resource that is actually active.
+
+    `already_consumed_by_resource_id=None` (the default throughout
+    this module) reproduces the original, pre-this-fix behavior
+    exactly: the full available_quantity, unreduced. This is what the
+    very first generation in a cycle - and every existing caller that
+    has not been updated to pass this - still gets.
+    """
+
+    available_quantity = (
+        cycle_resource.available_quantity
+        if cycle_resource.resource.is_active
+        else Decimal("0")
+    )
+
+    consumed = (already_consumed_by_resource_id or {}).get(
+        cycle_resource.resource_id,
+        Decimal("0"),
+    )
+
+    return max(Decimal("0"), available_quantity - consumed)
+
+
+def _exhausted_resources(
+    cycle_resources,
+    already_consumed_by_resource_id: dict[int, Decimal] | None,
+) -> list[dict]:
+    """
+    Resources with truly zero (floored) remaining capacity - used to
+    explain an all-zero optimization result at Apply time
+    (apply_optimization's "no applicable product-level results"
+    guard) without guessing at a cause the numbers do not actually
+    prove.
+
+    Deliberately narrow: a resource with ANY positive remaining
+    capacity is never listed here, even if that is not enough for a
+    whole unit of any one product. Reporting it as "limiting" in that
+    case would not be provably true - the real bottleneck could be a
+    different resource's interaction with a specific product's
+    requirement ratio, not this resource's capacity alone - so the
+    caller falls back to the existing generic message instead of a
+    message this function cannot actually support. This also means an
+    all-zero result caused by a conflict with minimum_demand is never
+    reported here: that case is already caught earlier, at Generate
+    time, by validate_minimum_demand_capacity's own pre-solve check,
+    so an OPTIMAL run reaching this guard at all is never a
+    minimum-demand conflict - only a genuine capacity shortage.
+    """
+
+    exhausted = []
+
+    for cycle_resource in cycle_resources:
+        remaining = _remaining_cycle_capacity(
+            cycle_resource,
+            already_consumed_by_resource_id,
+        )
+
+        if remaining <= Decimal("0"):
+            exhausted.append(
+                {
+                    "resource_name": cycle_resource.resource.name,
+                    "unit": cycle_resource.resource.unit,
+                }
+            )
+
+    return exhausted
+
+
 def add_resource_constraints(
     problem: pulp.LpProblem,
     variables: dict[int, pulp.LpVariable],
     cycle_resources,
     requirements,
+    already_consumed_by_resource_id: dict[int, Decimal] | None = None,
 ) -> None:
     """
     Add one resource constraint for each resource available
     in the production cycle.
 
-    Total resource consumption must not exceed
-    the available quantity.
+    Total resource consumption must not exceed the REMAINING
+    available quantity - available_quantity minus whatever earlier
+    applications in this same cycle have already consumed (see
+    _remaining_cycle_capacity). This is what makes Generate consistent
+    with Apply: apply_optimization has validated proposals against
+    exactly this same remaining-capacity figure
+    (get_cycle_consumed_by_resource) since the ledger was introduced;
+    Generate now solves against it too, instead of the cycle's full
+    original capacity every time.
     """
 
     requirements_by_resource: dict[
@@ -463,10 +558,9 @@ def add_resource_constraints(
         # shortage naming this same resource; if the product has no
         # minimum demand, it's simply pushed toward 0 for its own
         # production here, same as any other capacity shortage.
-        available_quantity = (
-            cycle_resource.available_quantity
-            if cycle_resource.resource.is_active
-            else Decimal("0")
+        available_quantity = _remaining_cycle_capacity(
+            cycle_resource,
+            already_consumed_by_resource_id,
         )
 
         resource_requirements = requirements_by_resource.get(
@@ -572,20 +666,21 @@ def _is_minimum_demand_vector_feasible(
     cycle_resources,
     requirements,
     forecast: dict[int, Decimal] | None,
+    already_consumed_by_resource_id: dict[int, Decimal] | None = None,
 ) -> bool:
     """
     Phase 1/2 branch decision for solve_optimization. Reuses
     validate_minimum_demand_capacity/validate_minimum_demand_forecast
     completely unchanged as a non-raising feasibility witness: if
     either would raise (the exact minimum-demand vector doesn't fit
-    this cycle's resource capacities, or conflicts with a forecast
-    ceiling), the full vector cannot be satisfied simultaneously, and
-    Phase 2 (adaptive) takes over. Deliberately does not call
-    validate_minimum_demand_resource_availability - that check is a
-    data-completeness gate (a resource with no CycleResource row at
-    all this cycle), not a capacity/forecast feasibility question, and
-    already runs unconditionally from the router before
-    solve_optimization is ever called.
+    this cycle's REMAINING resource capacities, or conflicts with a
+    forecast ceiling), the full vector cannot be satisfied
+    simultaneously, and Phase 2 (adaptive) takes over. Deliberately
+    does not call validate_minimum_demand_resource_availability - that
+    check is a data-completeness gate (a resource with no
+    CycleResource row at all this cycle), not a capacity/forecast
+    feasibility question, and already runs unconditionally from the
+    router before solve_optimization is ever called.
     """
 
     try:
@@ -593,6 +688,7 @@ def _is_minimum_demand_vector_feasible(
             products,
             cycle_resources,
             requirements,
+            already_consumed_by_resource_id,
         )
         validate_minimum_demand_forecast(
             products,
@@ -668,6 +764,7 @@ def _solve_stage1_positive_minimum_coverage(
     cycle_resources,
     requirements,
     forecast: dict[int, Decimal] | None,
+    already_consumed_by_resource_id: dict[int, Decimal] | None = None,
 ) -> int:
     """
     Stage 1 of the approved five-stage lexicographic model: maximize
@@ -697,6 +794,7 @@ def _solve_stage1_positive_minimum_coverage(
         variables,
         cycle_resources,
         requirements,
+        already_consumed_by_resource_id,
     )
 
     if forecast is not None:
@@ -735,6 +833,7 @@ def _solve_stage2_total_coverage(
     cycle_resources,
     requirements,
     forecast: dict[int, Decimal] | None,
+    already_consumed_by_resource_id: dict[int, Decimal] | None = None,
 ) -> int:
     """
     Stage 2: without reducing Stage 1's achieved positive-minimum
@@ -763,6 +862,7 @@ def _solve_stage2_total_coverage(
         variables,
         cycle_resources,
         requirements,
+        already_consumed_by_resource_id,
     )
 
     if forecast is not None:
@@ -812,6 +912,7 @@ def _solve_stage3_profitability_tiebreak(
     cycle_resources,
     requirements,
     forecast: dict[int, Decimal] | None,
+    already_consumed_by_resource_id: dict[int, Decimal] | None = None,
 ) -> set[int]:
     """
     Stage 3: among every coverage pattern achieving (p1_star, p2_star),
@@ -851,6 +952,7 @@ def _solve_stage3_profitability_tiebreak(
         coverage_variables,
         cycle_resources,
         requirements,
+        already_consumed_by_resource_id,
     )
 
     if forecast is not None:
@@ -948,6 +1050,7 @@ def _solve_stage4_proportional_fairness(
     cycle_resources,
     requirements,
     forecast: dict[int, Decimal] | None,
+    already_consumed_by_resource_id: dict[int, Decimal] | None = None,
 ) -> float:
     """
     Stage 4: with the covered set Y* now fixed (every binary from
@@ -987,6 +1090,7 @@ def _solve_stage4_proportional_fairness(
         variables,
         cycle_resources,
         requirements,
+        already_consumed_by_resource_id,
     )
 
     if forecast is not None:
@@ -1047,6 +1151,7 @@ def _solve_stage5_final_profit(
     cycle_resources,
     requirements,
     forecast: dict[int, Decimal] | None,
+    already_consumed_by_resource_id: dict[int, Decimal] | None = None,
 ) -> dict:
     """
     Stage 5: with the fairness ceiling Z* now locked (plus the
@@ -1078,6 +1183,7 @@ def _solve_stage5_final_profit(
         variables,
         cycle_resources,
         requirements,
+        already_consumed_by_resource_id,
     )
 
     if forecast is not None:
@@ -1163,6 +1269,7 @@ def _solve_with_adaptive_minimum_demand(
     cycle_resources,
     requirements,
     forecast: dict[int, Decimal] | None,
+    already_consumed_by_resource_id: dict[int, Decimal] | None = None,
 ) -> dict:
     """
     Phase 2: the full five-stage lexicographic pipeline, run only when
@@ -1184,6 +1291,7 @@ def _solve_with_adaptive_minimum_demand(
         cycle_resources,
         requirements,
         forecast,
+        already_consumed_by_resource_id,
     )
 
     p2_star = _solve_stage2_total_coverage(
@@ -1194,6 +1302,7 @@ def _solve_with_adaptive_minimum_demand(
         cycle_resources,
         requirements,
         forecast,
+        already_consumed_by_resource_id,
     )
 
     covered_ids = _solve_stage3_profitability_tiebreak(
@@ -1205,6 +1314,7 @@ def _solve_with_adaptive_minimum_demand(
         cycle_resources,
         requirements,
         forecast,
+        already_consumed_by_resource_id,
     )
 
     z_star = _solve_stage4_proportional_fairness(
@@ -1215,6 +1325,7 @@ def _solve_with_adaptive_minimum_demand(
         cycle_resources,
         requirements,
         forecast,
+        already_consumed_by_resource_id,
     )
 
     return _solve_stage5_final_profit(
@@ -1226,6 +1337,7 @@ def _solve_with_adaptive_minimum_demand(
         cycle_resources,
         requirements,
         forecast,
+        already_consumed_by_resource_id,
     )
 
 
@@ -1235,6 +1347,7 @@ def _solve_with_hard_minimum_demand(
     cycle_resources,
     requirements,
     forecast: dict[int, Decimal] | None,
+    already_consumed_by_resource_id: dict[int, Decimal] | None = None,
 ) -> dict:
     """
     Phase 1: the original, single-solve hard-minimum model - run only
@@ -1254,6 +1367,7 @@ def _solve_with_hard_minimum_demand(
         products,
         cycle_resources,
         requirements,
+        already_consumed_by_resource_id,
     )
     validate_minimum_demand_forecast(
         products,
@@ -1272,6 +1386,7 @@ def _solve_with_hard_minimum_demand(
         variables,
         cycle_resources,
         requirements,
+        already_consumed_by_resource_id,
     )
 
     if forecast is not None:
@@ -1363,9 +1478,21 @@ def solve_optimization(
     requirements,
     objective="MAX_PROFIT",
     forecast: dict[int, Decimal] | None = None,
+    already_consumed_by_resource_id: dict[int, Decimal] | None = None,
 ) -> dict:
     """
     Build and solve the integer linear programming model.
+
+    already_consumed_by_resource_id (see production_application.py::
+    get_cycle_consumed_by_resource) makes every resource constraint
+    and pre-solve capacity check below INCREMENTAL: this generation
+    solves against what is actually LEFT of each resource after
+    earlier applications in this same cycle, not the cycle's full
+    original capacity every time - the same remaining-capacity figure
+    apply_optimization has validated proposals against since the
+    ledger was introduced. None (the default - the first generation
+    in a cycle, or any caller not yet passing this) reproduces the
+    original full-capacity behavior exactly.
 
     Dispatches between two mutually exclusive solve paths, decided
     once by _is_minimum_demand_vector_feasible:
@@ -1402,6 +1529,7 @@ def solve_optimization(
         cycle_resources,
         requirements,
         forecast,
+        already_consumed_by_resource_id,
     ):
         try:
             return _solve_with_hard_minimum_demand(
@@ -1410,6 +1538,7 @@ def solve_optimization(
                 cycle_resources,
                 requirements,
                 forecast,
+                already_consumed_by_resource_id,
             )
         except ValueError:
             # Defense in depth: _is_minimum_demand_vector_feasible's
@@ -1433,6 +1562,7 @@ def solve_optimization(
         cycle_resources,
         requirements,
         forecast,
+        already_consumed_by_resource_id,
     )
 
 def build_optimization_result(
@@ -1442,9 +1572,22 @@ def build_optimization_result(
     requirements,
     allocations: list[dict],
     status: str,
+    already_consumed_by_resource_id: dict[int, Decimal] | None = None,
 ) -> dict:
     """
     Build the complete optimization result.
+
+    already_consumed_by_resource_id is forwarded to
+    calculate_optimized_resource_usage so the resource_usage it
+    returns reflects CUMULATIVE consumption (earlier applications this
+    cycle plus `allocations`), not `allocations` alone - see that
+    function's docstring. None (the default) reproduces the original
+    behavior: usage computed from `allocations` alone, which is what
+    apply_optimization's own call still wants for its "what this
+    apply just did" response (passing the cumulative figure there
+    would double-count this same apply's own allocations, since they
+    are both `allocations` here AND already folded into "already
+    consumed" by the time that call runs).
     """
 
     total_revenue = Decimal("0")
@@ -1481,6 +1624,7 @@ def build_optimization_result(
         allocations,
         cycle_resources,
         requirements,
+        already_consumed_by_resource_id,
     )
 
     bottlenecks = identify_optimization_bottlenecks(
@@ -1503,6 +1647,7 @@ def calculate_optimized_resource_usage(
     allocations: list[dict],
     cycle_resources,
     requirements,
+    already_consumed_by_resource_id: dict[int, Decimal] | None = None,
 ) -> list[dict]:
     """
     Calculate resource usage based on the optimized
@@ -1521,6 +1666,23 @@ def calculate_optimized_resource_usage(
     the ILP's chosen quantities, cost, or profit - only this reporting
     step is changed. Nothing is deleted or written back to the
     database; the CycleResource row itself is untouched.
+
+    `already_consumed_by_resource_id`, when given, is what earlier
+    applications in this same cycle have already consumed - the
+    returned `consumed_quantity` is that figure, `required_quantity`
+    stays exactly what it always meant (what THIS allocation alone
+    would require), and `remaining_quantity` becomes CUMULATIVE:
+    available_quantity - consumed_quantity - required_quantity. This
+    is deliberately NOT floored at zero, unlike the solver's own
+    constraint bound (_remaining_cycle_capacity) - it must be able to
+    go negative so identify_optimization_bottlenecks' existing
+    shortage detection (which reads a negative remaining_quantity as a
+    shortage) keeps working unchanged, and so the preview can warn
+    about a resource that even a freshly-solved plan would exceed once
+    prior consumption is counted (e.g. available_quantity was edited
+    downward after this plan was solved). None (the default)
+    reproduces the original behavior exactly: consumed_quantity 0,
+    remaining_quantity computed from `allocations` alone.
     """
 
     allocation_quantities = {
@@ -1572,8 +1734,14 @@ def calculate_optimized_resource_usage(
             else Decimal("0")
         )
 
+        consumed_quantity = (
+            already_consumed_by_resource_id or {}
+        ).get(resource_id, Decimal("0"))
+
         remaining_quantity = (
-            available_quantity - required_quantity
+            available_quantity
+            - consumed_quantity
+            - required_quantity
         )
 
         usage.append(
@@ -1586,6 +1754,7 @@ def calculate_optimized_resource_usage(
                 ),
                 "required_quantity": required_quantity,
                 "available_quantity": available_quantity,
+                "consumed_quantity": consumed_quantity,
                 "remaining_quantity": remaining_quantity,
             }
         )
@@ -1653,6 +1822,13 @@ def apply_optimization(
 
     if locked_cycle is None:
         raise ValueError("Production cycle not found")
+
+    # Read once, right after the lock, and reused below both to
+    # explain an all-zero plan (which resource has nothing left) and
+    # to revalidate the proposed allocation against current capacity -
+    # the same value either way, since nothing writes to the ledger
+    # between here and this function's own commit/rollback.
+    already_consumed = get_cycle_consumed_by_resource(db, cycle_id)
 
     optimization_run = (
         get_latest_optimization_history_run(
@@ -1738,6 +1914,27 @@ def apply_optimization(
         allocation["quantity"] > 0
         for allocation in allocations
     ):
+        exhausted = _exhausted_resources(
+            data["cycle_resources"],
+            already_consumed,
+        )
+
+        if exhausted:
+            resource_list = ", ".join(
+                f"{resource['resource_name']} "
+                f"(0 {resource['unit']} remaining)"
+                for resource in exhausted
+            )
+
+            raise ValueError(
+                "This optimization record has no applicable "
+                "product-level results because no capacity remains "
+                f"for {resource_list}. This is a resource shortage, "
+                "not a minimum-demand conflict - add capacity to one "
+                "of these resources, or wait for a future cycle, "
+                "before generating a new production plan."
+            )
+
         raise ValueError(
             "This optimization record has no applicable product-level "
             "results. Generate a new production plan instead."
@@ -1763,9 +1960,9 @@ def apply_optimization(
     # already consumed by earlier applications in THIS cycle is
     # deducted first, so a second application cannot re-spend the
     # first's materials. A cycle with no prior application gets an
-    # empty offset and behaves exactly as before.
-    already_consumed = get_cycle_consumed_by_resource(db, cycle_id)
-
+    # empty offset and behaves exactly as before. (already_consumed
+    # was read once, right after the lock above - reused here, not
+    # re-queried.)
     shortages = find_resource_capacity_shortages(
         db,
         cycle_id,

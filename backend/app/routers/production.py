@@ -13,7 +13,10 @@ from app.schemas.feasibility import (
 from app.schemas.production_application import (
     ProductionApplicationResponse,
 )
-from app.services.production_application import get_applications
+from app.services.production_application import (
+    get_applications,
+    get_cycle_consumed_by_resource,
+)
 from app.services.production import (
     create_production_cycle,
     delete_production_cycle,
@@ -222,6 +225,20 @@ def optimize_production(
     
     started_at = datetime.now()
 
+    # Computed ONCE here and reused for both the solve and the
+    # response below, so they can never disagree about how much of
+    # each resource earlier applications in this cycle have already
+    # spent. This is the same figure apply_optimization has validated
+    # proposals against since the ledger was introduced
+    # (get_cycle_consumed_by_resource) - Generate now solves against
+    # it too, instead of the cycle's full original capacity every
+    # time. Empty on a cycle's first generation, exactly reproducing
+    # today's behavior.
+    already_consumed_by_resource_id = get_cycle_consumed_by_resource(
+        db,
+        cycle_id,
+    )
+
     try:
         # Revision #3: the one minimum-demand pre-solve check that
         # needs a fresh DB query (a product's COMPLETE requirement
@@ -240,6 +257,9 @@ def optimize_production(
             data["requirements"],
             optimization_data.objective.value,
             forecast=forecast,
+            already_consumed_by_resource_id=(
+                already_consumed_by_resource_id
+            ),
         )
 
     except ValueError as exc:
@@ -261,6 +281,7 @@ def optimize_production(
         data["requirements"],
         result["allocations"],
         result["status"],
+        already_consumed_by_resource_id,
     )
 
     save_optimization_history(

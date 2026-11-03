@@ -35,6 +35,13 @@ class OptimizationResourceUsage(BaseModel):
     unit: str
     required_quantity: Decimal
     available_quantity: Decimal
+    # Already consumed by earlier applications THIS cycle, before this
+    # plan - 0 when nothing has been applied yet, or for a caller that
+    # has not supplied already_consumed_by_resource_id (see
+    # calculate_optimized_resource_usage). remaining_quantity below is
+    # cumulative: available_quantity - consumed_quantity -
+    # required_quantity.
+    consumed_quantity: Decimal
     remaining_quantity: Decimal
 
 

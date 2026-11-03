@@ -131,19 +131,18 @@ def test_a_new_run_can_be_applied_in_the_same_cycle_and_accumulates(
 
     assert first_produced
 
-    # Generate the second plan FIRST, while capacity is still at its
-    # original level, then top up before applying it.
+    # Top up capacity FIRST, then generate the second plan against it.
     #
-    # The order matters and is not arbitrary: /optimize is NOT
-    # ledger-aware - it plans against the RAW CycleResource capacity,
-    # so a plan generated after a 3x top-up asks for ~3x and can never
-    # fit in (3x - what the first application already consumed).
-    # Generating against 1x and then raising capacity to 3x leaves
-    # 3x - 1x = 2x remaining for a plan that needs ~1x, which is the
-    # real shop sequence: the plan is drawn up, then the materials are
-    # bought, then production is committed.
-    _optimize(client, optimization_cycle.id)
-
+    # The order matters and is not arbitrary: /optimize IS now
+    # ledger-aware - it solves against what is actually LEFT of each
+    # resource after the first apply (available_quantity minus
+    # get_cycle_consumed_by_resource), not the cycle's full original
+    # capacity. Topping up to 3x and THEN generating gives the second
+    # plan (3x - what the first application already consumed) to work
+    # with; generating before the top-up would size the plan to
+    # whatever was left of the ORIGINAL 1x (near nothing, since the
+    # first apply consumed most of it) and a later top-up could not
+    # retroactively grow an already-generated, already-saved plan.
     for cycle_resource in db.query(CycleResource).filter(
         CycleResource.production_cycle_id == optimization_cycle.id
     ).all():
@@ -152,6 +151,8 @@ def test_a_new_run_can_be_applied_in_the_same_cycle_and_accumulates(
         )
 
     db.commit()
+
+    _optimize(client, optimization_cycle.id)
 
     assert _apply(client, optimization_cycle.id).status_code == 200
 
@@ -182,9 +183,12 @@ def test_a_second_apply_without_fresh_capacity_is_rejected(
     client, db, cleanup_applications, optimization_cycle,
 ):
     """
-    Incremental consumption, enforced: with no capacity added, the
-    second application has nothing left to consume and must be
-    rejected with a capacity message rather than silently re-spending
+    Incremental consumption, enforced: with no capacity added, /optimize
+    (now ledger-aware) correctly solves the second plan against what is
+    actually LEFT after the first apply - near nothing - so it returns
+    an all-zero plan rather than failing outright. Applying that empty
+    plan must still be rejected (apply_optimization's pre-existing "no
+    applicable product-level results" guard), never silently re-spending
     the first application's materials.
     """
 
@@ -195,7 +199,19 @@ def test_a_second_apply_without_fresh_capacity_is_rejected(
     second = _apply(client, optimization_cycle.id)
 
     assert second.status_code == 400
-    assert "capacity" in second.json()["detail"].lower()
+
+    detail = second.json()["detail"].lower()
+
+    assert "no applicable" in detail
+
+    # Resource-specific explanation (Task: error message clarity):
+    # Test Labor is the resource this fixture's products exhaust
+    # first, and the message must name it and its unit, distinguish a
+    # genuine capacity shortage from a minimum-demand conflict, and
+    # tell the student what to do next.
+    assert "test labor" in detail
+    assert "0 hours remaining" in detail
+    assert "not a minimum-demand conflict" in detail
 
     assert (
         db.query(ProductionApplication)
@@ -223,10 +239,12 @@ def test_production_allocation_still_holds_only_the_latest_plan(
     _optimize(client, optimization_cycle.id)
     assert _apply(client, optimization_cycle.id).status_code == 200
 
-    # Second plan generated before the top-up - see the ordering note
-    # in test_a_new_run_can_be_applied_in_the_same_cycle_and_accumulates.
-    _optimize(client, optimization_cycle.id)
-
+    # Top up capacity BEFORE generating the second plan - see the
+    # ordering note in
+    # test_a_new_run_can_be_applied_in_the_same_cycle_and_accumulates.
+    # /optimize is ledger-aware now, so the top-up has to happen first
+    # or the generated plan sizes itself to near-nothing and a later
+    # top-up cannot retroactively grow it.
     for cycle_resource in db.query(CycleResource).filter(
         CycleResource.production_cycle_id == optimization_cycle.id
     ).all():
@@ -235,6 +253,8 @@ def test_production_allocation_still_holds_only_the_latest_plan(
         )
 
     db.commit()
+
+    _optimize(client, optimization_cycle.id)
 
     # Asserted, not fire-and-forget: if the second apply were rejected
     # the allocation rows would simply be the first apply's and the

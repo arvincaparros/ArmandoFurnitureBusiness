@@ -1010,14 +1010,25 @@ def _triple_cycle_capacity(db, cycle_id):
 
 
 def _prepare_second_apply(client, db, cycle_id):
+    """
+    Top up capacity BEFORE generating the second plan, not after:
+    /optimize is now ledger-aware (it solves against what is actually
+    LEFT of each resource after the first apply, not the cycle's full
+    original capacity - see production.py's incremental-capacity fix),
+    so a plan generated before the top-up would correctly size itself
+    to near-nothing and stay that way even once capacity is raised
+    afterward. Tripling first gives the second generation real
+    remaining capacity to plan against.
+    """
+
+    _triple_cycle_capacity(db, cycle_id)
+
     response = client.post(
         f"/api/production-cycles/{cycle_id}/optimize",
         json={"objective": "MAX_PROFIT"},
     )
 
     assert response.status_code == 200, response.text
-
-    _triple_cycle_capacity(db, cycle_id)
 
 
 def test_apply_optimization_is_repeatable(
@@ -1071,15 +1082,21 @@ def test_apply_optimization_is_repeatable(
 
     assert len(allocations) == 2
 
+    # Values changed from before the incremental-capacity fix (both
+    # were 12.0000): /optimize now solves the second plan against
+    # what is actually left after tripling (3x - the first apply's
+    # own consumption), not the cycle's full original capacity, so it
+    # correctly uses more of the real remaining material than the old,
+    # consumption-blind solve did.
     assert allocations[0].product_id == products[
         "Test Chair"
     ].id
-    assert allocations[0].quantity == Decimal("12.0000")
+    assert allocations[0].quantity == Decimal("34.0000")
 
     assert allocations[1].product_id == products[
         "Test Bed Frame"
     ].id
-    assert allocations[1].quantity == Decimal("12.0000")
+    assert allocations[1].quantity == Decimal("22.0000")
 
 
 def test_optimize_invalid_objective(client, optimization_cycle):
@@ -2470,17 +2487,22 @@ def test_feasibility_needs_reoptimization_false_after_reapply(
     )
     assert patch_response.status_code == 200
 
+    # Labor was fully consumed by the first apply, so the reoptimize
+    # needs fresh capacity too - /optimize is now ledger-aware (it
+    # solves against what is actually LEFT after the first apply, not
+    # the cycle's full original capacity), so this must happen BEFORE
+    # reoptimize, not after, or the generated plan sizes itself to
+    # near-nothing and stays that way regardless of a later top-up.
+    # Still happens before the reapply below, so applied_at from that
+    # reapply lands after every cycle_resource.updated_at here and
+    # needs_reoptimization stays False.
+    _triple_cycle_capacity(db, optimization_cycle.id)
+
     reoptimize_response = client.post(
         f"/api/production-cycles/{optimization_cycle.id}/optimize",
         json={"objective": "MAX_PROFIT"},
     )
     assert reoptimize_response.status_code == 200
-
-    # Labor was fully consumed by the first apply, so the reapply needs
-    # fresh capacity as well as the fresh run it already generates.
-    # Done AFTER the reoptimize so applied_at still lands after every
-    # cycle_resource.updated_at and needs_reoptimization stays False.
-    _triple_cycle_capacity(db, optimization_cycle.id)
 
     reapply_response = client.post(
         f"/api/production-cycles/{optimization_cycle.id}/optimize/apply"
@@ -2608,15 +2630,20 @@ def test_apply_optimization_rolls_back_on_mid_transaction_failure(
     }
     assert all(ts is not None for ts in original_applied_at.values())
 
+    # Fresh capacity BEFORE the second /optimize, not after: /optimize
+    # is now ledger-aware (it solves against what is actually LEFT
+    # after the first apply, not the cycle's full original capacity),
+    # so topping up afterward would leave an already-generated,
+    # already-too-small plan unchanged - and the second apply would
+    # then be turned away by the incremental capacity/empty-plan check
+    # before ever reaching the patched call this test means to exercise.
+    _triple_cycle_capacity(db, optimization_cycle.id)
+
     second_optimize = client.post(
         f"/api/production-cycles/{optimization_cycle.id}/optimize",
         json={"objective": "MAX_PROFIT"},
     )
     assert second_optimize.status_code == 200
-
-    # Fresh capacity so the second apply reaches the patched call
-    # instead of being turned away by the incremental capacity check.
-    _triple_cycle_capacity(db, optimization_cycle.id)
 
     def _boom(*args, **kwargs):
         raise RuntimeError("simulated failure during apply")
