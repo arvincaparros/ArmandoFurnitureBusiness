@@ -1,6 +1,12 @@
 from decimal import Decimal
 
-from app.database.models import ProductResourceRequirement
+from sqlalchemy import select
+
+from app.database.models import (
+    ProductionApplication,
+    ProductionApplicationResourceItem,
+    ProductResourceRequirement,
+)
 
 
 def test_list_products_returns_only_active_by_default(client, test_products, db):
@@ -426,3 +432,312 @@ def test_update_product_resource_requirement_that_would_invalidate_applied_alloc
         ProductResourceRequirement.resource_id == wood.id,
     ).first()
     assert requirement.quantity_required == Decimal("12.0000")
+
+
+# --- Scoped-to-the-edited-resource regression tests ---------------
+#
+# Baseline for all of these (see the two tests above): applying with
+# no minimum_demand produces Chair=12, Bed Frame=12. At the fixture's
+# per-unit requirements that means, BEFORE any edit:
+#   Wood:   12*12 (chair) + 12*55 (bed frame) = 804  of 1250 capacity
+#   Labor:  12*8  (chair) + 12*40 (bed frame) = 576  of 576  capacity
+#   Nails:  12*0.15(chair) + 12*0.4 (bed frame) = 6.6 of 100 capacity
+
+
+def test_editing_an_unrelated_resource_succeeds_despite_another_resource_over_capacity(
+    client,
+    db,
+    optimization_cycle,
+    test_products,
+    test_resources,
+    test_product_resource_requirements,
+):
+    """
+    The regression this fix exists for: Labor already sits exactly at
+    its 576 capacity before any edit. Reducing it below what is
+    already applied (allowed by design - see
+    test_update_cycle_resource_allows_reduction_below_applied_
+    consumption) pushes Labor over capacity for reasons that have
+    nothing to do with Wood. Editing Bed Frame's Wood requirement -
+    a completely different resource, whose own math never changed -
+    must still succeed.
+    """
+
+    products_by_name = {p.name: p for p in test_products}
+    resources_by_name = {r.name: r for r in test_resources}
+    bed_frame = products_by_name["Test Bed Frame"]
+    wood = resources_by_name["Test Wood"]
+    labor = resources_by_name["Test Labor"]
+
+    assert client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize",
+        json={"objective": "MAX_PROFIT"},
+    ).status_code == 200
+
+    assert client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize/apply"
+    ).status_code == 200
+
+    # Push Labor over capacity - 576 already applied, 500 now declared.
+    assert client.patch(
+        f"/api/production-cycles/{optimization_cycle.id}/resources/{labor.id}",
+        json={"available_quantity": 500},
+    ).status_code == 200
+
+    # Wood (55 -> 20) is a reduction, and Wood's own capacity was
+    # never remotely at risk (804 of 1250 before the edit).
+    response = client.patch(
+        f"/api/products/{bed_frame.id}/resources/{wood.id}",
+        json={"quantity_required": 20},
+    )
+
+    assert response.status_code == 200, response.text
+
+    requirement = db.query(ProductResourceRequirement).filter(
+        ProductResourceRequirement.product_id == bed_frame.id,
+        ProductResourceRequirement.resource_id == wood.id,
+    ).first()
+    assert requirement.quantity_required == Decimal("20.0000")
+
+
+def test_editing_an_unrelated_resource_succeeds_despite_two_other_resources_over_capacity(
+    client,
+    db,
+    optimization_cycle,
+    test_products,
+    test_resources,
+    test_product_resource_requirements,
+):
+    """
+    Same mechanism as above, with TWO different already-over-capacity
+    resources at once (Labor and Nails), proving the fix filters by
+    the one resource actually being edited rather than merely picking
+    the first shortage it happens to see.
+    """
+
+    products_by_name = {p.name: p for p in test_products}
+    resources_by_name = {r.name: r for r in test_resources}
+    chair = products_by_name["Test Chair"]
+    wood = resources_by_name["Test Wood"]
+    labor = resources_by_name["Test Labor"]
+    nails = resources_by_name["Test Nails"]
+
+    assert client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize",
+        json={"objective": "MAX_PROFIT"},
+    ).status_code == 200
+
+    assert client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize/apply"
+    ).status_code == 200
+
+    assert client.patch(
+        f"/api/production-cycles/{optimization_cycle.id}/resources/{labor.id}",
+        json={"available_quantity": 500},
+    ).status_code == 200
+
+    # Nails: 6.6 already applied, now declared below that too.
+    assert client.patch(
+        f"/api/production-cycles/{optimization_cycle.id}/resources/{nails.id}",
+        json={"available_quantity": 5},
+    ).status_code == 200
+
+    # Wood (12 -> 15) for Chair: an increase, but nowhere near Wood's
+    # own 1250 capacity (new total 180 + 660 = 840), and touches
+    # neither Labor nor Nails at all.
+    response = client.patch(
+        f"/api/products/{chair.id}/resources/{wood.id}",
+        json={"quantity_required": 15},
+    )
+
+    assert response.status_code == 200, response.text
+
+    requirement = db.query(ProductResourceRequirement).filter(
+        ProductResourceRequirement.product_id == chair.id,
+        ProductResourceRequirement.resource_id == wood.id,
+    ).first()
+    assert requirement.quantity_required == Decimal("15.0000")
+
+
+def test_increasing_the_edited_resource_past_its_own_capacity_is_still_rejected(
+    client,
+    db,
+    optimization_cycle,
+    test_products,
+    test_resources,
+    test_product_resource_requirements,
+):
+    """
+    The fix narrows the check to the edited resource - it must not
+    widen it into never blocking anything. An increase that pushes
+    WOOD itself (the resource being edited) over its own capacity must
+    still be rejected, and the message must name Wood - not Labor,
+    which is also over capacity here but is not what is being edited.
+    """
+
+    products_by_name = {p.name: p for p in test_products}
+    resources_by_name = {r.name: r for r in test_resources}
+    chair = products_by_name["Test Chair"]
+    wood = resources_by_name["Test Wood"]
+    labor = resources_by_name["Test Labor"]
+
+    assert client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize",
+        json={"objective": "MAX_PROFIT"},
+    ).status_code == 200
+
+    assert client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize/apply"
+    ).status_code == 200
+
+    # Labor over capacity too, same as the tests above - proves the
+    # rejection below is about Wood specifically, not a side effect of
+    # Labor's own unrelated shortage.
+    assert client.patch(
+        f"/api/production-cycles/{optimization_cycle.id}/resources/{labor.id}",
+        json={"available_quantity": 500},
+    ).status_code == 200
+
+    # Chair's Wood 12 -> 50: new Wood total = 50*12 + 55*12 = 1260,
+    # over the 1250 capacity by 10.
+    response = client.patch(
+        f"/api/products/{chair.id}/resources/{wood.id}",
+        json={"quantity_required": 50},
+    )
+
+    assert response.status_code == 400
+
+    detail = response.json()["detail"]
+    assert "Wood" in detail
+    assert "Labor" not in detail
+
+    requirement = db.query(ProductResourceRequirement).filter(
+        ProductResourceRequirement.product_id == chair.id,
+        ProductResourceRequirement.resource_id == wood.id,
+    ).first()
+    assert requirement.quantity_required == Decimal("12.0000")
+
+
+def test_reducing_the_edited_resource_back_within_its_own_capacity_succeeds(
+    client,
+    db,
+    optimization_cycle,
+    test_products,
+    test_resources,
+    test_product_resource_requirements,
+):
+    """
+    Wood itself is pushed over capacity (not a different resource this
+    time), then the edit REDUCES Wood's own requirement enough to fit
+    again - this must succeed, proving the fix still correctly
+    protects (and un-blocks) the resource actually being edited.
+    """
+
+    products_by_name = {p.name: p for p in test_products}
+    resources_by_name = {r.name: r for r in test_resources}
+    bed_frame = products_by_name["Test Bed Frame"]
+    wood = resources_by_name["Test Wood"]
+
+    assert client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize",
+        json={"objective": "MAX_PROFIT"},
+    ).status_code == 200
+
+    assert client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize/apply"
+    ).status_code == 200
+
+    # Wood: 804 already applied, now declared below that.
+    assert client.patch(
+        f"/api/production-cycles/{optimization_cycle.id}/resources/{wood.id}",
+        json={"available_quantity": 700},
+    ).status_code == 200
+
+    # Bed Frame's Wood 55 -> 20: new Wood total = 12*12 + 20*12 = 384,
+    # comfortably back within the now-lowered 700 capacity.
+    response = client.patch(
+        f"/api/products/{bed_frame.id}/resources/{wood.id}",
+        json={"quantity_required": 20},
+    )
+
+    assert response.status_code == 200, response.text
+
+    requirement = db.query(ProductResourceRequirement).filter(
+        ProductResourceRequirement.product_id == bed_frame.id,
+        ProductResourceRequirement.resource_id == wood.id,
+    ).first()
+    assert requirement.quantity_required == Decimal("20.0000")
+
+
+def test_requirement_edit_never_touches_persisted_application_history(
+    client,
+    db,
+    optimization_cycle,
+    test_products,
+    test_resources,
+    test_product_resource_requirements,
+):
+    """
+    Requirement #5: a requirement edit must never modify an existing
+    ProductionApplication's recorded resource consumption. The ledger
+    snapshot taken at apply time is what the whole engagement's
+    capacity-integrity model is built on - it must still read exactly
+    what it did immediately after apply, even after a later,
+    successful requirement edit.
+    """
+
+    products_by_name = {p.name: p for p in test_products}
+    resources_by_name = {r.name: r for r in test_resources}
+    bed_frame = products_by_name["Test Bed Frame"]
+    wood = resources_by_name["Test Wood"]
+    labor = resources_by_name["Test Labor"]
+
+    assert client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize",
+        json={"objective": "MAX_PROFIT"},
+    ).status_code == 200
+
+    assert client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize/apply"
+    ).status_code == 200
+
+    application = db.scalars(
+        select(ProductionApplication).where(
+            ProductionApplication.production_cycle_id
+            == optimization_cycle.id
+        )
+    ).one()
+
+    wood_consumed_before = db.scalars(
+        select(ProductionApplicationResourceItem.consumed_quantity).where(
+            ProductionApplicationResourceItem.production_application_id
+            == application.id,
+            ProductionApplicationResourceItem.resource_id == wood.id,
+        )
+    ).one()
+
+    assert wood_consumed_before == Decimal("804.0000")
+
+    assert client.patch(
+        f"/api/production-cycles/{optimization_cycle.id}/resources/{labor.id}",
+        json={"available_quantity": 500},
+    ).status_code == 200
+
+    assert client.patch(
+        f"/api/products/{bed_frame.id}/resources/{wood.id}",
+        json={"quantity_required": 20},
+    ).status_code == 200
+
+    db.expire_all()
+
+    wood_consumed_after = db.scalars(
+        select(ProductionApplicationResourceItem.consumed_quantity).where(
+            ProductionApplicationResourceItem.production_application_id
+            == application.id,
+            ProductionApplicationResourceItem.resource_id == wood.id,
+        )
+    ).one()
+
+    assert wood_consumed_after == wood_consumed_before == Decimal(
+        "804.0000"
+    )

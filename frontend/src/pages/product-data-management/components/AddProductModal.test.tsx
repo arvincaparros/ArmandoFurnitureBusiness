@@ -1,19 +1,45 @@
+import { forwardRef, useImperativeHandle } from 'react'
+
 import { render, screen, waitFor } from '@testing-library/react'
 import userEvent from '@testing-library/user-event'
 import { MantineProvider } from '@mantine/core'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
-import { describe, expect, it, vi } from 'vitest'
+import { beforeEach, describe, expect, it, vi } from 'vitest'
 
 import AddProductModal from './AddProductModal'
 
 import type { Product } from '../types'
+import type { ResourceRequirementFailure } from '../hooks/useProductResourceRequirements'
 
 // The Edit variant renders ProductResourceRequirementsSection, which
 // runs its own queries - stubbed so these tests stay focused on the
-// Minimum Demand field and never hit the network.
-vi.mock('./ProductResourceRequirementsSection', () => ({
-  default: () => <div data-testid="requirements-section" />,
+// Minimum Demand field and never hit the network. waitForPendingChangesMock
+// is exposed through the same forwardRef handle the real component
+// uses, so the save-coordination tests below can control what
+// AddProductModal's "Save Changes" sees when it awaits pending
+// resource requirement mutations.
+const { waitForPendingChangesMock } = vi.hoisted(() => ({
+  waitForPendingChangesMock: vi.fn(
+    async (): Promise<ResourceRequirementFailure[]> => [],
+  ),
 }))
+
+vi.mock('./ProductResourceRequirementsSection', () => ({
+  default: forwardRef<unknown, { productId: number }>(
+    (_props, ref) => {
+      useImperativeHandle(ref, () => ({
+        waitForPendingChanges: waitForPendingChangesMock,
+      }))
+
+      return <div data-testid="requirements-section" />
+    },
+  ),
+}))
+
+beforeEach(() => {
+  waitForPendingChangesMock.mockReset()
+  waitForPendingChangesMock.mockResolvedValue([])
+})
 
 function makeProduct(overrides: Partial<Product> = {}): Product {
   return {
@@ -34,6 +60,7 @@ function makeProduct(overrides: Partial<Product> = {}): Product {
 
 const renderModal = (product: Product | null = null) => {
   const onSave = vi.fn().mockResolvedValue(undefined)
+  const onClose = vi.fn()
 
   const queryClient = new QueryClient({
     defaultOptions: { queries: { retry: false } },
@@ -44,7 +71,7 @@ const renderModal = (product: Product | null = null) => {
       <QueryClientProvider client={queryClient}>
         <AddProductModal
           opened
-          onClose={vi.fn()}
+          onClose={onClose}
           onSave={onSave}
           product={product}
         />
@@ -52,7 +79,7 @@ const renderModal = (product: Product | null = null) => {
     </MantineProvider>,
   )
 
-  return { onSave }
+  return { onSave, onClose }
 }
 
 const minimumDemandInput = () =>
@@ -177,5 +204,99 @@ describe('AddProductModal Minimum Demand field', () => {
 
     // allowNegative={false} strips the sign.
     expect(minimumDemandInput().value).not.toContain('-')
+  })
+})
+
+describe('AddProductModal resource requirement save coordination', () => {
+  it('does not call onSave while a resource requirement update is still pending', async () => {
+    let resolveWait: (
+      failures: ResourceRequirementFailure[],
+    ) => void = () => {}
+
+    waitForPendingChangesMock.mockImplementation(
+      () =>
+        new Promise<ResourceRequirementFailure[]>((resolve) => {
+          resolveWait = resolve
+        }),
+    )
+
+    const { onSave } = renderModal(makeProduct())
+
+    await userEvent.click(saveButton())
+
+    await waitFor(() =>
+      expect(
+        screen.getByRole('button', { name: 'Cancel' }),
+      ).toBeDisabled(),
+    )
+
+    expect(onSave).not.toHaveBeenCalled()
+
+    resolveWait([])
+
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1))
+  })
+
+  it('calls onSave once every pending resource requirement update succeeds', async () => {
+    waitForPendingChangesMock.mockResolvedValue([])
+
+    const { onSave } = renderModal(makeProduct())
+
+    await userEvent.click(saveButton())
+
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1))
+  })
+
+  it('does not call onSave and names the failed resource when an update fails', async () => {
+    waitForPendingChangesMock.mockResolvedValue([
+      {
+        resourceId: 7,
+        resourceName: 'Test Wood',
+        message: 'Exceeds available capacity.',
+      },
+    ])
+
+    const { onSave } = renderModal(makeProduct())
+
+    await userEvent.click(saveButton())
+
+    await waitFor(() =>
+      expect(screen.getByText(/Test Wood/)).toBeInTheDocument(),
+    )
+
+    expect(onSave).not.toHaveBeenCalled()
+  })
+
+  it('never calls onClose when a resource requirement update fails, leaving the modal open', async () => {
+    waitForPendingChangesMock.mockResolvedValue([
+      {
+        resourceId: 3,
+        resourceName: 'Test Labor',
+        message: 'Exceeds available capacity.',
+      },
+    ])
+
+    const { onSave, onClose } = renderModal(makeProduct())
+
+    await userEvent.click(saveButton())
+
+    await waitFor(() =>
+      expect(screen.getByText(/Test Labor/)).toBeInTheDocument(),
+    )
+
+    expect(onClose).not.toHaveBeenCalled()
+    expect(onSave).not.toHaveBeenCalled()
+  })
+
+  it('shows no failure message and calls onSave exactly once when all resource updates succeed', async () => {
+    waitForPendingChangesMock.mockResolvedValue([])
+
+    const { onSave } = renderModal(makeProduct())
+
+    await userEvent.click(saveButton())
+
+    await waitFor(() => expect(onSave).toHaveBeenCalledTimes(1))
+
+    expect(screen.queryByText(/Failed to save/)).not.toBeInTheDocument()
   })
 })

@@ -1,4 +1,4 @@
-import { useEffect, useState } from 'react'
+import { useEffect, useRef, useState } from 'react'
 
 import {
   Alert,
@@ -23,11 +23,40 @@ import type {
   ProductCreateRequest,
   ProductUpdateRequest,
 } from '../api/productTypes'
+import type {
+  ProductResourceRequirementsSectionHandle,
+} from './ProductResourceRequirementsSection'
+import type { ResourceRequirementFailure } from '../hooks/useProductResourceRequirements'
 
 // Matches the backend's own bounds exactly (schemas/product.py::
 // MinimumDemand) so the UI rejects what the API would 422 on, rather
 // than relying on the error path for ordinary input.
 const MINIMUM_DEMAND_MAX = 1_000_000
+
+// Mirrors the existing per-field save-failure Alert below (the same
+// slot a product-level save error uses) rather than a second,
+// separate notification channel - one resource names the resource
+// directly, more than one lists every name rather than repeating the
+// same generic sentence per resource.
+const buildResourceFailuresMessage = (
+  failures: ResourceRequirementFailure[],
+) => {
+  if (failures.length === 1) {
+    return (
+      `Failed to save the "${failures[0].resourceName}" ` +
+      `resource requirement: ${failures[0].message}`
+    )
+  }
+
+  const names = failures
+    .map((failure) => failure.resourceName)
+    .join(', ')
+
+  return (
+    `Failed to save resource requirements for: ${names}. ` +
+    'Please review and try again.'
+  )
+}
 
 interface AddProductModalProps {
   opened: boolean
@@ -59,6 +88,9 @@ const AddProductModal = ({
 
   const [isSubmitting, setIsSubmitting] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  const resourceSectionRef =
+    useRef<ProductResourceRequirementsSectionHandle>(null)
 
   useEffect(() => {
     if (product) {
@@ -107,6 +139,22 @@ const AddProductModal = ({
     setError(null)
 
     try {
+      // Resource requirement rows each save on their own blur/
+      // confirm, independently of this button - wait for every one
+      // still in flight before deciding the overall save succeeded,
+      // so a slow or failed row can never be silently missed by an
+      // unconditional success notification.
+      if (product) {
+        const failures =
+          (await resourceSectionRef.current?.waitForPendingChanges()) ??
+          []
+
+        if (failures.length > 0) {
+          setError(buildResourceFailuresMessage(failures))
+          return
+        }
+      }
+
       await onSave({
         name: productName,
         selling_price: sellingPrice,
@@ -231,6 +279,7 @@ const AddProductModal = ({
 
             {product ? (
               <ProductResourceRequirementsSection
+                ref={resourceSectionRef}
                 productId={product.id}
               />
             ) : (

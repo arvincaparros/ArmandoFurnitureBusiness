@@ -1,4 +1,8 @@
-import { useState } from 'react'
+import {
+  forwardRef,
+  useImperativeHandle,
+  useState,
+} from 'react'
 
 import {
   ActionIcon,
@@ -21,13 +25,26 @@ import useProductResourceRequirements from '../hooks/useProductResourceRequireme
 
 import RequirementRow from './RequirementRow'
 
+import type { ResourceRequirementFailure } from '../hooks/useProductResourceRequirements'
+
 interface ProductResourceRequirementsSectionProps {
   productId: number
 }
 
-const ProductResourceRequirementsSection = ({
-  productId,
-}: ProductResourceRequirementsSectionProps) => {
+// What the Add/Edit Product modal's "Save Changes" coordinates
+// against: it awaits waitForPendingChanges before deciding whether
+// the overall save succeeded, since every row/add-form here saves
+// independently of the modal's own submit flow.
+export interface ProductResourceRequirementsSectionHandle {
+  waitForPendingChanges: () => Promise<
+    ResourceRequirementFailure[]
+  >
+}
+
+const ProductResourceRequirementsSection = forwardRef<
+  ProductResourceRequirementsSectionHandle,
+  ProductResourceRequirementsSectionProps
+>(({ productId }, ref) => {
   const {
     requirements,
     availableResourcesForNew,
@@ -36,7 +53,14 @@ const ProductResourceRequirementsSection = ({
     createRequirement,
     updateRequirement,
     deleteRequirement,
+    waitForPendingChanges,
   } = useProductResourceRequirements(productId)
+
+  useImperativeHandle(
+    ref,
+    () => ({ waitForPendingChanges }),
+    [waitForPendingChanges],
+  )
 
   const [isAdding, setIsAdding] = useState(false)
   const [newResourceId, setNewResourceId] = useState<
@@ -203,6 +227,9 @@ const ProductResourceRequirementsSection = ({
       )}
     </Stack>
   )
-}
+})
+
+ProductResourceRequirementsSection.displayName =
+  'ProductResourceRequirementsSection'
 
 export default ProductResourceRequirementsSection

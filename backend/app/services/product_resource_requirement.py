@@ -29,8 +29,24 @@ def _validate_requirement_change_against_applied_allocations(
     has an applied ProductionAllocation for it. Checks every such
     cycle: with this one requirement hypothetically at the proposed
     new quantity_required (everything else - including this product's
-    own already-applied quantity - unchanged), would that cycle's
-    resource capacity still hold? Rejects if not, for any cycle.
+    own already-applied quantity - unchanged), would THIS SPECIFIC
+    resource still fit that cycle's capacity? Rejects if not, for any
+    cycle.
+
+    Scoped to the one resource actually being edited - deliberately
+    NOT every resource find_resource_capacity_shortages happens to
+    return. That helper reports every resource any applied product in
+    the cycle needs, which is correct for its OTHER callers (Apply
+    revalidation, a manual allocation edit) where the whole plan's
+    feasibility is what matters. Here, only one (product_id,
+    resource_id) pair is changing, so a different resource already
+    over capacity for unrelated historical reasons (e.g. Labor
+    exceeding its capacity from an earlier application) must never
+    block an edit to a resource that is itself fine, or being reduced
+    - that resource's own math never changed. Without this narrowing,
+    editing ANY resource on ANY product sharing a cycle with an
+    already-over-capacity resource would be permanently blocked,
+    regardless of which resource or which direction the edit moves.
     """
 
     affected_cycle_ids = {
@@ -63,10 +79,16 @@ def _validate_requirement_change_against_applied_allocations(
             ),
         )
 
-        if shortages:
+        relevant_shortages = [
+            shortage
+            for shortage in shortages
+            if shortage["resource_id"] == resource_id
+        ]
+
+        if relevant_shortages:
             raise ValueError(
                 format_capacity_shortage_message(
-                    shortages,
+                    relevant_shortages,
                     "Cannot update this resource requirement - it "
                     "would make the currently applied production "
                     f"allocation for production cycle {cycle_id} "
