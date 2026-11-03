@@ -1078,10 +1078,14 @@ class OpeningInventorySet(Base):
         index=True,
     )
 
-    # The business date these balances were counted as of. Recorded
-    # for the audit trail only - stock derivation never filters by it,
-    # because the opening balance is by definition the starting point
-    # for ALL ledger activity regardless of date.
+    # The business date these balances were counted as of, AND (as of
+    # the thesis-scope simplification) the ledger's own effective
+    # date: inventory.py::get_available_stock reads this value off
+    # the currently REVIEWED set and uses it to exclude any sale or
+    # production application recorded strictly before it - see that
+    # function's docstring. Not a second, separately-tracked cutover
+    # value; this field doubles as both the audit label and the
+    # actual filter boundary now.
     effective_date: Mapped[datetime] = mapped_column(
         DateTime,
         nullable=False,

@@ -199,19 +199,36 @@ def get_cycle_produced_by_product(
 
 def get_total_produced_by_product(
     db: Session,
+    since: datetime | None = None,
 ) -> dict[int, Decimal]:
     """
     product_id -> units produced across EVERY cycle, ever. The
     production half of available stock - deliberately never
     cycle-filtered, because stock that was produced and not sold is
     still stock after the cycle closes.
+
+    `since`, when given, excludes any application whose `applied_at`
+    is strictly before that instant - the ledger's effective date
+    (see inventory.py::get_available_stock). An application applied
+    at or after `since` is still included in full, and multiple
+    qualifying applications still accumulate normally. `None` (the
+    default) keeps the true all-time total.
     """
 
+    statement = select(
+        ProductionApplicationItem.product_id,
+        func.sum(ProductionApplicationItem.quantity_produced),
+    )
+
+    if since is not None:
+        statement = statement.join(
+            ProductionApplication,
+            ProductionApplication.id
+            == ProductionApplicationItem.production_application_id,
+        ).where(ProductionApplication.applied_at >= since)
+
     rows = db.execute(
-        select(
-            ProductionApplicationItem.product_id,
-            func.sum(ProductionApplicationItem.quantity_produced),
-        ).group_by(ProductionApplicationItem.product_id)
+        statement.group_by(ProductionApplicationItem.product_id)
     ).all()
 
     return {

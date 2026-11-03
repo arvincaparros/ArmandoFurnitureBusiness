@@ -4,12 +4,14 @@ from decimal import Decimal
 from app.database.models import OpeningInventoryItem, OpeningInventorySet
 
 
-def _review_opening(db, product_id, quantity):
+def _review_opening(
+    db, product_id, quantity, effective_date=datetime(2026, 10, 1),
+):
     inventory_set = OpeningInventorySet(
         set_number=f"OI-INV{product_id}",
         status="REVIEWED",
-        effective_date=datetime(2026, 10, 1),
-        reviewed_at=datetime(2026, 10, 1),
+        effective_date=effective_date,
+        reviewed_at=effective_date,
     )
 
     db.add(inventory_set)
@@ -388,3 +390,226 @@ def test_inventory_requires_authentication(unauthenticated_client):
     assert unauthenticated_client.get(
         "/api/inventory"
     ).status_code == 401
+
+
+def test_available_stock_excludes_sales_before_ledger_effective_date(
+    db, cleanup_opening_inventory, cleanup_applications,
+    optimization_cycle, test_products,
+):
+    """
+    Thesis-scope simplification: a sale recorded before the ledger's
+    effective date must not deduct from the newly tracked inventory,
+    even though get_total_sold_by_product's default (no `since`) is
+    still all-time for every other caller.
+    """
+
+    from app.database.models import SalesTransaction
+    from app.services.inventory import get_available_stock_for_product
+
+    product = test_products[0]
+
+    effective_date = datetime(2026, 11, 3)
+    _review_opening(
+        db, product.id, 10, effective_date=effective_date,
+    )
+
+    pre_ledger_sale = SalesTransaction(
+        transaction_number="TRX-INV0005",
+        product_id=product.id,
+        production_cycle_id=None,
+        transaction_date=datetime(2026, 9, 1),
+        quantity_produced=Decimal("0"),
+        quantity=Decimal("6"),
+        unit_price=Decimal("100"),
+        total_sales=Decimal("600"),
+        production_cost=Decimal("0"),
+        unit_profit=Decimal("100"),
+        total_profit=Decimal("600"),
+    )
+
+    db.add(pre_ledger_sale)
+    db.commit()
+
+    try:
+        assert get_available_stock_for_product(
+            db, product.id,
+        ) == Decimal("10")
+
+    finally:
+        db.delete(pre_ledger_sale)
+        db.commit()
+
+
+def test_available_stock_deducts_a_sale_exactly_at_the_effective_date(
+    db, cleanup_opening_inventory, cleanup_applications,
+    optimization_cycle, test_products,
+):
+    """
+    Boundary case called out explicitly: a transaction occurring at
+    the SAME instant as the ledger's effective date (same calendar
+    date as an apply event like PA-0001) must still be deducted - the
+    cutoff is inclusive (>=), not exclusive.
+    """
+
+    from app.database.models import SalesTransaction
+    from app.services.inventory import get_available_stock_for_product
+
+    product = test_products[0]
+
+    effective_date = datetime(2026, 11, 3)
+    _review_opening(
+        db, product.id, 10, effective_date=effective_date,
+    )
+
+    boundary_sale = SalesTransaction(
+        transaction_number="TRX-INV0006",
+        product_id=product.id,
+        production_cycle_id=optimization_cycle.id,
+        transaction_date=effective_date,
+        quantity_produced=Decimal("0"),
+        quantity=Decimal("4"),
+        unit_price=Decimal("100"),
+        total_sales=Decimal("400"),
+        production_cost=Decimal("0"),
+        unit_profit=Decimal("100"),
+        total_profit=Decimal("400"),
+    )
+
+    db.add(boundary_sale)
+    db.commit()
+
+    try:
+        assert get_available_stock_for_product(
+            db, product.id,
+        ) == Decimal("6")
+
+    finally:
+        db.delete(boundary_sale)
+        db.commit()
+
+
+def test_available_stock_excludes_production_before_ledger_effective_date(
+    db, cleanup_opening_inventory, cleanup_applications,
+    optimization_cycle, test_products,
+):
+    """
+    Mirrors the sales-side exclusion: a production application applied
+    before the ledger's effective date must not inflate stock either -
+    pre-ledger activity is excluded in both directions.
+    """
+
+    from app.database.models import (
+        OptimizationRun,
+        ProductionApplication,
+        ProductionApplicationItem,
+    )
+    from app.services.inventory import get_available_stock_for_product
+
+    product = test_products[0]
+
+    effective_date = datetime(2026, 11, 3)
+    _review_opening(
+        db, product.id, 0, effective_date=effective_date,
+    )
+
+    pre_ledger_run = OptimizationRun(
+        production_cycle_id=optimization_cycle.id,
+        started_at=datetime(2026, 9, 1, 9, 0),
+        status="OPTIMAL",
+    )
+
+    db.add(pre_ledger_run)
+    db.commit()
+    db.refresh(pre_ledger_run)
+
+    pre_ledger_application = ProductionApplication(
+        application_number="PA-TESTPRE",
+        production_cycle_id=optimization_cycle.id,
+        optimization_run_id=pre_ledger_run.id,
+        applied_at=datetime(2026, 9, 1),
+    )
+
+    db.add(pre_ledger_application)
+    db.flush()
+
+    db.add(
+        ProductionApplicationItem(
+            production_application_id=pre_ledger_application.id,
+            product_id=product.id,
+            quantity_produced=Decimal("20"),
+        )
+    )
+
+    db.commit()
+
+    assert get_available_stock_for_product(
+        db, product.id,
+    ) == Decimal("0")
+
+
+def test_available_stock_accumulates_multiple_applications_on_or_after_effective_date(
+    db, cleanup_opening_inventory, cleanup_applications,
+    optimization_cycle, test_products,
+):
+    """
+    Requirement 3, under the new scoping: two separate applications
+    both on or after the effective date must still both count, exactly
+    as the unscoped formula already guaranteed. Scoping must not
+    collapse accumulation.
+    """
+
+    from app.database.models import OptimizationRun
+    from app.services.inventory import get_available_stock_for_product
+    from app.services.production_application import (
+        save_production_application,
+    )
+
+    product = test_products[0]
+
+    # Deliberately far in the past relative to wall-clock "now" (not
+    # tied to the day this suite happens to run) - the two
+    # applications below get their real applied_at timestamp from
+    # save_production_application's own datetime.utcnow() call, which
+    # only needs to land on or after this effective_date, not on any
+    # particular day.
+    effective_date = datetime(2026, 1, 1)
+    _review_opening(
+        db, product.id, 0, effective_date=effective_date,
+    )
+
+    first_run = OptimizationRun(
+        production_cycle_id=optimization_cycle.id,
+        started_at=datetime(2026, 10, 30, 9, 0),
+        status="OPTIMAL",
+    )
+    db.add(first_run)
+    db.commit()
+    db.refresh(first_run)
+
+    save_production_application(
+        db, optimization_cycle.id, first_run.id,
+        {product.id: Decimal("9")}, [],
+    )
+    db.commit()
+
+    second_run = OptimizationRun(
+        production_cycle_id=optimization_cycle.id,
+        started_at=datetime(2026, 10, 30, 9, 0),
+        status="OPTIMAL",
+    )
+    db.add(second_run)
+    db.commit()
+    db.refresh(second_run)
+
+    save_production_application(
+        db, optimization_cycle.id, second_run.id,
+        {product.id: Decimal("5")}, [],
+    )
+    db.commit()
+
+    # save_production_application stamps applied_at via
+    # datetime.utcnow() internally - both applications land well
+    # after effective_date, so both must be counted.
+    assert get_available_stock_for_product(
+        db, product.id,
+    ) == Decimal("14")

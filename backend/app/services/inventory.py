@@ -1,3 +1,4 @@
+from datetime import datetime
 from decimal import Decimal
 
 from sqlalchemy import func, select
@@ -6,6 +7,7 @@ from sqlalchemy.orm import Session
 from app.database.models import Product, SalesTransaction
 from app.services.opening_inventory import (
     get_opening_quantities,
+    get_reviewed_opening_inventory_set,
     is_stock_validation_enabled,
 )
 from app.services.production import get_latest_production_cycle
@@ -45,20 +47,36 @@ def lock_product_for_stock_update(
     ).scalar_one_or_none()
 
 
-def get_total_sold_by_product(db: Session) -> dict[int, Decimal]:
+def get_total_sold_by_product(
+    db: Session,
+    since: datetime | None = None,
+) -> dict[int, Decimal]:
     """
     product_id -> units sold across ALL time, every cycle included and
     rows with a NULL production_cycle_id included too. Deliberately
     never cycle-filtered: a sale reduced real stock whenever it
     happened, so excluding any sale here would overstate what is on
     hand.
+
+    `since`, when given, excludes any sale recorded strictly before
+    that instant - the ledger's effective date (see
+    get_available_stock). A sale at or after `since` is still
+    included in full. `None` (the default) keeps the true all-time
+    total, so every other caller is unaffected.
     """
 
+    statement = select(
+        SalesTransaction.product_id,
+        func.sum(SalesTransaction.quantity),
+    )
+
+    if since is not None:
+        statement = statement.where(
+            SalesTransaction.transaction_date >= since
+        )
+
     rows = db.execute(
-        select(
-            SalesTransaction.product_id,
-            func.sum(SalesTransaction.quantity),
-        ).group_by(SalesTransaction.product_id)
+        statement.group_by(SalesTransaction.product_id)
     ).all()
 
     return {
@@ -100,8 +118,20 @@ def get_available_stock(db: Session) -> dict[int, Decimal]:
     """
     product_id -> units on hand right now:
 
-        opening (reviewed declaration) + all applied production
-        - all sales, across every cycle
+        opening (reviewed declaration) + all production applied
+        on or after the ledger's effective date
+        - all sales recorded on or after the ledger's effective date
+
+    The effective date is the currently REVIEWED OpeningInventorySet's
+    own `effective_date` - reused rather than introducing a second
+    "when does the ledger start" value. Sales and production recorded
+    strictly BEFORE it never enter this calculation at all, in either
+    direction: a historical sale from before the ledger existed does
+    not deduct from it, and a historical production run from before it
+    does not inflate it. With no REVIEWED set, `since` resolves to
+    `None` and every call below falls back to its true all-time total
+    - matching today's behavior exactly, since in that state
+    is_stock_validation_enabled() already refuses every sale anyway.
 
     DERIVED on every read, never stored. A stored counter would have
     to be reversed correctly on every transaction edit and delete
@@ -117,9 +147,16 @@ def get_available_stock(db: Session) -> dict[int, Decimal]:
     NEW sales from creating that state in the first place.
     """
 
+    reviewed_set = get_reviewed_opening_inventory_set(db)
+    since = (
+        reviewed_set.effective_date
+        if reviewed_set is not None
+        else None
+    )
+
     opening = get_opening_quantities(db)
-    produced = get_total_produced_by_product(db)
-    sold = get_total_sold_by_product(db)
+    produced = get_total_produced_by_product(db, since=since)
+    sold = get_total_sold_by_product(db, since=since)
 
     product_ids = (
         set(opening) | set(produced) | set(sold)
@@ -217,9 +254,16 @@ def get_inventory_overview(db: Session) -> dict:
 
     cycle = get_latest_production_cycle(db)
 
+    reviewed_set = get_reviewed_opening_inventory_set(db)
+    since = (
+        reviewed_set.effective_date
+        if reviewed_set is not None
+        else None
+    )
+
     opening = get_opening_quantities(db)
-    produced = get_total_produced_by_product(db)
-    sold = get_total_sold_by_product(db)
+    produced = get_total_produced_by_product(db, since=since)
+    sold = get_total_sold_by_product(db, since=since)
     stock = get_available_stock(db)
 
     cycle_produced = (

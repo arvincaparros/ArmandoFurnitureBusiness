@@ -15,12 +15,15 @@ from conftest import (
 )
 
 
-def _review_opening(db, product_id, quantity, suffix="A"):
+def _review_opening(
+    db, product_id, quantity, suffix="A",
+    effective_date=datetime(2026, 10, 1),
+):
     inventory_set = OpeningInventorySet(
         set_number=f"OI-STK{suffix}",
         status="REVIEWED",
-        effective_date=datetime(2026, 10, 1),
-        reviewed_at=datetime(2026, 10, 1),
+        effective_date=effective_date,
+        reviewed_at=effective_date,
     )
 
     db.add(inventory_set)
@@ -756,3 +759,59 @@ def test_multiple_applications_across_different_cycles_accumulate(
     ) == Decimal("8")
 
     _cleanup_sales(db, product.id)
+
+
+def test_oversell_validation_ignores_sales_before_ledger_effective_date(
+    client, db, cleanup_opening_inventory, cleanup_applications,
+    transaction_cycle, test_products,
+):
+    """
+    Thesis-scope simplification: a historical sale recorded before the
+    ledger's effective date must not count against the figure used to
+    validate a NEW sale. Without scoping, the pre-ledger sale below
+    would read available stock as 10 - 8 = 2 and reject a sale of 10;
+    with scoping it is excluded entirely, so the full 10 remain
+    sellable.
+    """
+
+    product = test_products[0]
+    _cleanup_sales(db, product.id)
+
+    effective_date = datetime(2026, 10, 1)
+    _review_opening(
+        db, product.id, 0, "R", effective_date=effective_date,
+    )
+    _apply_production(db, transaction_cycle.id, product.id, 10)
+
+    pre_ledger_sale = SalesTransaction(
+        transaction_number="TRX-STKPRE",
+        product_id=product.id,
+        production_cycle_id=None,
+        transaction_date=datetime(2026, 9, 1),
+        quantity_produced=Decimal("0"),
+        quantity=Decimal("8"),
+        unit_price=Decimal("100"),
+        total_sales=Decimal("800"),
+        production_cost=Decimal("0"),
+        unit_profit=Decimal("100"),
+        total_profit=Decimal("800"),
+    )
+
+    db.add(pre_ledger_sale)
+    db.commit()
+
+    try:
+        response = client.post(
+            "/api/transactions",
+            json=_sale_payload(product.id, 31, 10),
+        )
+
+        assert response.status_code == 201, response.text
+        assert Decimal(response.json()["quantity_produced"]) == (
+            Decimal("10")
+        )
+
+    finally:
+        db.delete(pre_ledger_sale)
+        db.commit()
+        _cleanup_sales(db, product.id)
