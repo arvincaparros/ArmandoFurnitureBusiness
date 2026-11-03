@@ -6,6 +6,9 @@ from sqlalchemy import select
 from sqlalchemy.orm import Session
 
 from app.services.forecast_history import save_forecast_history
+from app.services.opening_inventory import (
+    get_reviewed_opening_inventory_set,
+)
 
 from app.database.models import (
     Product,
@@ -222,11 +225,26 @@ def get_weekly_produced_demand(
        ledger began. Mirrors forecasting's pre-ledger design note:
        never ProductionAllocation (a replaced-on-every-apply plan),
        never SalesTransaction.quantity_produced for these rows.
-    2. SalesTransaction.quantity_produced, but ONLY for pre-rollout
-       rows (production_cycle_id IS NULL) - rows with no ledger entry
-       at all, for which this stored figure is the only production
-       record that exists. A post-rollout sale's quantity_produced is
-       never read here; its production is already counted via (1).
+    2. SalesTransaction.quantity_produced, but ONLY for rows with
+       production_cycle_id IS NULL **and** a transaction_date strictly
+       before the ledger's own effective date (the currently REVIEWED
+       OpeningInventorySet's effective_date - see
+       inventory.py::get_available_stock). That second condition is
+       required, not cosmetic: a Production Cycle is no longer a
+       precondition for recording a sale, so production_cycle_id IS
+       NULL by itself no longer means "pre-rollout legacy row" - it
+       can now also mean a brand-new sale with no matching cycle,
+       whose quantity_produced is the all-time available-stock
+       balance at sale time, not a newly-produced delta. Reading that
+       into this series would silently and drastically overstate
+       production for the week of an ordinary new sale. Gating on the
+       effective date keeps this fallback reading only what it was
+       always meant to read: production_application_items simply did
+       not exist yet for genuinely pre-rollout rows, so their stored
+       figure is still the only production record that exists for
+       them. With no REVIEWED set at all, nothing can be dated before
+       its effective date, so this fallback correctly reads zero rows
+       (consistent with sales being refused outright in that state).
 
     NEVER zero-filled, unlike the sold series: a week with no
     production simply has no entry, so the chart shows no production
@@ -256,22 +274,30 @@ def get_weekly_produced_demand(
         )
     ).all()
 
-    legacy_rows = db.execute(
-        select(
-            SalesTransaction.product_id,
-            SalesTransaction.transaction_date,
-            SalesTransaction.quantity_produced,
-        )
-        .join(
-            Product,
-            Product.id == SalesTransaction.product_id,
-        )
-        .where(
-            Product.is_active.is_(True),
-            SalesTransaction.production_cycle_id.is_(None),
-            SalesTransaction.quantity_produced > 0,
-        )
-    ).all()
+    reviewed_set = get_reviewed_opening_inventory_set(db)
+
+    legacy_rows = (
+        db.execute(
+            select(
+                SalesTransaction.product_id,
+                SalesTransaction.transaction_date,
+                SalesTransaction.quantity_produced,
+            )
+            .join(
+                Product,
+                Product.id == SalesTransaction.product_id,
+            )
+            .where(
+                Product.is_active.is_(True),
+                SalesTransaction.production_cycle_id.is_(None),
+                SalesTransaction.quantity_produced > 0,
+                SalesTransaction.transaction_date
+                < reviewed_set.effective_date,
+            )
+        ).all()
+        if reviewed_set is not None
+        else []
+    )
 
     weekly_totals: dict[int, dict[date, Decimal]] = defaultdict(dict)
 

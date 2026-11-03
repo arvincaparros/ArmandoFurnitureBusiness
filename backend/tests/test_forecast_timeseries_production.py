@@ -1,4 +1,7 @@
 from datetime import datetime
+from decimal import Decimal
+
+from app.database.models import OpeningInventoryItem, OpeningInventorySet
 
 # Plain module name, not "tests.test_...": pytest's default (prepend)
 # import mode puts backend/tests on sys.path, so this is the import
@@ -8,6 +11,47 @@ from test_forecast_production_series import (
     _cleanup_sales,
     _make_sale,
 )
+
+
+def _review_opening_after(db, product_id, effective_date, suffix):
+    """
+    A Production Cycle is no longer required to record a sale, so
+    get_weekly_produced_demand's legacy fallback now also requires a
+    transaction_date strictly before the ledger's REVIEWED
+    effective_date to count a NULL-cycle row as genuinely pre-rollout.
+    """
+
+    inventory_set = OpeningInventorySet(
+        set_number=f"OI-TP{suffix}",
+        status="REVIEWED",
+        effective_date=effective_date,
+        reviewed_at=effective_date,
+    )
+
+    db.add(inventory_set)
+    db.flush()
+
+    db.add(
+        OpeningInventoryItem(
+            opening_inventory_set_id=inventory_set.id,
+            product_id=product_id,
+            quantity=Decimal("0"),
+        )
+    )
+
+    db.commit()
+
+    return inventory_set
+
+
+def _cleanup_opening(db, inventory_set):
+    db.query(OpeningInventoryItem).filter(
+        OpeningInventoryItem.opening_inventory_set_id
+        == inventory_set.id
+    ).delete(synchronize_session=False)
+
+    db.delete(inventory_set)
+    db.commit()
 
 
 def _series(client, product_id):
@@ -229,6 +273,10 @@ def test_legacy_sale_produces_a_separate_sale_and_production_point(
 
     product = test_products[0]
 
+    inventory_set = _review_opening_after(
+        db, product.id, datetime(2026, 9, 1), "L1",
+    )
+
     sale = _make_sale(
         db,
         product.id,
@@ -265,3 +313,4 @@ def test_legacy_sale_produces_a_separate_sale_and_production_point(
 
     finally:
         _cleanup_sales(db, [sale])
+        _cleanup_opening(db, inventory_set)

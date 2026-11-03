@@ -1,7 +1,12 @@
 from datetime import datetime
 from decimal import Decimal
 
-from app.database.models import ProductionApplication, SalesTransaction
+from app.database.models import (
+    OpeningInventoryItem,
+    OpeningInventorySet,
+    ProductionApplication,
+    SalesTransaction,
+)
 from app.services.forecasting import (
     _week_start,
     calculate_confidence_level,
@@ -9,6 +14,50 @@ from app.services.forecasting import (
     get_weekly_historical_demand,
     get_weekly_produced_demand,
 )
+
+
+def _review_opening_after(db, product_id, effective_date, suffix):
+    """
+    A Production Cycle is no longer required to record a sale, so
+    get_weekly_produced_demand's legacy fallback (production_cycle_id
+    IS NULL) now also needs a transaction_date strictly before the
+    ledger's own REVIEWED effective_date to count a row as genuinely
+    pre-rollout - see that function's docstring. Callers pass an
+    effective_date safely after every transaction_date in the test so
+    their NULL-cycle fixtures still read as legacy.
+    """
+
+    inventory_set = OpeningInventorySet(
+        set_number=f"OI-FW{suffix}",
+        status="REVIEWED",
+        effective_date=effective_date,
+        reviewed_at=effective_date,
+    )
+
+    db.add(inventory_set)
+    db.flush()
+
+    db.add(
+        OpeningInventoryItem(
+            opening_inventory_set_id=inventory_set.id,
+            product_id=product_id,
+            quantity=Decimal("0"),
+        )
+    )
+
+    db.commit()
+
+    return inventory_set
+
+
+def _cleanup_opening(db, inventory_set):
+    db.query(OpeningInventoryItem).filter(
+        OpeningInventoryItem.opening_inventory_set_id
+        == inventory_set.id
+    ).delete(synchronize_session=False)
+
+    db.delete(inventory_set)
+    db.commit()
 
 
 def _make_transaction(product_id, transaction_date, quantity, quantity_produced=None):
@@ -156,6 +205,10 @@ def test_weekly_produced_sums_legacy_pre_rollout_rows_independently_of_sold(
 
     product = test_products[0]
 
+    inventory_set = _review_opening_after(
+        db, product.id, datetime(2026, 2, 1), "L1",
+    )
+
     transactions = _add_transactions(
         db,
         [
@@ -184,6 +237,7 @@ def test_weekly_produced_sums_legacy_pre_rollout_rows_independently_of_sold(
 
     finally:
         _cleanup(db, transactions)
+        _cleanup_opening(db, inventory_set)
 
 
 def test_weekly_produced_sums_ledger_applications_by_applied_week(
@@ -273,6 +327,10 @@ def test_weekly_produced_legacy_fallback_excludes_cycle_attributed_rows(
 
     product = test_products[0]
 
+    inventory_set = _review_opening_after(
+        db, product.id, datetime(2026, 11, 1), "L2",
+    )
+
     legacy_sale = _make_transaction(
         product.id,
         datetime(2026, 10, 26),
@@ -316,6 +374,7 @@ def test_weekly_produced_legacy_fallback_excludes_cycle_attributed_rows(
         db.delete(cycle_attributed_sale)
         db.commit()
         _cleanup(db, transactions)
+        _cleanup_opening(db, inventory_set)
 
 
 def test_weekly_produced_never_double_counts_a_cycle_attributed_sales_own_stored_quantity_produced(

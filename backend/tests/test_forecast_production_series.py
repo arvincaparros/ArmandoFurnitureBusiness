@@ -355,7 +355,7 @@ def test_inactive_products_are_excluded(
 
 
 def test_legacy_sale_keeps_reporting_its_stored_produced_quantity(
-    db, test_products,
+    db, cleanup_opening_inventory, test_products,
 ):
     """
     Pre-rollout rows have production_cycle_id NULL and no ledger entry
@@ -364,11 +364,37 @@ def test_legacy_sale_keeps_reporting_its_stored_produced_quantity(
     fallback must keep handing it to the chart byte-for-byte.
     get_transaction_historical_demand is gone - absorbed into
     get_weekly_historical_demand (sold-only now) plus this fallback.
+
+    A Production Cycle is no longer required to record a sale, so the
+    fallback's NULL-cycle condition alone can no longer prove "this is
+    a genuine pre-rollout row" - it also needs the ledger's own
+    REVIEWED effective_date, set here AFTER this sale's date, to
+    correctly classify it as pre-ledger.
     """
 
     from app.services.forecasting import get_weekly_produced_demand
 
     product = test_products[0]
+
+    inventory_set = OpeningInventorySet(
+        set_number="OI-PS9001",
+        status="REVIEWED",
+        effective_date=datetime(2026, 9, 1),
+        reviewed_at=datetime(2026, 9, 1),
+    )
+
+    db.add(inventory_set)
+    db.flush()
+
+    db.add(
+        OpeningInventoryItem(
+            opening_inventory_set_id=inventory_set.id,
+            product_id=product.id,
+            quantity=Decimal("0"),
+        )
+    )
+
+    db.commit()
 
     sale = _make_sale(
         db,
@@ -384,6 +410,64 @@ def test_legacy_sale_keeps_reporting_its_stored_produced_quantity(
         produced = get_weekly_produced_demand(db)[product.id]
 
         assert produced[0]["quantity_produced"] == Decimal("5")
+
+    finally:
+        _cleanup_sales(db, [sale])
+
+
+def test_new_null_cycle_sale_on_or_after_ledger_start_is_excluded_from_legacy_fallback(
+    db, cleanup_opening_inventory, test_products,
+):
+    """
+    A Production Cycle is no longer required to record a sale, so a
+    brand-new sale can legitimately have production_cycle_id NULL too
+    - but it is not a pre-rollout row, and its quantity_produced is
+    the all-time available-stock balance at sale time, not a newly
+    produced delta. The legacy fallback must not read it: reading it
+    would silently and drastically overstate production for an
+    ordinary new sale. Gating on the ledger's effective date (here,
+    the sale's date is exactly ON it - the inclusive boundary matters)
+    is what keeps this fallback excluding it.
+    """
+
+    from app.services.forecasting import get_weekly_produced_demand
+
+    product = test_products[0]
+
+    effective_date = datetime(2026, 9, 1)
+
+    inventory_set = OpeningInventorySet(
+        set_number="OI-PS9002",
+        status="REVIEWED",
+        effective_date=effective_date,
+        reviewed_at=effective_date,
+    )
+
+    db.add(inventory_set)
+    db.flush()
+
+    db.add(
+        OpeningInventoryItem(
+            opening_inventory_set_id=inventory_set.id,
+            product_id=product.id,
+            quantity=Decimal("0"),
+        )
+    )
+
+    db.commit()
+
+    sale = _make_sale(
+        db,
+        product.id,
+        effective_date,
+        1,
+        50,
+        None,
+        "TRX-PS9002",
+    )
+
+    try:
+        assert product.id not in get_weekly_produced_demand(db)
 
     finally:
         _cleanup_sales(db, [sale])

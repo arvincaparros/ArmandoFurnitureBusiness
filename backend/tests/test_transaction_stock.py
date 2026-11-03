@@ -560,10 +560,17 @@ def test_editing_a_zero_produced_row_does_not_crash(
     _cleanup_sales(db, product.id)
 
 
-def test_moving_a_sale_to_a_date_outside_every_cycle_is_rejected(
+def test_moving_a_sale_to_a_date_outside_every_cycle_succeeds_as_null(
     client, db, cleanup_opening_inventory, cleanup_applications,
     transaction_cycle, test_products,
 ):
+    """
+    A Production Cycle is no longer a precondition for recording or
+    editing a sale. Moving a transaction's date to one no cycle
+    covers must succeed and clear its cycle attribution to None,
+    not be rejected.
+    """
+
     product = test_products[0]
     _cleanup_sales(db, product.id)
     # Same setup as every other sale-POSTing test here: the sale is
@@ -577,13 +584,15 @@ def test_moving_a_sale_to_a_date_outside_every_cycle_is_rejected(
         json=_sale_payload(product.id, 31, 1),
     ).json()
 
+    assert created["production_cycle_id"] == transaction_cycle.id
+
     response = client.patch(
         f"/api/transactions/{created['id']}",
         json={"transaction_date": "2029-01-01T00:00:00"},
     )
 
-    assert response.status_code == 400
-    assert "production cycle" in response.json()["detail"].lower()
+    assert response.status_code == 200, response.text
+    assert response.json()["production_cycle_id"] is None
 
     _cleanup_sales(db, product.id)
 

@@ -52,9 +52,16 @@ def validate_transaction_date_range(
 def resolve_production_cycle_for_date(
     db: Session,
     transaction_date: datetime,
-) -> ProductionCycle:
+) -> ProductionCycle | None:
     """
-    The production cycle a sale belongs to, by date.
+    The production cycle a sale belongs to, by date - or `None` if no
+    cycle covers it. A Production Cycle is no longer a precondition
+    for recording a sale: students may add transactions for any valid
+    date, with or without a matching cycle. A sale is still attributed
+    to a cycle whenever exactly one genuinely covers its date, so
+    cycle-scoped reporting (cycle_sold, etc.) stays accurate whenever
+    possible - it is only ever None when there is truly nothing to
+    attribute it to.
 
     Membership is HALF-OPEN on the end bound:
     date(start_date) <= date(transaction_date) < date(end_date). That
@@ -68,14 +75,12 @@ def resolve_production_cycle_for_date(
     carry a time, so a raw timestamp comparison would make cycle
     membership depend on the submitting browser's clock.
 
-    Raises rather than falling back to the latest cycle. A sale
-    attributed to the wrong cycle silently corrupts that cycle's
-    reported sales and the stock figures derived alongside them, so an
-    unmatched date must be the user's problem to fix, not something
-    the system papers over. Two matching cycles (possible only with
-    hand-created overlapping cycles) are likewise rejected rather than
-    resolved by a tiebreak - picking one would be exactly the silent
-    assignment this function exists to prevent.
+    Two matching cycles (possible only with hand-created overlapping
+    cycles) are still rejected rather than resolved by a tiebreak -
+    picking one would be a silent, wrong assignment, which is a real
+    data-integrity problem independent of whether a cycle is required
+    at all. Only the "zero matches" case changed from a rejection to a
+    None result.
     """
 
     target_day = transaction_date.date()
@@ -93,11 +98,7 @@ def resolve_production_cycle_for_date(
     )
 
     if not matches:
-        raise ValueError(
-            f"{target_day.isoformat()} does not fall within any "
-            "production cycle. Create or adjust a production cycle "
-            "that covers this date, then record the transaction."
-        )
+        return None
 
     if len(matches) > 1:
         names = ", ".join(
@@ -401,9 +402,11 @@ def create_transaction(
             "Cannot create transaction for inactive product"
         )
 
-    # Rejects a date that belongs to no cycle (or to more than one)
-    # instead of attributing the sale to the latest cycle - a sale in
-    # the wrong cycle silently corrupts that cycle's reported sales.
+    # A Production Cycle is no longer required to record a sale -
+    # None is a normal, accepted result here. Still rejects a date
+    # covered by more than one cycle instead of attributing the sale
+    # to either - a sale in the wrong cycle would silently corrupt
+    # that cycle's reported sales.
     production_cycle = resolve_production_cycle_for_date(
         db,
         transaction_data.transaction_date,
@@ -459,7 +462,11 @@ def create_transaction(
     transaction = SalesTransaction(
         transaction_number=generate_transaction_number(db),
         product_id=transaction_data.product_id,
-        production_cycle_id=production_cycle.id,
+        production_cycle_id=(
+            production_cycle.id
+            if production_cycle is not None
+            else None
+        ),
         transaction_date=transaction_data.transaction_date,
         quantity_produced=quantity_produced,
         quantity=transaction_data.quantity,
@@ -521,29 +528,36 @@ def update_transaction(
         transaction.transaction_date,
     )
 
-    # Re-resolve the cycle whenever the date moves, with the same
-    # reject-rather-than-guess rule as create - an edited date that
-    # belongs to no cycle must not leave the sale attributed to its
-    # old one.
+    # Re-resolve the cycle whenever the date moves, so a sale is never
+    # left attributed to its OLD cycle once the date no longer belongs
+    # to it. A Production Cycle is not required, so "no cycle covers
+    # the new date" is now a normal None result, not a rejection.
     #
-    # (R1) A pre-rollout row is exempt. production_cycle_id IS NULL
-    # is what marks it legacy, and the forecast uses that marker to
-    # decide whose stored quantity_produced it still reports
-    # (services/forecasting.py). Attributing such a row to a cycle
-    # on an unrelated edit would silently drop its produced figure
-    # off the chart - a rewrite of settled history, which the
-    # Global Constraints forbid. It stays unattributed, exactly as
-    # Task 8's migration left it.
+    # (R1) A row with no cycle today (whether a genuine pre-rollout
+    # legacy row, or a newer sale recorded with no matching cycle) is
+    # exempt from re-resolution: production_cycle_id IS NULL still
+    # marks a row the forecast's legacy fallback may read (gated by
+    # transaction_date against the ledger's effective date - see
+    # forecasting.py), and an unrelated date edit must never silently
+    # attribute such a row to a cycle it was never actually produced
+    # under. It stays unattributed, exactly as it was before this
+    # edit.
     production_cycle_id = transaction.production_cycle_id
 
     if (
         "transaction_date" in update_data
         and transaction.production_cycle_id is not None
     ):
-        production_cycle_id = resolve_production_cycle_for_date(
+        resolved_cycle = resolve_production_cycle_for_date(
             db,
             transaction_date,
-        ).id
+        )
+
+        production_cycle_id = (
+            resolved_cycle.id
+            if resolved_cycle is not None
+            else None
+        )
 
     # Same lock, same reason, as create_transaction: the stock figure
     # about to be checked is a derived SUM with no row constraint

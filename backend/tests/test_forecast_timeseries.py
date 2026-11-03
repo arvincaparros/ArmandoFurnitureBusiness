@@ -1,8 +1,56 @@
 from datetime import date, datetime
 from decimal import Decimal
 
-from app.database.models import Product, SalesTransaction
+from app.database.models import (
+    OpeningInventoryItem,
+    OpeningInventorySet,
+    Product,
+    SalesTransaction,
+)
 from app.services.forecasting import _week_start, _next_week
+
+
+def _review_opening_after(db, product_id, effective_date, suffix):
+    """
+    A Production Cycle is no longer required to record a sale, so
+    get_weekly_produced_demand's legacy fallback now also requires a
+    transaction_date strictly before the ledger's REVIEWED
+    effective_date to count a NULL-cycle row as genuinely pre-rollout.
+    Callers pass an effective_date safely after every transaction_date
+    in the test so its legacy fixtures still read as legacy.
+    """
+
+    inventory_set = OpeningInventorySet(
+        set_number=f"OI-FT{suffix}",
+        status="REVIEWED",
+        effective_date=effective_date,
+        reviewed_at=effective_date,
+    )
+
+    db.add(inventory_set)
+    db.flush()
+
+    db.add(
+        OpeningInventoryItem(
+            opening_inventory_set_id=inventory_set.id,
+            product_id=product_id,
+            quantity=Decimal("0"),
+        )
+    )
+
+    db.commit()
+
+    return inventory_set
+
+
+def _cleanup_opening(db, inventory_set):
+    db.query(OpeningInventoryItem).filter(
+        OpeningInventoryItem.opening_inventory_set_id
+        == inventory_set.id
+    ).delete(synchronize_session=False)
+
+    db.delete(inventory_set)
+    db.commit()
 
 
 def _make_transaction(
@@ -68,6 +116,10 @@ def test_timeseries_weekly_historical_points_sum_within_week_and_zero_fill_gaps(
     """
 
     chair = test_products[1]
+
+    inventory_set = _review_opening_after(
+        db, chair.id, datetime(2026, 2, 1), "T1",
+    )
 
     transactions = _add_transactions(
         db,
@@ -141,6 +193,7 @@ def test_timeseries_weekly_historical_points_sum_within_week_and_zero_fill_gaps(
 
     finally:
         _cleanup(db, transactions)
+        _cleanup_opening(db, inventory_set)
 
 
 def test_timeseries_returns_exactly_three_forecast_weeks_after_last_history(
@@ -327,6 +380,10 @@ def test_transactions_on_the_same_date_are_summed_into_one_week(
 
     chair = test_products[1]
 
+    inventory_set = _review_opening_after(
+        db, chair.id, datetime(2026, 2, 1), "T2",
+    )
+
     transactions = _add_transactions(
         db,
         [
@@ -371,6 +428,7 @@ def test_transactions_on_the_same_date_are_summed_into_one_week(
 
     finally:
         _cleanup(db, transactions)
+        _cleanup_opening(db, inventory_set)
 
 
 def test_timeseries_defaults_to_all_active_products(
