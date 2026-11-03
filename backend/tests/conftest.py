@@ -923,12 +923,29 @@ def test_product_resource_requirements(
     db.add_all(requirements)
     db.commit()
 
+    # Captured now, as plain ints, while every row is definitely still
+    # fresh - never read off `requirements` again after this point.
+    # expire_on_commit means a later commit (including one made by a
+    # test calling the live API, through this same `db` session)
+    # expires these ORM instances' attributes; if the row behind one
+    # has since been deleted (the approved free-form requirement-
+    # editing workflow - delete/replace all of a product's
+    # requirements), even reading `.id` off it triggers a reload that
+    # raises ObjectDeletedError.
+    requirement_ids = [requirement.id for requirement in requirements]
+
     try:
         yield requirements
 
     finally:
-        for requirement in requirements:
-            db.delete(requirement)
+        for requirement_id in requirement_ids:
+            current = db.get(
+                ProductResourceRequirement,
+                requirement_id,
+            )
+
+            if current is not None:
+                db.delete(current)
 
         db.commit()
 

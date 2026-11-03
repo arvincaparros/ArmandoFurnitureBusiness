@@ -387,7 +387,7 @@ def test_update_product_resource_requirement_within_capacity_is_accepted(
     assert response.status_code == 200
 
 
-def test_update_product_resource_requirement_that_would_invalidate_applied_allocation_is_rejected(
+def test_update_product_resource_requirement_succeeds_even_when_it_would_invalidate_applied_allocation(
     client,
     db,
     optimization_cycle,
@@ -396,10 +396,14 @@ def test_update_product_resource_requirement_that_would_invalidate_applied_alloc
     test_product_resource_requirements,
 ):
     """
-    Applied allocation: Chair=12, Bed Frame=12 (baseline optimum, no
+    Approved business-rule change: editing a product's resource
+    requirements must never be blocked by an existing applied
+    allocation's capacity, regardless of direction or size. Applied
+    allocation: Chair=12, Bed Frame=12 (baseline optimum, no
     minimum_demand). Wood consumption = 12*12 + 12*55 = 804, capacity
     1250. Bumping Chair's own Wood requirement from 12 to 50 pushes
-    Chair's Wood need to 12*50=600, total 600+660=1260 > 1250.
+    Chair's Wood need to 12*50=600, total 600+660=1260 > 1250 - this
+    must still succeed.
     """
 
     products_by_name = {p.name: p for p in test_products}
@@ -423,15 +427,13 @@ def test_update_product_resource_requirement_that_would_invalidate_applied_alloc
         json={"quantity_required": 50},
     )
 
-    assert response.status_code == 400
-    detail = response.json()["detail"]
-    assert "Wood" in detail
+    assert response.status_code == 200, response.text
 
     requirement = db.query(ProductResourceRequirement).filter(
         ProductResourceRequirement.product_id == chair.id,
         ProductResourceRequirement.resource_id == wood.id,
     ).first()
-    assert requirement.quantity_required == Decimal("12.0000")
+    assert requirement.quantity_required == Decimal("50.0000")
 
 
 # --- Scoped-to-the-edited-resource regression tests ---------------
@@ -559,7 +561,7 @@ def test_editing_an_unrelated_resource_succeeds_despite_two_other_resources_over
     assert requirement.quantity_required == Decimal("15.0000")
 
 
-def test_increasing_the_edited_resource_past_its_own_capacity_is_still_rejected(
+def test_increasing_the_edited_resource_past_its_own_capacity_now_succeeds(
     client,
     db,
     optimization_cycle,
@@ -568,11 +570,11 @@ def test_increasing_the_edited_resource_past_its_own_capacity_is_still_rejected(
     test_product_resource_requirements,
 ):
     """
-    The fix narrows the check to the edited resource - it must not
-    widen it into never blocking anything. An increase that pushes
-    WOOD itself (the resource being edited) over its own capacity must
-    still be rejected, and the message must name Wood - not Labor,
-    which is also over capacity here but is not what is being edited.
+    Approved business-rule change: an increase that pushes WOOD
+    itself (the resource being edited) over its own capacity, with
+    ANOTHER resource (Labor) also already over capacity, must still
+    succeed - requirement editing is never blocked by capacity in
+    either direction, for any resource, applied or not.
     """
 
     products_by_name = {p.name: p for p in test_products}
@@ -591,31 +593,26 @@ def test_increasing_the_edited_resource_past_its_own_capacity_is_still_rejected(
     ).status_code == 200
 
     # Labor over capacity too, same as the tests above - proves the
-    # rejection below is about Wood specifically, not a side effect of
-    # Labor's own unrelated shortage.
+    # success below is not conditional on any other resource's state.
     assert client.patch(
         f"/api/production-cycles/{optimization_cycle.id}/resources/{labor.id}",
         json={"available_quantity": 500},
     ).status_code == 200
 
     # Chair's Wood 12 -> 50: new Wood total = 50*12 + 55*12 = 1260,
-    # over the 1250 capacity by 10.
+    # over the 1250 capacity by 10 - still accepted.
     response = client.patch(
         f"/api/products/{chair.id}/resources/{wood.id}",
         json={"quantity_required": 50},
     )
 
-    assert response.status_code == 400
-
-    detail = response.json()["detail"]
-    assert "Wood" in detail
-    assert "Labor" not in detail
+    assert response.status_code == 200, response.text
 
     requirement = db.query(ProductResourceRequirement).filter(
         ProductResourceRequirement.product_id == chair.id,
         ProductResourceRequirement.resource_id == wood.id,
     ).first()
-    assert requirement.quantity_required == Decimal("12.0000")
+    assert requirement.quantity_required == Decimal("50.0000")
 
 
 def test_reducing_the_edited_resource_back_within_its_own_capacity_succeeds(
@@ -741,3 +738,339 @@ def test_requirement_edit_never_touches_persisted_application_history(
     assert wood_consumed_after == wood_consumed_before == Decimal(
         "804.0000"
     )
+
+
+# --- Approved business-rule change: free-form requirement editing ----
+#
+# A product's resource requirements (its BOM) can be edited, removed,
+# replaced, or added to at will, regardless of any currently applied
+# ProductionAllocation or that allocation's resource capacity. See
+# product_resource_requirement.py::update_product_resource_requirement.
+
+
+def test_delete_resource_requirement_succeeds_despite_over_capacity_allocation(
+    client,
+    db,
+    optimization_cycle,
+    test_products,
+    test_resources,
+    test_product_resource_requirements,
+):
+    products_by_name = {p.name: p for p in test_products}
+    resources_by_name = {r.name: r for r in test_resources}
+    chair = products_by_name["Test Chair"]
+    wood = resources_by_name["Test Wood"]
+    labor = resources_by_name["Test Labor"]
+
+    assert client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize",
+        json={"objective": "MAX_PROFIT"},
+    ).status_code == 200
+
+    assert client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize/apply"
+    ).status_code == 200
+
+    # Push Labor over capacity on the already-applied allocation.
+    assert client.patch(
+        f"/api/production-cycles/{optimization_cycle.id}/resources/{labor.id}",
+        json={"available_quantity": 500},
+    ).status_code == 200
+
+    response = client.delete(
+        f"/api/products/{chair.id}/resources/{wood.id}"
+    )
+
+    assert response.status_code == 204
+
+    assert db.query(ProductResourceRequirement).filter(
+        ProductResourceRequirement.product_id == chair.id,
+        ProductResourceRequirement.resource_id == wood.id,
+    ).first() is None
+
+
+def test_removing_all_resource_requirements_for_a_product_succeeds(
+    client,
+    db,
+    test_products,
+    test_resources,
+    test_product_resource_requirements,
+):
+    chair = next(
+        product for product in test_products
+        if product.name == "Test Chair"
+    )
+
+    existing = db.query(ProductResourceRequirement).filter(
+        ProductResourceRequirement.product_id == chair.id,
+    ).all()
+
+    assert existing, "fixture must give Test Chair requirements"
+
+    for requirement in existing:
+        response = client.delete(
+            f"/api/products/{chair.id}/resources/{requirement.resource_id}"
+        )
+        assert response.status_code == 204
+
+    assert client.get(
+        f"/api/products/{chair.id}/resources"
+    ).json() == []
+
+
+def test_adding_a_new_requirement_after_removing_all_existing_ones_succeeds(
+    client,
+    db,
+    test_products,
+    test_resources,
+    test_product_resource_requirements,
+):
+    chair = next(
+        product for product in test_products
+        if product.name == "Test Chair"
+    )
+    resources_by_name = {r.name: r for r in test_resources}
+
+    for requirement in db.query(ProductResourceRequirement).filter(
+        ProductResourceRequirement.product_id == chair.id,
+    ).all():
+        assert client.delete(
+            f"/api/products/{chair.id}/resources/{requirement.resource_id}"
+        ).status_code == 204
+
+    response = client.post(
+        f"/api/products/{chair.id}/resources",
+        json={
+            "resource_id": resources_by_name["Test Epoxy"].id,
+            "quantity_required": 3,
+        },
+    )
+
+    assert response.status_code == 201, response.text
+
+    requirements = client.get(
+        f"/api/products/{chair.id}/resources"
+    ).json()
+
+    assert len(requirements) == 1
+    assert requirements[0]["resource_id"] == (
+        resources_by_name["Test Epoxy"].id
+    )
+    assert Decimal(
+        requirements[0]["quantity_required"]
+    ) == Decimal("3.0000")
+
+
+def test_replacing_all_requirements_with_a_new_set_succeeds(
+    client,
+    db,
+    optimization_cycle,
+    test_products,
+    test_resources,
+    test_product_resource_requirements,
+):
+    """
+    The full "completely replace the BOM" workflow students need:
+    apply a plan first, then delete every existing requirement for a
+    product and add a brand new set - even though the OLD set still
+    has an applied allocation on record for this cycle.
+    """
+
+    products_by_name = {p.name: p for p in test_products}
+    resources_by_name = {r.name: r for r in test_resources}
+    bed_frame = products_by_name["Test Bed Frame"]
+
+    assert client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize",
+        json={"objective": "MAX_PROFIT"},
+    ).status_code == 200
+
+    assert client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize/apply"
+    ).status_code == 200
+
+    for requirement in db.query(ProductResourceRequirement).filter(
+        ProductResourceRequirement.product_id == bed_frame.id,
+    ).all():
+        assert client.delete(
+            f"/api/products/{bed_frame.id}/resources/{requirement.resource_id}"
+        ).status_code == 204
+
+    new_set = {
+        "Test Wood": 30,
+        "Test Epoxy": 1,
+        "Test Nails": 0.5,
+    }
+
+    for resource_name, quantity in new_set.items():
+        response = client.post(
+            f"/api/products/{bed_frame.id}/resources",
+            json={
+                "resource_id": resources_by_name[resource_name].id,
+                "quantity_required": quantity,
+            },
+        )
+        assert response.status_code == 201, response.text
+
+    requirements = client.get(
+        f"/api/products/{bed_frame.id}/resources"
+    ).json()
+
+    assert len(requirements) == len(new_set)
+
+    by_resource_id = {
+        item["resource_id"]: Decimal(item["quantity_required"])
+        for item in requirements
+    }
+
+    for resource_name, quantity in new_set.items():
+        assert by_resource_id[
+            resources_by_name[resource_name].id
+        ] == Decimal(str(quantity))
+
+
+def test_updated_requirement_is_used_by_the_next_generate(
+    client,
+    db,
+    optimization_cycle,
+    test_products,
+    test_resources,
+    test_product_resource_requirements,
+):
+    """
+    Requirement #7: the very next Generate must use the NEW
+    requirement value, not whatever was true the last time it ran.
+    ProductResourceRequirement is read fresh from the database on
+    every /optimize call (get_optimization_data), never cached or
+    snapshotted at apply time, so this holds with no production code
+    change - pinned here as a regression guard.
+    """
+
+    products_by_name = {p.name: p for p in test_products}
+    resources_by_name = {r.name: r for r in test_resources}
+    chair = products_by_name["Test Chair"]
+    bed_frame = products_by_name["Test Bed Frame"]
+    wood = resources_by_name["Test Wood"]
+
+    assert client.patch(
+        f"/api/products/{chair.id}/resources/{wood.id}",
+        json={"quantity_required": 20},
+    ).status_code == 200
+
+    response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize",
+        json={"objective": "MAX_PROFIT"},
+    )
+
+    assert response.status_code == 200
+
+    payload = response.json()
+
+    chair_quantity = next(
+        Decimal(str(item["quantity"]))
+        for item in payload["allocations"]
+        if item["product_id"] == chair.id
+    )
+    bed_frame_quantity = next(
+        Decimal(str(item["quantity"]))
+        for item in payload["allocations"]
+        if item["product_id"] == bed_frame.id
+    )
+
+    wood_usage = next(
+        item for item in payload["resource_usage"]
+        if item["resource_name"] == "Test Wood"
+    )
+
+    # Wood's required_quantity must reflect the NEW per-unit rate (20)
+    # for Chair's share - Bed Frame's own Wood requirement (55/unit)
+    # is untouched by this edit and folds into the same total.
+    expected_required = (
+        chair_quantity * Decimal("20")
+        + bed_frame_quantity * Decimal("55")
+    )
+
+    assert Decimal(wood_usage["required_quantity"]) == expected_required
+
+
+def test_create_duplicate_resource_requirement_is_still_rejected(
+    client,
+    test_products,
+    test_resources,
+    test_product_resource_requirements,
+):
+    chair = next(
+        product for product in test_products
+        if product.name == "Test Chair"
+    )
+    wood = next(
+        resource for resource in test_resources
+        if resource.name == "Test Wood"
+    )
+
+    response = client.post(
+        f"/api/products/{chair.id}/resources",
+        json={"resource_id": wood.id, "quantity_required": 10},
+    )
+
+    assert response.status_code == 400
+    assert "already exists" in response.json()["detail"].lower()
+
+
+def test_create_resource_requirement_for_missing_resource_is_still_rejected(
+    client,
+    test_products,
+):
+    chair = next(
+        product for product in test_products
+        if product.name == "Test Chair"
+    )
+
+    response = client.post(
+        f"/api/products/{chair.id}/resources",
+        json={"resource_id": 999999, "quantity_required": 10},
+    )
+
+    assert response.status_code == 400
+    assert "resource not found" in response.json()["detail"].lower()
+
+
+def test_create_resource_requirement_for_missing_product_is_still_rejected(
+    client,
+    test_resources,
+):
+    wood = next(
+        resource for resource in test_resources
+        if resource.name == "Test Wood"
+    )
+
+    response = client.post(
+        "/api/products/999999/resources",
+        json={"resource_id": wood.id, "quantity_required": 10},
+    )
+
+    assert response.status_code == 400
+    assert "product not found" in response.json()["detail"].lower()
+
+
+def test_update_resource_requirement_still_rejects_a_non_positive_quantity(
+    client,
+    test_products,
+    test_resources,
+    test_product_resource_requirements,
+):
+    chair = next(
+        product for product in test_products
+        if product.name == "Test Chair"
+    )
+    wood = next(
+        resource for resource in test_resources
+        if resource.name == "Test Wood"
+    )
+
+    response = client.patch(
+        f"/api/products/{chair.id}/resources/{wood.id}",
+        json={"quantity_required": 0},
+    )
+
+    assert response.status_code == 422
