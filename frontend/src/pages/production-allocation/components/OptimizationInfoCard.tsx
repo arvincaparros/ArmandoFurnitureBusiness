@@ -11,6 +11,11 @@ interface OptimizationInfoCardProps {
   summary: OptimizationSummary | null
 }
 
+const PLANNING_MODE_LABELS: Record<string, string> = {
+  demand_based: 'Demand-Based',
+  resource_based: 'Resource-Based',
+}
+
 const OptimizationInfoCard = ({
   summary,
 }: OptimizationInfoCardProps) => {
@@ -25,6 +30,15 @@ const OptimizationInfoCard = ({
       </Text>
 
       <Stack gap="sm">
+        <Group justify="space-between">
+          <Text c="dimmed">Mode</Text>
+          <Text>
+            {summary?.planningMode
+              ? PLANNING_MODE_LABELS[summary.planningMode]
+              : '—'}
+          </Text>
+        </Group>
+
         <Group justify="space-between">
           <Text c="dimmed">Start</Text>
           <Text>{summary?.startTime ?? '—'}</Text>

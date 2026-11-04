@@ -129,6 +129,7 @@ export function fromOptimizeResponse(
       startTime: timing.startedAt.toLocaleTimeString(),
       endTime: timing.completedAt.toLocaleTimeString(),
       duration: `${durationMs} ms`,
+      planningMode: data.planning_mode,
     },
   }
 }
@@ -204,6 +205,9 @@ export function fromHistoryRun(
         run.duration_ms === null
           ? '—'
           : `${run.duration_ms} ms`,
+      // Not tracked in OptimizationHistoryResponse at all - the mode
+      // that produced a persisted run is never recoverable.
+      planningMode: null,
     },
   }
 }

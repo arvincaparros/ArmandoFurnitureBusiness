@@ -21,6 +21,7 @@ import ProductionPlanTable from './components/ProductionPlanTable'
 import SummaryCards from './components/SummaryCards'
 import OptimizationInfoCard from './components/OptimizationInfoCard'
 import ApplyConfirmModal from './components/ApplyConfirmModal'
+import GenerateModeModal from './components/GenerateModeModal'
 
 import { getApiErrorMessage } from '../../api/apiError'
 import { notify } from '../../utils/notify'
@@ -37,6 +38,9 @@ const ProductionAllocationPage = () => {
     generatePlan,
     isGenerating,
     generateError,
+
+    planningMode,
+    setPlanningMode,
 
     currentAllocation,
     isAllocationLoading,
@@ -56,6 +60,7 @@ const ProductionAllocationPage = () => {
   } = useProductionAllocation()
 
   const [applyModalOpened, setApplyModalOpened] = useState(false)
+  const [generateModalOpened, setGenerateModalOpened] = useState(false)
 
   // Adaptive minimum demand (v2 plan): a nonzero shortfall on a
   // freshly-generated preview row means the optimizer had to deviate
@@ -85,9 +90,7 @@ const ProductionAllocationPage = () => {
 
       <Group>
         <GeneratePlanButton
-          onGenerate={() => {
-            void generatePlan()
-          }}
+          onGenerate={() => setGenerateModalOpened(true)}
           loading={isGenerating}
           disabled={!hasCycle || isGenerating}
         />
@@ -278,6 +281,17 @@ const ProductionAllocationPage = () => {
         cycleProducedTotal={cycleProducedTotal}
         onClose={() => setApplyModalOpened(false)}
         onConfirm={handleConfirmApply}
+      />
+
+      <GenerateModeModal
+        opened={generateModalOpened}
+        selectedMode={planningMode}
+        onSelectMode={setPlanningMode}
+        onCancel={() => setGenerateModalOpened(false)}
+        onContinue={() => {
+          setGenerateModalOpened(false)
+          void generatePlan()
+        }}
       />
     </>
   )

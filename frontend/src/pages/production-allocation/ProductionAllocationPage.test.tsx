@@ -1,4 +1,4 @@
-import { render, screen, waitFor } from '@testing-library/react'
+import { render, screen, waitFor, within } from '@testing-library/react'
 import { MantineProvider } from '@mantine/core'
 import { Notifications } from '@mantine/notifications'
 import { QueryClient, QueryClientProvider } from '@tanstack/react-query'
@@ -11,6 +11,7 @@ import {
   fetchFeasibility,
   fetchOptimizationHistory,
   fetchProductionApplications,
+  runOptimization,
 } from './api/productionApi'
 
 vi.mock('../../hooks/useLatestProductionCycle', () => ({
@@ -146,6 +147,217 @@ describe('ProductionAllocationPage additive apply', () => {
     ).not.toBeInTheDocument()
   })
 
+})
+
+const openGenerateModal = async () => {
+  await userEvent.click(
+    screen.getByRole('button', {
+      name: /generate optimal production plan/i,
+    }),
+  )
+
+  expect(
+    await screen.findByRole('heading', {
+      name: 'Generate Production Plan',
+    }),
+  ).toBeInTheDocument()
+}
+
+describe('ProductionAllocationPage generate mode modal', () => {
+  it('opens the modal instead of generating immediately, with Resource-Based selected by default', async () => {
+    renderPage()
+
+    expect(runOptimization).not.toHaveBeenCalled()
+
+    await openGenerateModal()
+
+    expect(
+      screen.getByRole('radio', { name: /resource-based optimization/i }),
+    ).toBeChecked()
+
+    expect(
+      screen.getByRole('radio', { name: /demand-based optimization/i }),
+    ).not.toBeChecked()
+
+    // Opening the modal alone must never fire a request.
+    expect(runOptimization).not.toHaveBeenCalled()
+  })
+
+  it('switches the checked option when Demand-Based is selected', async () => {
+    renderPage()
+
+    await openGenerateModal()
+
+    await userEvent.click(
+      screen.getByRole('radio', { name: /demand-based optimization/i }),
+    )
+
+    expect(
+      screen.getByRole('radio', { name: /demand-based optimization/i }),
+    ).toBeChecked()
+
+    expect(
+      screen.getByRole('radio', { name: /resource-based optimization/i }),
+    ).not.toBeChecked()
+  })
+
+  it('Cancel closes the modal without calling the API', async () => {
+    renderPage()
+
+    await openGenerateModal()
+
+    await userEvent.click(
+      screen.getByRole('radio', { name: /demand-based optimization/i }),
+    )
+
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Cancel' }),
+    )
+
+    await waitFor(() => {
+      expect(
+        screen.queryByRole('heading', {
+          name: 'Generate Production Plan',
+        }),
+      ).not.toBeInTheDocument()
+    })
+
+    expect(runOptimization).not.toHaveBeenCalled()
+  })
+
+  it('preserves the selected mode the next time the modal is reopened', async () => {
+    renderPage()
+
+    await openGenerateModal()
+
+    // Switch away from the Resource-Based default so this test
+    // actually proves the choice survives a reopen, not just that
+    // the default keeps showing up.
+    await userEvent.click(
+      screen.getByRole('radio', { name: /demand-based optimization/i }),
+    )
+
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Cancel' }),
+    )
+
+    await waitFor(() => {
+      expect(
+        screen.queryByRole('heading', {
+          name: 'Generate Production Plan',
+        }),
+      ).not.toBeInTheDocument()
+    })
+
+    await openGenerateModal()
+
+    expect(
+      screen.getByRole('radio', { name: /demand-based optimization/i }),
+    ).toBeChecked()
+  })
+
+  it('Continue sends the default Resource-Based mode, closes the modal, and shows it in the result', async () => {
+    vi.mocked(runOptimization).mockResolvedValueOnce({
+      cycle_id: 1,
+      status: 'OPTIMAL',
+      objective: 'MAX_PROFIT',
+      planning_mode: 'resource_based',
+      total_revenue: '1000',
+      total_cost: '500',
+      total_profit: '500',
+      allocations: [],
+    })
+
+    renderPage()
+
+    await openGenerateModal()
+
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Continue' }),
+    )
+
+    await waitFor(() => {
+      expect(
+        screen.queryByRole('heading', {
+          name: 'Generate Production Plan',
+        }),
+      ).not.toBeInTheDocument()
+    })
+
+    expect(runOptimization).toHaveBeenCalledTimes(1)
+    expect(runOptimization).toHaveBeenCalledWith(1, 'resource_based')
+
+    const modeRow = (await screen.findByText('Mode')).closest('div')
+
+    expect(
+      within(modeRow!).getByText('Resource-Based'),
+    ).toBeInTheDocument()
+  })
+
+  it('Continue sends Demand-Based once selected, and shows it in the result', async () => {
+    vi.mocked(runOptimization).mockResolvedValueOnce({
+      cycle_id: 1,
+      status: 'OPTIMAL',
+      objective: 'MAX_PROFIT',
+      planning_mode: 'demand_based',
+      total_revenue: '1000',
+      total_cost: '500',
+      total_profit: '500',
+      allocations: [],
+    })
+
+    renderPage()
+
+    await openGenerateModal()
+
+    await userEvent.click(
+      screen.getByRole('radio', { name: /demand-based optimization/i }),
+    )
+
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Continue' }),
+    )
+
+    await waitFor(() => {
+      expect(runOptimization).toHaveBeenCalledWith(1, 'demand_based')
+    })
+
+    const modeRow = (await screen.findByText('Mode')).closest('div')
+
+    expect(
+      within(modeRow!).getByText('Demand-Based'),
+    ).toBeInTheDocument()
+  })
+
+  it('never fires more than one request even if Continue is clicked repeatedly', async () => {
+    vi.mocked(runOptimization).mockResolvedValueOnce({
+      cycle_id: 1,
+      status: 'OPTIMAL',
+      objective: 'MAX_PROFIT',
+      planning_mode: 'resource_based',
+      total_revenue: '1000',
+      total_cost: '500',
+      total_profit: '500',
+      allocations: [],
+    })
+
+    renderPage()
+
+    await openGenerateModal()
+
+    const continueButton = screen.getByRole('button', { name: 'Continue' })
+
+    await userEvent.click(continueButton)
+    await userEvent.click(continueButton)
+    await userEvent.click(continueButton)
+
+    await waitFor(() => {
+      expect(runOptimization).toHaveBeenCalledTimes(1)
+    })
+  })
+})
+
+describe('ProductionAllocationPage already-applied plan', () => {
   it('explains why Apply is unavailable for an already-applied plan', async () => {
     vi.mocked(fetchOptimizationHistory).mockResolvedValueOnce([
       {

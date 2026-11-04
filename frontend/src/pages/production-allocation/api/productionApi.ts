@@ -3,6 +3,7 @@ import apiClient from '../../../api/client'
 import type {
   OptimizationHistoryResponse,
   OptimizationResponse,
+  PlanningMode,
   ProductionAllocationResponse,
   ProductionApplicationResponse,
   ProductionFeasibilityResponse,
@@ -40,10 +41,11 @@ export async function fetchOptimizationHistory(
 
 export async function runOptimization(
   cycleId: number,
+  planningMode: PlanningMode = 'resource_based',
 ): Promise<OptimizationResponse> {
   const response = await apiClient.post<OptimizationResponse>(
     `/api/production-cycles/${cycleId}/optimize`,
-    { objective: 'MAX_PROFIT' },
+    { objective: 'MAX_PROFIT', planning_mode: planningMode },
   )
 
   return response.data
