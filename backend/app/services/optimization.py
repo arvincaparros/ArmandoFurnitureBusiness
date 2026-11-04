@@ -28,6 +28,7 @@ from app.services.production_calculation import (
 )
 from app.services.resource_utilization import (
     calculate_resource_utilization,
+    classify_utilization_status,
 )
 from app.services.resource_utilization_history import (
     save_resource_utilization_history,
@@ -2139,6 +2140,30 @@ def calculate_optimized_resource_usage(
             - required_quantity
         )
 
+        # Derived from the same available_quantity/remaining_quantity
+        # this function already computed above - not a second,
+        # independent calculation - so utilization_rate >= 100 stays
+        # exactly equivalent to remaining_quantity <= 0, matching
+        # classify_utilization_status's own documented invariant
+        # (resource_utilization.py). available_quantity - remaining
+        # == consumed_quantity + required_quantity, i.e. this is
+        # "how full would this resource be if THIS plan were applied
+        # on top of what's already been applied this cycle" - the
+        # same applicable-availability basis as remaining_quantity
+        # itself, never a figure that resets to 0 or re-accumulates
+        # across separate Generate calls (each call recomputes this
+        # fresh from its own `allocations` argument alone).
+        if available_quantity > 0:
+            utilization_rate = (
+                (available_quantity - remaining_quantity)
+                / available_quantity
+                * Decimal("100")
+            ).quantize(Decimal("0.01"))
+        else:
+            utilization_rate = Decimal("0.00")
+
+        status = classify_utilization_status(utilization_rate)
+
         usage.append(
             {
                 "resource_id": resource_id,
@@ -2151,6 +2176,8 @@ def calculate_optimized_resource_usage(
                 "available_quantity": available_quantity,
                 "consumed_quantity": consumed_quantity,
                 "remaining_quantity": remaining_quantity,
+                "utilization_rate": utilization_rate,
+                "status": status,
             }
         )
 

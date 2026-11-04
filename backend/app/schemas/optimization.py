@@ -60,6 +60,16 @@ class OptimizationResourceUsage(BaseModel):
     # required_quantity.
     consumed_quantity: Decimal
     remaining_quantity: Decimal
+    # Derived from remaining_quantity/available_quantity (see
+    # calculate_optimized_resource_usage's own note) - >= 100 is
+    # exactly equivalent to remaining_quantity <= 0, and status is
+    # classify_utilization_status(utilization_rate)
+    # (resource_utilization.py) - the same four-tier classification
+    # the Resource Utilization Reports page uses, applied here to
+    # THIS Generate call's own proposed usage instead of the applied
+    # ledger.
+    utilization_rate: Decimal
+    status: str
 
 
 class OptimizationBottleneck(BaseModel):

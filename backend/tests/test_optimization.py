@@ -16,6 +16,8 @@ from app.database.models import (
     CycleResource,
     ProductionAllocation,
     ProductionApplication,
+    ProductionApplicationItem,
+    ProductionApplicationResourceItem,
     ProductionCycle,
     OptimizationResult,
     OptimizationRun,
@@ -543,6 +545,309 @@ def test_optimization_bottleneck(db, optimization_cycle, test_resources):
     assert bottleneck["resource_name"] == "Test Labor"
     assert bottleneck["is_binding"] is True
     assert bottleneck["remaining_quantity"] == Decimal("0.0000")
+
+def test_optimized_resource_usage_reports_utilization_and_status(
+    db, optimization_cycle, test_resources,
+):
+    """
+    Regression test for the Resource Utilization Summary "Consumed
+    accumulates" bug: utilization_rate/status are new, additive
+    fields on calculate_optimized_resource_usage's own output,
+    derived from the SAME remaining_quantity this function always
+    computed (not a second, independent figure) - so a resource at
+    its true bottleneck (remaining == 0) must report exactly 100%
+    utilization and status "bottleneck", matching
+    classify_utilization_status's own documented invariant.
+    """
+
+    data = get_test_data(db, optimization_cycle)
+
+    result = solve_optimization(
+        optimization_cycle.id,
+        data["products"],
+        data["cycle_resources"],
+        data["requirements"],
+    )
+
+    usage = calculate_optimized_resource_usage(
+        result["allocations"],
+        data["cycle_resources"],
+        data["requirements"],
+    )
+
+    labor_resource = next(
+        resource
+        for resource in test_resources
+        if resource.name == "Test Labor"
+    )
+
+    labor = next(
+        item for item in usage
+        if item["resource_id"] == labor_resource.id
+    )
+
+    assert labor["required_quantity"] == Decimal("576.0000")
+    assert labor["remaining_quantity"] == Decimal("0.0000")
+    assert labor["utilization_rate"] == Decimal("100.00")
+    assert labor["status"] == "bottleneck"
+
+def test_optimized_resource_usage_does_not_accumulate_across_calls(
+    db, optimization_cycle, test_resources,
+):
+    """
+    Core regression test for the reported bug: each call to
+    calculate_optimized_resource_usage must compute required_quantity
+    from ONLY the `allocations` it was given this call - a second
+    call with a different (here: larger) quantity must show exactly
+    that call's own figure, never the first call's figure added to
+    the second's.
+    """
+
+    data = get_test_data(db, optimization_cycle)
+
+    chair = next(
+        product for product in data["products"]
+        if product.name == "Test Chair"
+    )
+
+    wood_resource = next(
+        resource for resource in test_resources
+        if resource.name == "Test Wood"
+    )
+
+    # Optimization 1: 5 chairs.
+    usage_1 = calculate_optimized_resource_usage(
+        [{"product_id": chair.id, "quantity": 5}],
+        data["cycle_resources"],
+        data["requirements"],
+    )
+
+    wood_1 = next(
+        item for item in usage_1
+        if item["resource_id"] == wood_resource.id
+    )
+
+    assert wood_1["required_quantity"] == Decimal("60.0000")  # 5 * 12
+
+    # Optimization 2: 10 chairs - a completely independent call, not
+    # a continuation of Optimization 1.
+    usage_2 = calculate_optimized_resource_usage(
+        [{"product_id": chair.id, "quantity": 10}],
+        data["cycle_resources"],
+        data["requirements"],
+    )
+
+    wood_2 = next(
+        item for item in usage_2
+        if item["resource_id"] == wood_resource.id
+    )
+
+    # Must be exactly 10 * 12 = 120 - NOT 60 + 120 = 180 (the
+    # accumulation bug this test guards against).
+    assert wood_2["required_quantity"] == Decimal("120.0000")
+
+def test_optimize_production_api_resource_usage_replaces_not_accumulates(
+    client, db, optimization_cycle, test_products,
+):
+    """
+    End-to-end version of the same guarantee, through the real
+    POST /optimize endpoint twice in a row with nothing else changed:
+    the second response's resource_usage must be IDENTICAL to the
+    first's, never doubled.
+    """
+
+    first_response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize",
+        json={"objective": "MAX_PROFIT"},
+    )
+
+    assert first_response.status_code == 200
+
+    second_response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize",
+        json={"objective": "MAX_PROFIT"},
+    )
+
+    assert second_response.status_code == 200
+
+    first_usage = {
+        item["resource_id"]: item
+        for item in first_response.json()["resource_usage"]
+    }
+    second_usage = {
+        item["resource_id"]: item
+        for item in second_response.json()["resource_usage"]
+    }
+
+    assert first_usage.keys() == second_usage.keys()
+
+    for resource_id, first_item in first_usage.items():
+        second_item = second_usage[resource_id]
+
+        assert (
+            second_item["required_quantity"]
+            == first_item["required_quantity"]
+        )
+        assert (
+            second_item["utilization_rate"]
+            == first_item["utilization_rate"]
+        )
+        assert second_item["status"] == first_item["status"]
+
+def test_generate_does_not_mutate_actual_resource_availability(
+    client, db, optimization_cycle,
+):
+    """
+    Generate (/optimize) must never write to CycleResource - it is a
+    stateless preview. Captures available_quantity for every resource
+    in this cycle before, generates twice, and confirms every value
+    is byte-identical afterward.
+    """
+
+    before = {
+        cycle_resource.resource_id: cycle_resource.available_quantity
+        for cycle_resource in db.query(CycleResource).filter(
+            CycleResource.production_cycle_id == optimization_cycle.id
+        ).all()
+    }
+
+    for _ in range(2):
+        response = client.post(
+            f"/api/production-cycles/{optimization_cycle.id}/optimize",
+            json={"objective": "MAX_PROFIT"},
+        )
+        assert response.status_code == 200
+
+    db.expire_all()
+
+    after = {
+        cycle_resource.resource_id: cycle_resource.available_quantity
+        for cycle_resource in db.query(CycleResource).filter(
+            CycleResource.production_cycle_id == optimization_cycle.id
+        ).all()
+    }
+
+    assert after == before
+
+def test_apply_still_records_actual_resource_consumption(
+    client, db, optimization_cycle, test_resources,
+):
+    """
+    Confirms Apply's own ledger-writing (save_production_application,
+    called from apply_optimization) is unaffected by the
+    calculate_optimized_resource_usage change above: the real
+    ProductionApplicationResourceItem rows it writes must still match
+    the generated plan's actual BOM-derived consumption.
+    """
+
+    optimize_response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize",
+        json={"objective": "MAX_PROFIT"},
+    )
+    assert optimize_response.status_code == 200
+
+    apply_response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize/apply",
+    )
+    assert apply_response.status_code == 200
+
+    labor_resource = next(
+        resource for resource in test_resources
+        if resource.name == "Test Labor"
+    )
+
+    application = db.query(ProductionApplication).filter(
+        ProductionApplication.production_cycle_id
+        == optimization_cycle.id
+    ).order_by(ProductionApplication.id.desc()).first()
+
+    assert application is not None
+
+    labor_item = db.query(ProductionApplicationResourceItem).filter(
+        ProductionApplicationResourceItem.production_application_id
+        == application.id,
+        ProductionApplicationResourceItem.resource_id
+        == labor_resource.id,
+    ).first()
+
+    assert labor_item is not None
+    assert labor_item.consumed_quantity == Decimal("576.0000")
+
+def test_generate_after_apply_does_not_touch_previous_applied_records(
+    client, db, optimization_cycle,
+):
+    """
+    A second Generate (no Apply) after an existing Apply must not
+    delete or modify the ledger/allocation rows that first Apply
+    already wrote - Generate only ever reads, via get_optimization_data/
+    get_cycle_consumed_by_resource, never writes.
+    """
+
+    first_optimize = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize",
+        json={"objective": "MAX_PROFIT"},
+    )
+    assert first_optimize.status_code == 200
+
+    apply_response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize/apply",
+    )
+    assert apply_response.status_code == 200
+
+    db.expire_all()
+
+    applications_before = [
+        (application.id, application.application_number, [
+            (item.product_id, item.quantity_produced)
+            for item in application.product_items
+        ])
+        for application in db.query(ProductionApplication).filter(
+            ProductionApplication.production_cycle_id
+            == optimization_cycle.id
+        ).all()
+    ]
+
+    allocations_before = [
+        (allocation.id, allocation.product_id, allocation.quantity)
+        for allocation in db.query(ProductionAllocation).filter(
+            ProductionAllocation.production_cycle_id
+            == optimization_cycle.id
+        ).all()
+    ]
+
+    assert applications_before
+    assert allocations_before
+
+    # A second Generate - deliberately NOT applied.
+    second_optimize = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize",
+        json={"objective": "MAX_PROFIT"},
+    )
+    assert second_optimize.status_code == 200
+
+    db.expire_all()
+
+    applications_after = [
+        (application.id, application.application_number, [
+            (item.product_id, item.quantity_produced)
+            for item in application.product_items
+        ])
+        for application in db.query(ProductionApplication).filter(
+            ProductionApplication.production_cycle_id
+            == optimization_cycle.id
+        ).all()
+    ]
+
+    allocations_after = [
+        (allocation.id, allocation.product_id, allocation.quantity)
+        for allocation in db.query(ProductionAllocation).filter(
+            ProductionAllocation.production_cycle_id
+            == optimization_cycle.id
+        ).all()
+    ]
+
+    assert applications_after == applications_before
+    assert allocations_after == allocations_before
 
 def test_optimize_production_api(client, optimization_cycle):
     response = client.post(

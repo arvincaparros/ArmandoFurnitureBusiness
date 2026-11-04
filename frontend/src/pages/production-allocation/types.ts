@@ -29,6 +29,21 @@ export interface ProductionPlan {
   shortfall: number | null
 }
 
+// One row of the Resource Utilization Summary preview card - THIS
+// Generate result's own proposed usage, never blended with an
+// earlier Generate's figures. See productionAdapter.ts::
+// fromOptimizeResponse and productionTypes.ts::
+// OptimizationResourceUsage's own notes.
+export interface ResourceUtilizationRow {
+  resourceId: number
+  resourceName: string
+  unit: string
+  consumed: number
+  remaining: number
+  utilizationRate: number
+  status: string
+}
+
 export interface OptimizationSummary {
   totalRevenue: number
   totalCost: number
@@ -42,4 +57,12 @@ export interface OptimizationSummary {
   // for a persisted/history-sourced result, since planning_mode is
   // not persisted on the backend - see productionTypes.ts's own note.
   planningMode: PlanningMode | null
+
+  // Set only on a fresh Generate result - [] for a persisted/
+  // history-sourced result, since resource_usage is computed
+  // transiently at Generate time and never persisted (same reason
+  // planningMode is null there). An empty array means "no fresh
+  // preview available this session," not "this plan consumes
+  // nothing."
+  resourceUsage: ResourceUtilizationRow[]
 }

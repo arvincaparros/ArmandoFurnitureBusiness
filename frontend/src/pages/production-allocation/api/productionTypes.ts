@@ -29,6 +29,28 @@ export interface OptimizationAllocation {
   shortfall: string
 }
 
+// backend/app/schemas/optimization.py::OptimizationResourceUsage -
+// THIS call's own proposed resource usage, computed fresh every
+// POST /optimize from THAT call's allocations alone (never blended
+// with an earlier Generate's figures - see
+// calculate_optimized_resource_usage's own note). required_quantity
+// is what this plan alone would need; consumed_quantity is what
+// earlier *applied* production this cycle has already used;
+// remaining_quantity/utilization_rate/status account for both
+// together (the applicable remaining capacity if this plan were
+// applied on top of that history).
+export interface OptimizationResourceUsage {
+  resource_id: number
+  resource_name: string
+  unit: string
+  required_quantity: string
+  available_quantity: string
+  consumed_quantity: string
+  remaining_quantity: string
+  utilization_rate: string
+  status: string
+}
+
 export interface OptimizationResponse {
   cycle_id: number
   status: string
@@ -41,6 +63,7 @@ export interface OptimizationResponse {
   total_cost: string
   total_profit: string
   allocations: OptimizationAllocation[]
+  resource_usage: OptimizationResourceUsage[]
 }
 
 // GET /api/optimization/history response shape - a persisted run.
