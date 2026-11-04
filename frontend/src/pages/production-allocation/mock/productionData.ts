@@ -57,4 +57,5 @@ export const optimizationSummary: OptimizationSummary =
     duration: '808 ms',
 
     planningMode: null,
+    resourceUsage: [],
   }

@@ -22,6 +22,7 @@ import SummaryCards from './components/SummaryCards'
 import OptimizationInfoCard from './components/OptimizationInfoCard'
 import ApplyConfirmModal from './components/ApplyConfirmModal'
 import GenerateModeModal from './components/GenerateModeModal'
+import ResourceUtilizationSummaryCard from './components/ResourceUtilizationSummaryCard'
 
 import { getApiErrorMessage } from '../../api/apiError'
 import { notify } from '../../utils/notify'
@@ -196,6 +197,16 @@ const ProductionAllocationPage = () => {
           </Stack>
         </Grid.Col>
       </Grid>
+
+      {(summary?.resourceUsage.length ?? 0) > 0 && (
+        <Grid mt="md">
+          <Grid.Col span={12}>
+            <ResourceUtilizationSummaryCard
+              resourceUsage={summary?.resourceUsage ?? []}
+            />
+          </Grid.Col>
+        </Grid>
+      )}
 
       {isCurrentPlanApplied && (
         <Alert

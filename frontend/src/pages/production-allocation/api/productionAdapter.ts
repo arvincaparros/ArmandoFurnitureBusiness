@@ -1,5 +1,6 @@
 import type {
   OptimizationHistoryResponse,
+  OptimizationResourceUsage,
   OptimizationResponse,
   ProductionAllocationResponse,
   ProductSummary,
@@ -8,6 +9,7 @@ import type {
 import type {
   OptimizationSummary,
   ProductionPlan,
+  ResourceUtilizationRow,
 } from '../types'
 
 function parseDecimal(value: string | null | undefined): number {
@@ -37,6 +39,31 @@ function parseNullableDecimal(
 
 function formatTime(iso: string): string {
   return new Date(iso).toLocaleTimeString()
+}
+
+// Straight field-by-field mapping from the backend's
+// OptimizationResourceUsage (already computed fresh, per-call, never
+// accumulated - see calculate_optimized_resource_usage's own note) -
+// "Consumed" here is required_quantity (THIS plan's own proposed
+// usage), deliberately NOT consumed_quantity (what earlier *applied*
+// production already used), so this card never shows a number that
+// grows across repeated Generates. Remaining/utilization/status stay
+// on the applicable-availability basis the backend already computed
+// (accounting for that earlier applied consumption too), so Status
+// still correctly warns when this plan would exceed what's truly
+// left.
+function toResourceUtilizationRows(
+  resourceUsage: OptimizationResourceUsage[],
+): ResourceUtilizationRow[] {
+  return resourceUsage.map((item) => ({
+    resourceId: item.resource_id,
+    resourceName: item.resource_name,
+    unit: item.unit,
+    consumed: parseDecimal(item.required_quantity),
+    remaining: parseDecimal(item.remaining_quantity),
+    utilizationRate: parseDecimal(item.utilization_rate),
+    status: item.status,
+  }))
 }
 
 // /api/optimization/history is ordered newest-first (verified in
@@ -130,6 +157,7 @@ export function fromOptimizeResponse(
       endTime: timing.completedAt.toLocaleTimeString(),
       duration: `${durationMs} ms`,
       planningMode: data.planning_mode,
+      resourceUsage: toResourceUtilizationRows(data.resource_usage),
     },
   }
 }
@@ -208,6 +236,10 @@ export function fromHistoryRun(
       // Not tracked in OptimizationHistoryResponse at all - the mode
       // that produced a persisted run is never recoverable.
       planningMode: null,
+      // Same reason - resource_usage is computed transiently at
+      // Generate time and never persisted, so a page reload (which
+      // reads this history endpoint) has no fresh preview to show.
+      resourceUsage: [],
     },
   }
 }

@@ -266,6 +266,7 @@ describe('ProductionAllocationPage generate mode modal', () => {
       total_cost: '500',
       total_profit: '500',
       allocations: [],
+      resource_usage: [],
     })
 
     renderPage()
@@ -304,6 +305,7 @@ describe('ProductionAllocationPage generate mode modal', () => {
       total_cost: '500',
       total_profit: '500',
       allocations: [],
+      resource_usage: [],
     })
 
     renderPage()
@@ -339,6 +341,7 @@ describe('ProductionAllocationPage generate mode modal', () => {
       total_cost: '500',
       total_profit: '500',
       allocations: [],
+      resource_usage: [],
     })
 
     renderPage()
@@ -395,4 +398,73 @@ describe('ProductionAllocationPage already-applied plan', () => {
       await screen.findByText(/already been applied/i),
     ).toBeInTheDocument()
   })
+})
+
+function makeResourceUsage(woodConsumed: string) {
+  return [
+    {
+      resource_id: 1,
+      resource_name: 'Wood',
+      unit: 'board ft',
+      required_quantity: woodConsumed,
+      available_quantity: '1000.0000',
+      consumed_quantity: '0.0000',
+      remaining_quantity: String(1000 - Number(woodConsumed)),
+      utilization_rate:
+        ((Number(woodConsumed) / 1000) * 100).toFixed(2),
+      status:
+        Number(woodConsumed) / 1000 >= 1 ? 'bottleneck' : 'normal',
+    },
+  ]
+}
+
+describe('ProductionAllocationPage resource utilization summary', () => {
+  it('is absent before any Generate this session', async () => {
+    renderPage()
+
+    await waitFor(() => {
+      expect(screen.getByText('Production Allocation')).toBeInTheDocument()
+    })
+
+    expect(
+      screen.queryByText('Resource Utilization Summary'),
+    ).not.toBeInTheDocument()
+  })
+
+  it('shows the fresh result after Generate, scoped to this plan only', async () => {
+    vi.mocked(runOptimization).mockResolvedValueOnce({
+      cycle_id: 1,
+      status: 'OPTIMAL',
+      objective: 'MAX_PROFIT',
+      planning_mode: 'resource_based',
+      total_revenue: '1000',
+      total_cost: '500',
+      total_profit: '500',
+      allocations: [],
+      resource_usage: makeResourceUsage('400.0000'),
+    })
+
+    renderPage()
+
+    await openGenerateModal()
+
+    await userEvent.click(
+      screen.getByRole('button', { name: 'Continue' }),
+    )
+
+    expect(
+      await screen.findByText('Resource Utilization Summary'),
+    ).toBeInTheDocument()
+
+    expect(screen.getByText('400 board ft')).toBeInTheDocument()
+    expect(screen.getByText('600 board ft')).toBeInTheDocument()
+    expect(screen.getByText('40.0%')).toBeInTheDocument()
+  })
+
+  // "Replaces the previous result, never accumulates across repeated
+  // Generates" is covered at the adapter level instead of here -
+  // see productionAdapter.test.ts's "fromOptimizeResponse resource
+  // utilization" suite, which asserts this deterministically without
+  // depending on a second real modal open/close animation cycle in
+  // jsdom within the same test.
 })
