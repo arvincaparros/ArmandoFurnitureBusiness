@@ -264,6 +264,90 @@ def get_cycle_consumed_by_resource_since_update(
     return totals
 
 
+def get_latest_application_consumed_by_resource(
+    db: Session,
+    cycle_id: int,
+) -> dict[int, Decimal]:
+    """
+    resource_id -> consumed_quantity recorded by ONLY the single most
+    recently applied ProductionApplication for this cycle - never
+    summed with any earlier application, even one applied the same
+    day. This is the Resource Utilization Report's consumption source
+    (see resource_utilization.py's two GET handlers): Generate
+    Allocation #1 -> Apply -> the report shows #1's consumption;
+    Generate Allocation #2 -> Apply -> the report REPLACES it with
+    #2's consumption alone, never #1 + #2.
+
+    Ordered by (applied_at DESC, id DESC) - the same reliable
+    tiebreak get_applications() already uses elsewhere in this file.
+    id is a strictly monotonic auto-increment primary key, so two
+    applications that land on an identical applied_at timestamp
+    (repeated Generate/Apply within the same day, even the same
+    second) still resolve to exactly one unambiguous "latest" row.
+
+    Returns {} when this cycle has no ProductionApplication at all -
+    the caller distinguishes that ("no ledger to scope, fall back to
+    the pre-ledger allocation-derived report") from "a latest
+    application exists but recorded zero consumption" via
+    get_cycle_consumed_by_resource's own non-empty check, exactly as
+    the previous get_cycle_consumed_by_resource_since_update-based
+    design did.
+
+    Every row in production_applications already represents a
+    SUCCESSFUL apply by construction: apply_optimization() raises and
+    rolls back before writing anything on any failure (duplicate run,
+    non-OPTIMAL status, no results, etc. - see its own guards above
+    save_production_application's call site), so there is no "failed
+    application" row for this function to additionally filter out -
+    the latest row here is always the latest SUCCESSFUL one.
+
+    Never deletes or mutates any ProductionApplication/…Item/
+    …ResourceItem row - every earlier application stays fully intact
+    and queryable via get_cycle_consumed_by_resource or
+    get_applications regardless of how many times Apply has run
+    since; only THIS report's consumption figure is scoped to the
+    latest one.
+    """
+
+    latest_application_id = db.scalar(
+        select(ProductionApplication.id)
+        .where(
+            ProductionApplication.production_cycle_id == cycle_id
+        )
+        .order_by(
+            ProductionApplication.applied_at.desc(),
+            ProductionApplication.id.desc(),
+        )
+        .limit(1)
+    )
+
+    if latest_application_id is None:
+        return {}
+
+    rows = db.execute(
+        select(
+            ProductionApplicationResourceItem.resource_id,
+            func.sum(
+                ProductionApplicationResourceItem.consumed_quantity
+            ),
+        )
+        .where(
+            ProductionApplicationResourceItem
+            .production_application_id == latest_application_id,
+            ProductionApplicationResourceItem.resource_id.isnot(
+                None
+            ),
+        )
+        .group_by(ProductionApplicationResourceItem.resource_id)
+    ).all()
+
+    return {
+        resource_id: total
+        for resource_id, total in rows
+        if total is not None
+    }
+
+
 def get_cycle_produced_by_product(
     db: Session,
     cycle_id: int,
