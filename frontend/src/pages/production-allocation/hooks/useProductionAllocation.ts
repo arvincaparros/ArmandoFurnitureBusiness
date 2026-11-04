@@ -30,6 +30,8 @@ import type {
   ProductionPlan,
 } from '../types'
 
+import type { PlanningMode } from '../api/productionTypes'
+
 const useProductionAllocation = () => {
   const queryClient = useQueryClient()
 
@@ -131,6 +133,12 @@ const useProductionAllocation = () => {
     summary: OptimizationSummary
   } | null>(null)
 
+  // Mode selector state - defaults to Demand-Based (existing
+  // behavior), lives here rather than in the page component so a
+  // future consumer of this hook gets the same default for free.
+  const [planningMode, setPlanningMode] =
+    useState<PlanningMode>('demand_based')
+
   const optimizeMutation = useMutation({
     mutationFn: async () => {
       if (latestCycleId === null) {
@@ -138,7 +146,7 @@ const useProductionAllocation = () => {
       }
 
       const startedAt = new Date()
-      const data = await runOptimization(latestCycleId)
+      const data = await runOptimization(latestCycleId, planningMode)
       const completedAt = new Date()
 
       return fromOptimizeResponse(
@@ -315,6 +323,9 @@ const useProductionAllocation = () => {
     generatePlan: () => optimizeMutation.mutateAsync(),
     isGenerating: optimizeMutation.isPending,
     generateError: optimizeMutation.error,
+
+    planningMode,
+    setPlanningMode,
 
     currentAllocation,
     isAllocationLoading:

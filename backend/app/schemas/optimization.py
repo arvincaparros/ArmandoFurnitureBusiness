@@ -9,8 +9,24 @@ class OptimizationObjective(str, Enum):
     MAX_PROFIT = "MAX_PROFIT"
 
 
+class PlanningMode(str, Enum):
+    # Existing behavior, unchanged: production.py::optimize_production
+    # builds a forecast dict from get_forecast() and passes it to
+    # solve_optimization(), which caps each product at its forecast
+    # ceiling via add_forecast_constraints(). Default so every
+    # existing caller that doesn't send planning_mode at all keeps
+    # today's exact behavior.
+    DEMAND_BASED = "demand_based"
+    # Same solve_optimization() call, same resource/BOM/minimum-demand
+    # constraints - only difference is production.py passes
+    # forecast=None, so add_forecast_constraints() never runs and no
+    # product is capped by sales forecast.
+    RESOURCE_BASED = "resource_based"
+
+
 class OptimizationRequest(BaseModel):
     objective: OptimizationObjective = OptimizationObjective.MAX_PROFIT
+    planning_mode: PlanningMode = PlanningMode.DEMAND_BASED
 
 
 class OptimizationAllocation(BaseModel):
@@ -58,6 +74,13 @@ class OptimizationResponse(BaseModel):
     cycle_id: int
     status: str
     objective: str
+    # Which mode produced THIS result - set by optimize_production from
+    # the request it just handled. None for apply_production_optimization's
+    # response: apply_optimization() only replays an existing
+    # OptimizationRun's already-solved allocations, and planning_mode is
+    # not persisted (see optimize_production's own comment), so Apply has
+    # no mode to report here. Also None for any history-sourced read.
+    planning_mode: str | None = None
     total_revenue: Decimal
     total_cost: Decimal
     total_profit: Decimal

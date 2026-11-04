@@ -1,6 +1,13 @@
 // Mirrors backend/app/schemas/optimization.py,
 // optimization_history.py, and production.py exactly.
 
+// backend/app/schemas/optimization.py::PlanningMode. demand_based
+// (default) keeps the existing forecast-capped behavior;
+// resource_based passes forecast=None to the same solver, skipping
+// only the sales-forecast ceiling - every other constraint (resource
+// availability, BOM, minimum demand) is identical either way.
+export type PlanningMode = 'demand_based' | 'resource_based'
+
 export interface ProductionCycleResponse {
   id: number
   cycle_date: string
@@ -26,6 +33,10 @@ export interface OptimizationResponse {
   cycle_id: number
   status: string
   objective: string
+  // Which mode produced this result - null on an apply response or a
+  // history-sourced read (see the backend schema's own note; mode is
+  // not persisted). Present only on a fresh POST /optimize response.
+  planning_mode: PlanningMode | null
   total_revenue: string
   total_cost: string
   total_profit: string

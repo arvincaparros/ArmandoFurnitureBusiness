@@ -2315,6 +2315,221 @@ def test_optimize_production_respects_forecast(
 
         db.commit()
 
+def _make_forecast_history(test_products):
+    # Same shape/quantities as test_optimize_production_respects_forecast
+    # above - one sale each for Test Chair and Test Bed Frame, both well
+    # below their unconstrained optimum of 12, so a demand_based solve is
+    # provably capped by it and a resource_based solve provably isn't.
+    return [
+        SalesTransaction(
+            transaction_number="TRX-MODE-001",
+            product_id=test_products[1].id,
+            transaction_date=datetime(2026, 8, 9, 10, 0),
+            quantity_produced=Decimal("5.0000"),
+            quantity=Decimal("5.0000"),
+            unit_price=Decimal("3500.00"),
+            total_sales=Decimal("17500.00"),
+            production_cost=Decimal("12755.0000"),
+            unit_profit=Decimal("949.0000"),
+            total_profit=Decimal("4745.0000"),
+        ),
+        SalesTransaction(
+            transaction_number="TRX-MODE-002",
+            product_id=test_products[2].id,
+            transaction_date=datetime(2026, 8, 9, 10, 0),
+            quantity_produced=Decimal("5.0000"),
+            quantity=Decimal("5.0000"),
+            unit_price=Decimal("3500.00"),
+            total_sales=Decimal("17500.00"),
+            production_cost=Decimal("12755.0000"),
+            unit_profit=Decimal("949.0000"),
+            total_profit=Decimal("4745.0000"),
+        ),
+    ]
+
+def test_optimize_defaults_to_demand_based_mode(
+    client,
+    db,
+    optimization_cycle,
+    test_products,
+):
+    # No planning_mode in the request body at all - every existing
+    # caller that predates this feature must keep getting today's
+    # forecast-capped behavior.
+    historical_transactions = _make_forecast_history(test_products)
+    db.add_all(historical_transactions)
+    db.commit()
+
+    try:
+        response = client.post(
+            f"/api/production-cycles/{optimization_cycle.id}/optimize",
+            json={"objective": "MAX_PROFIT"},
+        )
+
+        assert response.status_code == 200
+
+        data = response.json()
+
+        assert data["planning_mode"] == "demand_based"
+
+        allocations = {
+            item["product_id"]: item["quantity"]
+            for item in data["allocations"]
+        }
+
+        assert allocations[test_products[1].id] <= 5
+        assert allocations[test_products[2].id] <= 5
+
+    finally:
+        for transaction in historical_transactions:
+            db.delete(transaction)
+
+        db.commit()
+
+def test_optimize_demand_based_mode_explicit_preserves_forecast_limit(
+    client,
+    db,
+    optimization_cycle,
+    test_products,
+):
+    historical_transactions = _make_forecast_history(test_products)
+    db.add_all(historical_transactions)
+    db.commit()
+
+    try:
+        response = client.post(
+            f"/api/production-cycles/{optimization_cycle.id}/optimize",
+            json={
+                "objective": "MAX_PROFIT",
+                "planning_mode": "demand_based",
+            },
+        )
+
+        assert response.status_code == 200
+
+        data = response.json()
+
+        assert data["planning_mode"] == "demand_based"
+
+        allocations = {
+            item["product_id"]: item["quantity"]
+            for item in data["allocations"]
+        }
+
+        assert allocations[test_products[1].id] <= 5
+        assert allocations[test_products[2].id] <= 5
+
+    finally:
+        for transaction in historical_transactions:
+            db.delete(transaction)
+
+        db.commit()
+
+def test_optimize_resource_based_mode_ignores_forecast_limit(
+    client,
+    db,
+    optimization_cycle,
+    test_products,
+):
+    # Same forecast-constraining sales history as the demand_based
+    # tests above - resource_based must reach the unconstrained
+    # optimum (12 each, same as test_optimize_production_api with no
+    # sales history at all) specifically BECAUSE it skips the forecast
+    # ceiling, not because the ceiling happens not to bind here.
+    historical_transactions = _make_forecast_history(test_products)
+    db.add_all(historical_transactions)
+    db.commit()
+
+    try:
+        response = client.post(
+            f"/api/production-cycles/{optimization_cycle.id}/optimize",
+            json={
+                "objective": "MAX_PROFIT",
+                "planning_mode": "resource_based",
+            },
+        )
+
+        assert response.status_code == 200
+
+        data = response.json()
+
+        assert data["planning_mode"] == "resource_based"
+
+        allocations = {
+            item["product_id"]: item["quantity"]
+            for item in data["allocations"]
+        }
+
+        assert allocations[test_products[1].id] == 12
+        assert allocations[test_products[2].id] == 12
+
+    finally:
+        for transaction in historical_transactions:
+            db.delete(transaction)
+
+        db.commit()
+
+def test_optimize_resource_based_mode_still_respects_zero_resources(
+    client,
+    db,
+    optimization_cycle,
+):
+    # resource_based only skips the forecast ceiling - resource
+    # availability stays a hard constraint either way.
+    db.query(CycleResource).filter(
+        CycleResource.production_cycle_id
+        == optimization_cycle.id
+    ).update(
+        {
+            CycleResource.available_quantity: Decimal("0"),
+        },
+        synchronize_session=False,
+    )
+
+    db.commit()
+
+    response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize",
+        json={
+            "objective": "MAX_PROFIT",
+            "planning_mode": "resource_based",
+        },
+    )
+
+    assert response.status_code == 200
+
+    data = response.json()
+
+    assert data["planning_mode"] == "resource_based"
+
+    for allocation in data["allocations"]:
+        assert allocation["quantity"] == 0
+
+def test_apply_optimization_response_has_no_planning_mode(
+    client, optimization_cycle,
+):
+    # Apply replays an already-solved run and never knows which mode
+    # produced it (not persisted - see OptimizationResponse's own
+    # note), so its response reports planning_mode as null rather than
+    # guessing.
+    optimize_response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize",
+        json={
+            "objective": "MAX_PROFIT",
+            "planning_mode": "resource_based",
+        },
+    )
+
+    assert optimize_response.status_code == 200
+
+    response = client.post(
+        f"/api/production-cycles/{optimization_cycle.id}/optimize/apply",
+    )
+
+    assert response.status_code == 200
+
+    assert response.json()["planning_mode"] is None
+
 def test_apply_optimization_stamps_applied_at(
     client, db, optimization_cycle,
 ):

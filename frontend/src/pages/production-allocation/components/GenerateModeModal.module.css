@@ -1,0 +1,24 @@
+/* Radio.Card's own stylesApi root ('card') - overridden here since
+   Mantine's own default rule (RadioCard.css) is wrapped in :where()
+   specifically so a plain classNames override like this one wins
+   without needing !important. Mantine already stamps a `data-checked`
+   attribute on the card automatically (RadioCard.tsx's own `mod`) -
+   no extra state/prop is needed to detect selection here. */
+.card {
+  background-color: var(--mantine-color-white);
+  border-color: var(--mantine-color-gray-3);
+
+  transition:
+    background-color 150ms ease,
+    border-color 150ms ease;
+}
+
+.card[data-checked] {
+  /* The wood theme's own palette (theme/wood.ts), hardcoded rather
+     than read through --mantine-color-wood-* so this selected look
+     stays the same warm cream/orange-brown identity even when the
+     Classic theme (no `wood` color registered at all) is active -
+     see ThemeContext.tsx's 'classic' | 'wood' toggle. */
+  background-color: #fbf5ea;
+  border-color: #b5651d;
+}

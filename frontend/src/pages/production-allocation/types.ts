@@ -1,3 +1,5 @@
+import type { PlanningMode } from './api/productionTypes'
+
 export interface ProductionPlan {
   id: number
   productName: string
@@ -35,4 +37,9 @@ export interface OptimizationSummary {
   startTime: string
   endTime: string
   duration: string
+
+  // Set only on a fresh Generate result (fromOptimizeResponse); null
+  // for a persisted/history-sourced result, since planning_mode is
+  // not persisted on the backend - see productionTypes.ts's own note.
+  planningMode: PlanningMode | null
 }

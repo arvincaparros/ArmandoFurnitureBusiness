@@ -34,6 +34,7 @@ from app.services.production_calculation import (
 from app.schemas.optimization import (
     OptimizationRequest,
     OptimizationResponse,
+    PlanningMode,
 )
 
 from datetime import datetime
@@ -215,14 +216,24 @@ def optimize_production(
             detail="Production cycle has no resources configured",
         )
 
-    forecast_data = get_forecast(db)
+    # Two planning modes, same solver call below - only this `forecast`
+    # value differs between them. demand_based (default) builds the
+    # exact same dict this always has; resource_based passes None so
+    # add_forecast_constraints() never runs and no product is capped by
+    # sales forecast - every other constraint (resource availability,
+    # BOM, minimum demand, profit objective) is untouched either way,
+    # since both modes call the identical solve_optimization().
+    if optimization_data.planning_mode == PlanningMode.RESOURCE_BASED:
+        forecast = None
+    else:
+        forecast_data = get_forecast(db)
 
-    forecast = {
-        item["product_id"]: item["forecast_quantity"]
-        for item in forecast_data["products"]
-        if item["forecast_quantity"] > 0
-    }
-    
+        forecast = {
+            item["product_id"]: item["forecast_quantity"]
+            for item in forecast_data["products"]
+            if item["forecast_quantity"] > 0
+        }
+
     started_at = datetime.now()
 
     # Generate must return an independent, repeatable proposal based
@@ -292,6 +303,12 @@ def optimize_production(
         completed_at=completed_at,
         result=result,
         total_cost=optimization_result["total_cost"],
+    )
+
+    # Not persisted (see PlanningMode/OptimizationResponse's own notes) -
+    # only this fresh response reports which mode produced it.
+    optimization_result["planning_mode"] = (
+        optimization_data.planning_mode.value
     )
 
     return optimization_result
