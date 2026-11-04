@@ -1,11 +1,11 @@
 // Mirrors backend/app/schemas/optimization.py,
 // optimization_history.py, and production.py exactly.
 
-// backend/app/schemas/optimization.py::PlanningMode. demand_based
-// (default) keeps the existing forecast-capped behavior;
-// resource_based passes forecast=None to the same solver, skipping
-// only the sales-forecast ceiling - every other constraint (resource
-// availability, BOM, minimum demand) is identical either way.
+// backend/app/schemas/optimization.py::PlanningMode. resource_based
+// (default) passes forecast=None to the solver, skipping the
+// sales-forecast ceiling; demand_based keeps the forecast-capped
+// behavior - every other constraint (resource availability, BOM,
+// minimum demand) is identical either way.
 export type PlanningMode = 'demand_based' | 'resource_based'
 
 export interface ProductionCycleResponse {

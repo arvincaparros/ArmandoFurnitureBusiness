@@ -95,14 +95,6 @@ const GenerateModeModal = ({
                   Uses sales forecasts to limit production quantities
                   and help prevent overproduction.
                 </Text>
-
-                <Badge
-                  color="teal"
-                  variant="light"
-                  mt="sm"
-                >
-                  Recommended · Default
-                </Badge>
               </div>
             </Group>
           </Radio.Card>
@@ -134,6 +126,14 @@ const GenerateModeModal = ({
                   available resources without sales forecast
                   ceilings.
                 </Text>
+
+                <Badge
+                  color="teal"
+                  variant="light"
+                  mt="sm"
+                >
+                  Recommended · Default
+                </Badge>
               </div>
             </Group>
           </Radio.Card>

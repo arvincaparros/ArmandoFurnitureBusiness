@@ -41,7 +41,7 @@ export async function fetchOptimizationHistory(
 
 export async function runOptimization(
   cycleId: number,
-  planningMode: PlanningMode = 'demand_based',
+  planningMode: PlanningMode = 'resource_based',
 ): Promise<OptimizationResponse> {
   const response = await apiClient.post<OptimizationResponse>(
     `/api/production-cycles/${cycleId}/optimize`,

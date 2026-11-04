@@ -2290,10 +2290,15 @@ def test_optimize_production_respects_forecast(
     db.commit()
 
     try:
+        # Explicit demand_based - the default is resource_based (see
+        # test_optimize_defaults_to_resource_based_mode), which would
+        # NOT respect this forecast, so this test's whole premise
+        # requires opting in explicitly now.
         response = client.post(
             f"/api/production-cycles/{optimization_cycle.id}/optimize",
             json={
                 "objective": "MAX_PROFIT",
+                "planning_mode": "demand_based",
             },
         )
 
@@ -2347,15 +2352,17 @@ def _make_forecast_history(test_products):
         ),
     ]
 
-def test_optimize_defaults_to_demand_based_mode(
+def test_optimize_defaults_to_resource_based_mode(
     client,
     db,
     optimization_cycle,
     test_products,
 ):
-    # No planning_mode in the request body at all - every existing
-    # caller that predates this feature must keep getting today's
-    # forecast-capped behavior.
+    # No planning_mode in the request body at all - every caller that
+    # omits it now gets resource_based (no forecast ceiling), not
+    # demand_based. Same forecast-constraining sales history as the
+    # explicit-mode tests below: if the default were still
+    # demand_based, this would be capped at <= 5 instead.
     historical_transactions = _make_forecast_history(test_products)
     db.add_all(historical_transactions)
     db.commit()
@@ -2370,15 +2377,15 @@ def test_optimize_defaults_to_demand_based_mode(
 
         data = response.json()
 
-        assert data["planning_mode"] == "demand_based"
+        assert data["planning_mode"] == "resource_based"
 
         allocations = {
             item["product_id"]: item["quantity"]
             for item in data["allocations"]
         }
 
-        assert allocations[test_products[1].id] <= 5
-        assert allocations[test_products[2].id] <= 5
+        assert allocations[test_products[1].id] == 12
+        assert allocations[test_products[2].id] == 12
 
     finally:
         for transaction in historical_transactions:

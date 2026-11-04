@@ -10,23 +10,24 @@ class OptimizationObjective(str, Enum):
 
 
 class PlanningMode(str, Enum):
-    # Existing behavior, unchanged: production.py::optimize_production
-    # builds a forecast dict from get_forecast() and passes it to
-    # solve_optimization(), which caps each product at its forecast
-    # ceiling via add_forecast_constraints(). Default so every
-    # existing caller that doesn't send planning_mode at all keeps
-    # today's exact behavior.
+    # production.py::optimize_production builds a forecast dict from
+    # get_forecast() and passes it to solve_optimization(), which caps
+    # each product at its forecast ceiling via
+    # add_forecast_constraints(). Still fully supported, just no
+    # longer the default - a caller must now explicitly ask for it.
     DEMAND_BASED = "demand_based"
     # Same solve_optimization() call, same resource/BOM/minimum-demand
     # constraints - only difference is production.py passes
     # forecast=None, so add_forecast_constraints() never runs and no
-    # product is capped by sales forecast.
+    # product is capped by sales forecast. Default: a caller that
+    # doesn't send planning_mode at all now gets this, not
+    # DEMAND_BASED.
     RESOURCE_BASED = "resource_based"
 
 
 class OptimizationRequest(BaseModel):
     objective: OptimizationObjective = OptimizationObjective.MAX_PROFIT
-    planning_mode: PlanningMode = PlanningMode.DEMAND_BASED
+    planning_mode: PlanningMode = PlanningMode.RESOURCE_BASED
 
 
 class OptimizationAllocation(BaseModel):

@@ -217,12 +217,13 @@ def optimize_production(
         )
 
     # Two planning modes, same solver call below - only this `forecast`
-    # value differs between them. demand_based (default) builds the
-    # exact same dict this always has; resource_based passes None so
-    # add_forecast_constraints() never runs and no product is capped by
-    # sales forecast - every other constraint (resource availability,
-    # BOM, minimum demand, profit objective) is untouched either way,
-    # since both modes call the identical solve_optimization().
+    # value differs between them. resource_based (default) passes
+    # None so add_forecast_constraints() never runs and no product is
+    # capped by sales forecast; demand_based builds the forecast dict
+    # exactly as before - every other constraint (resource
+    # availability, BOM, minimum demand, profit objective) is
+    # untouched either way, since both modes call the identical
+    # solve_optimization().
     if optimization_data.planning_mode == PlanningMode.RESOURCE_BASED:
         forecast = None
     else:

@@ -133,11 +133,13 @@ const useProductionAllocation = () => {
     summary: OptimizationSummary
   } | null>(null)
 
-  // Mode selector state - defaults to Demand-Based (existing
-  // behavior), lives here rather than in the page component so a
-  // future consumer of this hook gets the same default for free.
+  // Mode selector state - defaults to Resource-Based (matches the
+  // backend's own OptimizationRequest.planning_mode default - see
+  // schemas/optimization.py::PlanningMode), lives here rather than in
+  // the page component so a future consumer of this hook gets the
+  // same default for free.
   const [planningMode, setPlanningMode] =
-    useState<PlanningMode>('demand_based')
+    useState<PlanningMode>('resource_based')
 
   const optimizeMutation = useMutation({
     mutationFn: async () => {

@@ -55,4 +55,6 @@ export const optimizationSummary: OptimizationSummary =
     startTime: '5:42:18 PM',
     endTime: '5:42:18 PM',
     duration: '808 ms',
+
+    planningMode: null,
   }

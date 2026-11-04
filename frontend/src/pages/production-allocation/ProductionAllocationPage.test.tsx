@@ -164,7 +164,7 @@ const openGenerateModal = async () => {
 }
 
 describe('ProductionAllocationPage generate mode modal', () => {
-  it('opens the modal instead of generating immediately, with Demand-Based selected by default', async () => {
+  it('opens the modal instead of generating immediately, with Resource-Based selected by default', async () => {
     renderPage()
 
     expect(runOptimization).not.toHaveBeenCalled()
@@ -172,32 +172,32 @@ describe('ProductionAllocationPage generate mode modal', () => {
     await openGenerateModal()
 
     expect(
-      screen.getByRole('radio', { name: /demand-based optimization/i }),
+      screen.getByRole('radio', { name: /resource-based optimization/i }),
     ).toBeChecked()
 
     expect(
-      screen.getByRole('radio', { name: /resource-based optimization/i }),
+      screen.getByRole('radio', { name: /demand-based optimization/i }),
     ).not.toBeChecked()
 
     // Opening the modal alone must never fire a request.
     expect(runOptimization).not.toHaveBeenCalled()
   })
 
-  it('switches the checked option when Resource-Based is selected', async () => {
+  it('switches the checked option when Demand-Based is selected', async () => {
     renderPage()
 
     await openGenerateModal()
 
     await userEvent.click(
-      screen.getByRole('radio', { name: /resource-based optimization/i }),
+      screen.getByRole('radio', { name: /demand-based optimization/i }),
     )
 
     expect(
-      screen.getByRole('radio', { name: /resource-based optimization/i }),
+      screen.getByRole('radio', { name: /demand-based optimization/i }),
     ).toBeChecked()
 
     expect(
-      screen.getByRole('radio', { name: /demand-based optimization/i }),
+      screen.getByRole('radio', { name: /resource-based optimization/i }),
     ).not.toBeChecked()
   })
 
@@ -207,7 +207,7 @@ describe('ProductionAllocationPage generate mode modal', () => {
     await openGenerateModal()
 
     await userEvent.click(
-      screen.getByRole('radio', { name: /resource-based optimization/i }),
+      screen.getByRole('radio', { name: /demand-based optimization/i }),
     )
 
     await userEvent.click(
@@ -230,8 +230,11 @@ describe('ProductionAllocationPage generate mode modal', () => {
 
     await openGenerateModal()
 
+    // Switch away from the Resource-Based default so this test
+    // actually proves the choice survives a reopen, not just that
+    // the default keeps showing up.
     await userEvent.click(
-      screen.getByRole('radio', { name: /resource-based optimization/i }),
+      screen.getByRole('radio', { name: /demand-based optimization/i }),
     )
 
     await userEvent.click(
@@ -249,16 +252,16 @@ describe('ProductionAllocationPage generate mode modal', () => {
     await openGenerateModal()
 
     expect(
-      screen.getByRole('radio', { name: /resource-based optimization/i }),
+      screen.getByRole('radio', { name: /demand-based optimization/i }),
     ).toBeChecked()
   })
 
-  it('Continue sends the default Demand-Based mode, closes the modal, and shows it in the result', async () => {
+  it('Continue sends the default Resource-Based mode, closes the modal, and shows it in the result', async () => {
     vi.mocked(runOptimization).mockResolvedValueOnce({
       cycle_id: 1,
       status: 'OPTIMAL',
       objective: 'MAX_PROFIT',
-      planning_mode: 'demand_based',
+      planning_mode: 'resource_based',
       total_revenue: '1000',
       total_cost: '500',
       total_profit: '500',
@@ -282,21 +285,21 @@ describe('ProductionAllocationPage generate mode modal', () => {
     })
 
     expect(runOptimization).toHaveBeenCalledTimes(1)
-    expect(runOptimization).toHaveBeenCalledWith(1, 'demand_based')
+    expect(runOptimization).toHaveBeenCalledWith(1, 'resource_based')
 
     const modeRow = (await screen.findByText('Mode')).closest('div')
 
     expect(
-      within(modeRow!).getByText('Demand-Based'),
+      within(modeRow!).getByText('Resource-Based'),
     ).toBeInTheDocument()
   })
 
-  it('Continue sends Resource-Based once selected, and shows it in the result', async () => {
+  it('Continue sends Demand-Based once selected, and shows it in the result', async () => {
     vi.mocked(runOptimization).mockResolvedValueOnce({
       cycle_id: 1,
       status: 'OPTIMAL',
       objective: 'MAX_PROFIT',
-      planning_mode: 'resource_based',
+      planning_mode: 'demand_based',
       total_revenue: '1000',
       total_cost: '500',
       total_profit: '500',
@@ -308,7 +311,7 @@ describe('ProductionAllocationPage generate mode modal', () => {
     await openGenerateModal()
 
     await userEvent.click(
-      screen.getByRole('radio', { name: /resource-based optimization/i }),
+      screen.getByRole('radio', { name: /demand-based optimization/i }),
     )
 
     await userEvent.click(
@@ -316,13 +319,13 @@ describe('ProductionAllocationPage generate mode modal', () => {
     )
 
     await waitFor(() => {
-      expect(runOptimization).toHaveBeenCalledWith(1, 'resource_based')
+      expect(runOptimization).toHaveBeenCalledWith(1, 'demand_based')
     })
 
     const modeRow = (await screen.findByText('Mode')).closest('div')
 
     expect(
-      within(modeRow!).getByText('Resource-Based'),
+      within(modeRow!).getByText('Demand-Based'),
     ).toBeInTheDocument()
   })
 
@@ -331,7 +334,7 @@ describe('ProductionAllocationPage generate mode modal', () => {
       cycle_id: 1,
       status: 'OPTIMAL',
       objective: 'MAX_PROFIT',
-      planning_mode: 'demand_based',
+      planning_mode: 'resource_based',
       total_revenue: '1000',
       total_cost: '500',
       total_profit: '500',
