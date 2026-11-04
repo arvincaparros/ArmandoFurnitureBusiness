@@ -16,6 +16,7 @@ import {
   Boxes,
   Factory,
   FileBarChart,
+  FileCheck,
   FileClock,
   ReceiptText,
   LayoutDashboard,
@@ -79,6 +80,11 @@ const menus = [
     label: 'Demand Forecasting',
     icon: TrendingUp,
     path: '/demand-forecasting',
+  },
+  {
+    label: 'Week Reference Verification',
+    icon: FileCheck,
+    path: '/week-reference-verification',
   },
 ]
 

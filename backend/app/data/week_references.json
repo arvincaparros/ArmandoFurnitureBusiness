@@ -1,0 +1,202 @@
+{
+  "resource_order": ["wood", "sandpaper", "nails", "wood_glue", "epoxy", "labor", "laborers", "circular_saw", "hand_planer", "table_planer", "doorknob"],
+  "resource_names": {
+    "wood": "Wood",
+    "sandpaper": "Sandpaper",
+    "nails": "Nails",
+    "wood_glue": "Wood Glue",
+    "epoxy": "Epoxy",
+    "labor": "Labor",
+    "laborers": "Laborers",
+    "circular_saw": "Circular Saw",
+    "hand_planer": "Hand Planer",
+    "table_planer": "Table Planer",
+    "doorknob": "Doorknob & Hinge"
+  },
+  "resource_units": {
+    "wood": "bf",
+    "sandpaper": "pcs",
+    "nails": "kg",
+    "wood_glue": "L",
+    "epoxy": "L",
+    "labor": "hrs",
+    "laborers": "persons",
+    "circular_saw": "hrs",
+    "hand_planer": "hrs",
+    "table_planer": "hrs",
+    "doorknob": "set"
+  },
+  "product_order": ["dining_table_4", "dining_table_6", "dining_table_8", "ordinary_table", "bed_frame", "door_60", "door_70", "door_80", "door_90", "high_chair", "ordinary_chair"],
+  "product_names": {
+    "dining_table_4": "Dining table (4 seater)",
+    "dining_table_6": "Dining table (6 seater)",
+    "dining_table_8": "Dining table (8 seater)",
+    "ordinary_table": "Ordinary table",
+    "bed_frame": "Bed frame",
+    "door_60": "Door (60x210)",
+    "door_70": "Door (70x210)",
+    "door_80": "Door (80x210)",
+    "door_90": "Door (90x210)",
+    "high_chair": "High chair",
+    "ordinary_chair": "Ordinary chair"
+  },
+  "unit_profit": {
+    "dining_table_4": 6764.5264,
+    "dining_table_6": 12402.3124,
+    "dining_table_8": 16278.3528,
+    "ordinary_table": 4197.5544,
+    "bed_frame": 9967.472,
+    "door_60": 579.12352,
+    "door_70": 579.12352,
+    "door_80": 579.12352,
+    "door_90": 579.12352,
+    "high_chair": 2252.12352,
+    "ordinary_chair": 2302.12352
+  },
+  "weeks": {
+    "1": {
+      "is_verified": true,
+      "resources": {
+        "wood": {"available": 1000.0, "consumed": 821.0},
+        "sandpaper": {"available": 130.0, "consumed": 124.0},
+        "nails": {"available": 8.0, "consumed": 7.2},
+        "wood_glue": {"available": 9.0, "consumed": 8.2},
+        "epoxy": {"available": 8.0, "consumed": 8.0},
+        "labor": {"available": 480.0, "consumed": 480.0},
+        "laborers": {"available": 10.0, "consumed": null},
+        "circular_saw": {"available": 336.0, "consumed": 127.0},
+        "hand_planer": {"available": 240.0, "consumed": 117.0},
+        "table_planer": {"available": 96.0, "consumed": 87.0},
+        "doorknob": {"available": 25.0, "consumed": 18.0}
+      },
+      "allocation": {"dining_table_4": 1, "dining_table_6": 1, "dining_table_8": 0, "ordinary_table": 6, "bed_frame": 2, "door_60": 5, "door_70": 5, "door_80": 4, "door_90": 4, "high_chair": 2, "ordinary_chair": 10},
+      "total_profit": 102236.8148
+    },
+    "2": {
+      "is_verified": true,
+      "resources": {
+        "wood": {"available": 700.0, "consumed": 619.0},
+        "sandpaper": {"available": 100.0, "consumed": 100.0},
+        "nails": {"available": 6.0, "consumed": 5.75},
+        "wood_glue": {"available": 8.0, "consumed": 6.7},
+        "epoxy": {"available": 7.0, "consumed": 6.4},
+        "labor": {"available": 432.0, "consumed": 424.0},
+        "laborers": {"available": 9.0, "consumed": null},
+        "circular_saw": {"available": 336.0, "consumed": 125.0},
+        "hand_planer": {"available": 240.0, "consumed": 105.0},
+        "table_planer": {"available": 96.0, "consumed": 92.0},
+        "doorknob": {"available": 10.0, "consumed": 10.0}
+      },
+      "allocation": {"dining_table_4": 1, "dining_table_6": 1, "dining_table_8": 1, "ordinary_table": 2, "bed_frame": 3, "door_60": 3, "door_70": 3, "door_80": 2, "door_90": 2, "high_chair": 1, "ordinary_chair": 2},
+      "total_profit": 86390.32216
+    },
+    "3": {
+      "is_verified": true,
+      "resources": {
+        "wood": {"available": 950.0, "consumed": 887.0},
+        "sandpaper": {"available": 130.0, "consumed": 130.0},
+        "nails": {"available": 9.0, "consumed": 8.25},
+        "wood_glue": {"available": 11.0, "consumed": 9.1},
+        "epoxy": {"available": 10.0, "consumed": 8.9},
+        "labor": {"available": 528.0, "consumed": 516.0},
+        "laborers": {"available": 11.0, "consumed": null},
+        "circular_saw": {"available": 336.0, "consumed": 133.0},
+        "hand_planer": {"available": 240.0, "consumed": 123.0},
+        "table_planer": {"available": 96.0, "consumed": 96.0},
+        "doorknob": {"available": 20.0, "consumed": 18.0}
+      },
+      "allocation": {"dining_table_4": 1, "dining_table_6": 1, "dining_table_8": 0, "ordinary_table": 12, "bed_frame": 2, "door_60": 5, "door_70": 5, "door_80": 4, "door_90": 4, "high_chair": 2, "ordinary_chair": 7},
+      "total_profit": 120515.7706
+    },
+    "4": {
+      "is_verified": true,
+      "resources": {
+        "wood": {"available": 1000.0, "consumed": 889.0},
+        "sandpaper": {"available": 150.0, "consumed": 134.0},
+        "nails": {"available": 9.0, "consumed": 8.05},
+        "wood_glue": {"available": 10.0, "consumed": 9.1},
+        "epoxy": {"available": 10.0, "consumed": 8.9},
+        "labor": {"available": 528.0, "consumed": 528.0},
+        "laborers": {"available": 11.0, "consumed": null},
+        "circular_saw": {"available": 336.0, "consumed": 137.0},
+        "hand_planer": {"available": 240.0, "consumed": 127.0},
+        "table_planer": {"available": 96.0, "consumed": 96.0},
+        "doorknob": {"available": 25.0, "consumed": 18.0}
+      },
+      "allocation": {"dining_table_4": 1, "dining_table_6": 1, "dining_table_8": 0, "ordinary_table": 10, "bed_frame": 2, "door_60": 5, "door_70": 5, "door_80": 4, "door_90": 4, "high_chair": 2, "ordinary_chair": 11},
+      "total_profit": 121329.1559
+    },
+    "5": {
+      "is_verified": true,
+      "resources": {
+        "wood": {"available": 850.0, "consumed": 773.0},
+        "sandpaper": {"available": 120.0, "consumed": 112.0},
+        "nails": {"available": 7.0, "consumed": 6.9},
+        "wood_glue": {"available": 10.0, "consumed": 7.6},
+        "epoxy": {"available": 8.0, "consumed": 7.4},
+        "labor": {"available": 432.0, "consumed": 432.0},
+        "laborers": {"available": 9.0, "consumed": null},
+        "circular_saw": {"available": 336.0, "consumed": 115.0},
+        "hand_planer": {"available": 240.0, "consumed": 105.0},
+        "table_planer": {"available": 96.0, "consumed": 81.0},
+        "doorknob": {"available": 20.0, "consumed": 18.0}
+      },
+      "allocation": {"dining_table_4": 1, "dining_table_6": 1, "dining_table_8": 0, "ordinary_table": 6, "bed_frame": 2, "door_60": 5, "door_70": 5, "door_80": 4, "door_90": 4, "high_chair": 2, "ordinary_chair": 4},
+      "total_profit": 88424.07368
+    },
+    "6": {
+      "is_verified": true,
+      "resources": {
+        "wood": {"available": 900.0, "consumed": 619.0},
+        "sandpaper": {"available": 100.0, "consumed": 100.0},
+        "nails": {"available": 8.0, "consumed": 5.75},
+        "wood_glue": {"available": 7.0, "consumed": 6.7},
+        "epoxy": {"available": 7.0, "consumed": 6.4},
+        "labor": {"available": 432.0, "consumed": 424.0},
+        "laborers": {"available": 9.0, "consumed": null},
+        "circular_saw": {"available": 336.0, "consumed": 125.0},
+        "hand_planer": {"available": 240.0, "consumed": 105.0},
+        "table_planer": {"available": 96.0, "consumed": 92.0},
+        "doorknob": {"available": 20.0, "consumed": 10.0}
+      },
+      "allocation": {"dining_table_4": 1, "dining_table_6": 1, "dining_table_8": 1, "ordinary_table": 2, "bed_frame": 3, "door_60": 3, "door_70": 3, "door_80": 2, "door_90": 2, "high_chair": 1, "ordinary_chair": 2},
+      "total_profit": 86390.32216
+    },
+    "7": {
+      "is_verified": true,
+      "resources": {
+        "wood": {"available": 800.0, "consumed": 751.0},
+        "sandpaper": {"available": 120.0, "consumed": 120.0},
+        "nails": {"available": 8.0, "consumed": 6.75},
+        "wood_glue": {"available": 8.0, "consumed": 8.0},
+        "epoxy": {"available": 8.0, "consumed": 7.8},
+        "labor": {"available": 480.0, "consumed": 468.0},
+        "laborers": {"available": 10.0, "consumed": null},
+        "circular_saw": {"available": 336.0, "consumed": 135.0},
+        "hand_planer": {"available": 240.0, "consumed": 115.0},
+        "table_planer": {"available": 96.0, "consumed": 94.0},
+        "doorknob": {"available": 15.0, "consumed": 14.0}
+      },
+      "allocation": {"dining_table_4": 1, "dining_table_6": 1, "dining_table_8": 1, "ordinary_table": 4, "bed_frame": 2, "door_60": 4, "door_70": 4, "door_80": 3, "door_90": 3, "high_chair": 2, "ordinary_chair": 5},
+      "total_profit": 96292.94712
+    },
+    "8": {
+      "is_verified": true,
+      "resources": {
+        "wood": {"available": 1000.0, "consumed": 766.0},
+        "sandpaper": {"available": 150.0, "consumed": 122.0},
+        "nails": {"available": 10.0, "consumed": 6.95},
+        "wood_glue": {"available": 10.0, "consumed": 8.2},
+        "epoxy": {"available": 10.0, "consumed": 8.0},
+        "labor": {"available": 480.0, "consumed": 478.0},
+        "laborers": {"available": 10.0, "consumed": null},
+        "circular_saw": {"available": 336.0, "consumed": 137.0},
+        "hand_planer": {"available": 240.0, "consumed": 117.0},
+        "table_planer": {"available": 96.0, "consumed": 96.0},
+        "doorknob": {"available": 25.0, "consumed": 25.0}
+      },
+      "allocation": {"dining_table_4": 1, "dining_table_6": 1, "dining_table_8": 0, "ordinary_table": 10, "bed_frame": 2, "door_60": 5, "door_70": 5, "door_80": 4, "door_90": 4, "high_chair": 2, "ordinary_chair": 5},
+      "total_profit": 107516.4148
+    }
+  }
+}

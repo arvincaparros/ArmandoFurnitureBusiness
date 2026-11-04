@@ -25,6 +25,7 @@ import OptimizationHistoryPage from '../pages/optimization-history/OptimizationH
 import DemandForecastingPage from '../pages/demand-forecasting/DemandForecastingPage'
 import OpeningInventoryPage from '../pages/opening-inventory/OpeningInventoryPage'
 import InventoryPage from '../pages/inventory/InventoryPage'
+import WeekReferenceVerificationPage from '../pages/week-reference-verification/WeekReferenceVerificationPage'
 
 const AppRouter = () => {
   return (
@@ -117,6 +118,11 @@ const AppRouter = () => {
             <Route
               path="/inventory"
               element={<InventoryPage />}
+            />
+
+            <Route
+              path="/week-reference-verification"
+              element={<WeekReferenceVerificationPage />}
             />
           </Route>
         </Route>

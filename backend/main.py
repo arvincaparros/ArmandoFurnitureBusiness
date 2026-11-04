@@ -21,6 +21,7 @@ from app.routers.transactions import router as transactions_router
 from app.routers.resource_utilization import router as resource_utilization_router
 from app.routers.inventory import router as inventory_router
 from app.routers.opening_inventory import router as opening_inventory_router
+from app.routers.week_reference import router as week_reference_router
 
 app = FastAPI(
     title="Furniture Optimization API",
@@ -73,6 +74,7 @@ app.include_router(transactions_router)
 app.include_router(resource_utilization_router)
 app.include_router(opening_inventory_router)
 app.include_router(inventory_router)
+app.include_router(week_reference_router)
 
 @app.get("/")
 def root():
