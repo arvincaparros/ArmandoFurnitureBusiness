@@ -5,6 +5,7 @@ from sqlalchemy import func, select
 from sqlalchemy.orm import Session, selectinload
 
 from app.database.models import (
+    CycleResource,
     ProductionApplication,
     ProductionApplicationItem,
     ProductionApplicationResourceItem,
@@ -161,6 +162,106 @@ def get_cycle_consumed_by_resource(
         for resource_id, total in rows
         if total is not None
     }
+
+
+def get_cycle_consumed_by_resource_since_update(
+    db: Session,
+    cycle_id: int,
+) -> dict[int, Decimal]:
+    """
+    Like get_cycle_consumed_by_resource above, but scoped PER-RESOURCE
+    to applications applied at or after that resource's own
+    CycleResource.updated_at - i.e. only consumption recorded under
+    the resource's CURRENT quantity ("this production week"), never
+    consumption accumulated under a since-superseded one. A resource
+    never edited since cycle creation (updated_at == created_at) falls
+    back to the cycle's full lifetime, identical to
+    get_cycle_consumed_by_resource's own result - so a cycle that has
+    never had a resource quantity edited mid-stream sees no change in
+    behavior at all.
+
+    Additive and separate on purpose: get_cycle_consumed_by_resource
+    itself, and every one of its other callers (apply_optimization's
+    exhausted-resources explanatory message in particular), keep their
+    existing all-time semantics completely unchanged. Only the
+    Resource Utilization API's two GET handlers call this function.
+
+    Never deletes or mutates a ProductionApplication/…Item/
+    …ResourceItem row - a superseded week's applications are excluded
+    from THIS SUM only, never from the database. Historical production
+    application records remain fully intact and queryable through
+    get_cycle_consumed_by_resource or direct inspection regardless of
+    how many times a resource's quantity has since been edited.
+
+    KNOWN LIMITATION (schema can't currently distinguish the two):
+    CycleResource.updated_at is a single column bumped by SQLAlchemy's
+    onupdate on ANY edit to that row - available_quantity OR
+    unit_price, whichever was actually sent in the PATCH payload (see
+    update_cycle_resource's `for field, value in update_data.items():
+    setattr(...)` loop, and the model's own column comment). There is
+    no separate "quantity last changed" vs "price last changed"
+    timestamp without adding a new column, which is out of scope here
+    (no migration was requested or made). A price-only edit will
+    therefore ALSO reset this function's cutoff for that resource,
+    exactly as a quantity edit would, even though no quantity actually
+    changed. This is a real, reported limitation of the current data
+    model, not a silent side effect introduced by this function - see
+    test_resource_utilization.py::
+    test_since_update_scoping_also_resets_on_a_price_only_edit for a
+    test that documents it explicitly, and raise it with product/
+    business if that specific case needs to behave differently (it
+    would require a new "quantity_updated_at" column).
+    """
+
+    cutoff_by_resource_id = {
+        cycle_resource.resource_id: cycle_resource.updated_at
+        for cycle_resource in db.scalars(
+            select(CycleResource).where(
+                CycleResource.production_cycle_id == cycle_id
+            )
+        ).all()
+    }
+
+    rows = db.execute(
+        select(
+            ProductionApplicationResourceItem.resource_id,
+            ProductionApplicationResourceItem.consumed_quantity,
+            ProductionApplication.applied_at,
+        )
+        .join(
+            ProductionApplication,
+            ProductionApplication.id
+            == (
+                ProductionApplicationResourceItem
+                .production_application_id
+            ),
+        )
+        .where(
+            ProductionApplication.production_cycle_id == cycle_id,
+            ProductionApplicationResourceItem.resource_id.isnot(
+                None
+            ),
+        )
+    ).all()
+
+    totals: dict[int, Decimal] = {}
+
+    for resource_id, consumed_quantity, applied_at in rows:
+        cutoff = cutoff_by_resource_id.get(resource_id)
+
+        if (
+            cutoff is not None
+            and applied_at is not None
+            and applied_at < cutoff
+        ):
+            continue
+
+        totals[resource_id] = (
+            totals.get(resource_id, Decimal("0"))
+            + consumed_quantity
+        )
+
+    return totals
 
 
 def get_cycle_produced_by_product(

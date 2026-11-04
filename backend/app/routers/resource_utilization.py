@@ -11,6 +11,7 @@ from app.services.auth import get_current_user
 from app.services.production import get_production_cycle
 from app.services.production_application import (
     get_cycle_consumed_by_resource,
+    get_cycle_consumed_by_resource_since_update,
 )
 from app.services.resource_utilization import (
     calculate_resource_utilization,
@@ -88,15 +89,57 @@ def resource_utilization(
     # A cycle that has had production applications must report the
     # cumulative consumption those applications recorded, not what
     # the latest ProductionAllocation alone implies - otherwise the
-    # report shows capacity the cycle has already spent. A cycle with
-    # no applications (every pre-ledger cycle) gets an empty dict,
-    # which falls back to the original allocation-derived path.
-    consumed = get_cycle_consumed_by_resource(db, cycle_id)
+    # report shows capacity the cycle has already spent.
+    #
+    # Scoped PER-RESOURCE to applications applied since that
+    # resource's own quantity was last edited (see
+    # get_cycle_consumed_by_resource_since_update's own docstring) -
+    # a resource whose quantity was changed mid-cycle ("a new
+    # production week") reports only consumption recorded under its
+    # CURRENT quantity, not consumption accumulated under a
+    # since-superseded one. A resource never edited keeps the same
+    # all-time total get_cycle_consumed_by_resource would return.
+    #
+    # TWO genuinely different "empty" cases here, which must NOT be
+    # treated alike:
+    #
+    #   1. This cycle has NEVER had a single ProductionApplication
+    #      (get_cycle_consumed_by_resource - unscoped - is itself
+    #      empty). There is no ledger to scope at all, so the
+    #      ORIGINAL allocation-derived fallback (None, below) is
+    #      still correct here - this is the pre-ledger/manual-
+    #      allocation case (see _allocate() in
+    #      test_resource_utilization.py), and must keep working
+    #      exactly as it always has.
+    #
+    #   2. This cycle HAS applications, but every one of them
+    #      predates its own resource's cutoff (every resource was
+    #      just edited, "a new week started", and nothing has been
+    #      applied since). The SCOPED dict is empty here too, but for
+    #      a completely different reason - this is real, current
+    #      ledger history being correctly excluded, not an absence of
+    #      data. Passing None here (via a bare `consumed or None`)
+    #      would fall through to the SAME allocation-derived branch
+    #      as case 1 and silently resurrect the stale pre-edit plan's
+    #      consumption - exactly the bug this scoping exists to fix.
+    #      The scoped dict must be passed through AS-IS here, even
+    #      though it's `{}` - calculate_resource_utilization already
+    #      defaults any resource missing from an explicit override to
+    #      zero on its own.
+    has_any_application_ever = bool(
+        get_cycle_consumed_by_resource(db, cycle_id)
+    )
+
+    consumed = (
+        get_cycle_consumed_by_resource_since_update(db, cycle_id)
+        if has_any_application_ever
+        else None
+    )
 
     return calculate_resource_utilization(
         db,
         cycle_id,
-        consumption_override=consumed or None,
+        consumption_override=consumed,
     )
 
 
@@ -123,13 +166,40 @@ def resource_utilization_by_cycle(
     # A cycle that has had production applications must report the
     # cumulative consumption those applications recorded, not what
     # the latest ProductionAllocation alone implies - otherwise the
-    # report shows capacity the cycle has already spent. A cycle with
-    # no applications (every pre-ledger cycle) gets an empty dict,
-    # which falls back to the original allocation-derived path.
-    consumed = get_cycle_consumed_by_resource(db, cycle_id)
+    # report shows capacity the cycle has already spent.
+    #
+    # Scoped PER-RESOURCE to applications applied since that
+    # resource's own quantity was last edited (see
+    # get_cycle_consumed_by_resource_since_update's own docstring) -
+    # a resource whose quantity was changed mid-cycle ("a new
+    # production week") reports only consumption recorded under its
+    # CURRENT quantity, not consumption accumulated under a
+    # since-superseded one. A resource never edited keeps the same
+    # all-time total get_cycle_consumed_by_resource would return.
+    #
+    # TWO genuinely different "empty" cases here, which must NOT be
+    # treated alike - see the identical comment in resource_utilization()
+    # above for the full explanation:
+    #
+    #   1. This cycle has NEVER had a single ProductionApplication ->
+    #      the ORIGINAL allocation-derived fallback (None) is still
+    #      correct (the pre-ledger/manual-allocation case).
+    #   2. This cycle HAS applications, but every one of them predates
+    #      its own resource's cutoff ("a new week started", nothing
+    #      applied since) -> the scoped dict must be passed through
+    #      AS-IS, even though it's `{}`, never collapsed to None.
+    has_any_application_ever = bool(
+        get_cycle_consumed_by_resource(db, cycle_id)
+    )
+
+    consumed = (
+        get_cycle_consumed_by_resource_since_update(db, cycle_id)
+        if has_any_application_ever
+        else None
+    )
 
     return calculate_resource_utilization(
         db,
         cycle_id,
-        consumption_override=consumed or None,
+        consumption_override=consumed,
     )

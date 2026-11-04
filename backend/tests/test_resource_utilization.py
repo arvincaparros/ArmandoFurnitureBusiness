@@ -632,3 +632,825 @@ def test_omitting_the_override_preserves_allocation_derived_behaviour(
     ) == calculate_resource_utilization(
         db, optimization_cycle.id, consumption_override=None,
     )
+
+
+# --- Weekly ("since quantity update") scoping for the Resource
+# Utilization Report -------------------------------------------------
+#
+# A production "week" has no row of its own anywhere in this schema -
+# editing a CycleResource's available_quantity in place (bumping its
+# updated_at) IS how a new week starts in this system (see the
+# Resource Utilization weekly-scoping investigation). These tests
+# exercise get_cycle_consumed_by_resource_since_update directly
+# against a real Generate+Apply flow, never the solver's predicted
+# quantities by hand - only relative comparisons between the new
+# scoped helper and the pre-existing all-time one.
+
+def _generate_and_apply(client, cycle_id):
+    optimize_response = client.post(
+        f"/api/production-cycles/{cycle_id}/optimize",
+        json={"objective": "MAX_PROFIT"},
+    )
+    assert optimize_response.status_code == 200, optimize_response.text
+
+    apply_response = client.post(
+        f"/api/production-cycles/{cycle_id}/optimize/apply"
+    )
+    assert apply_response.status_code == 200, apply_response.text
+
+    return optimize_response.json()
+
+
+def test_since_update_matches_all_time_when_no_resource_was_ever_edited(
+    client, db, optimization_cycle, test_products,
+):
+    """
+    Regression guard: a cycle whose resources have never been edited
+    since creation must see NO behavior change at all - the new
+    scoped helper must return exactly what the existing all-time one
+    does.
+    """
+    from app.services.production_application import (
+        get_cycle_consumed_by_resource,
+        get_cycle_consumed_by_resource_since_update,
+    )
+
+    _generate_and_apply(client, optimization_cycle.id)
+
+    all_time = get_cycle_consumed_by_resource(db, optimization_cycle.id)
+    since_update = get_cycle_consumed_by_resource_since_update(
+        db, optimization_cycle.id,
+    )
+
+    assert since_update == all_time
+    assert len(all_time) > 0
+
+
+def test_since_update_still_accumulates_across_repeated_applies_without_an_edit(
+    client, db, optimization_cycle, test_products,
+):
+    """
+    Requirement 1: multiple successful Apply operations within the
+    same production week (i.e. no resource quantity edit in between)
+    must still accumulate - unchanged from today's behavior.
+    """
+    from app.services.production_application import (
+        get_cycle_consumed_by_resource,
+        get_cycle_consumed_by_resource_since_update,
+    )
+
+    _generate_and_apply(client, optimization_cycle.id)
+    after_first = get_cycle_consumed_by_resource_since_update(
+        db, optimization_cycle.id,
+    )
+
+    _generate_and_apply(client, optimization_cycle.id)
+    after_second = get_cycle_consumed_by_resource_since_update(
+        db, optimization_cycle.id,
+    )
+
+    # Every resource the first apply touched must show MORE consumed
+    # after the second apply - genuine accumulation, not a reset.
+    for resource_id, first_total in after_first.items():
+        assert after_second[resource_id] > first_total
+
+    # And still identical to the all-time helper, since nothing was
+    # ever edited.
+    assert after_second == get_cycle_consumed_by_resource(
+        db, optimization_cycle.id,
+    )
+
+
+def test_since_update_excludes_consumption_from_before_a_quantity_edit(
+    client, db, optimization_cycle, test_products, test_resources,
+):
+    """
+    The core fix: editing a resource's quantity mid-cycle ("starting a
+    new production week") must make the Resource Utilization Report
+    count only consumption recorded SINCE that edit for THAT resource
+    - while an untouched resource keeps accumulating exactly as
+    before, and the full all-time history remains intact and
+    unaffected in the database (requirement 3).
+    """
+    from app.services.production_application import (
+        get_cycle_consumed_by_resource,
+        get_cycle_consumed_by_resource_since_update,
+    )
+
+    wood = next(
+        resource for resource in test_resources
+        if resource.name == "Test Wood"
+    )
+
+    _generate_and_apply(client, optimization_cycle.id)
+
+    all_time_before_edit = get_cycle_consumed_by_resource(
+        db, optimization_cycle.id,
+    )
+    assert wood.id in all_time_before_edit
+    pre_edit_wood_consumption = all_time_before_edit[wood.id]
+
+    # "A new production week": increase Wood's quantity in place -
+    # the only mechanism this system has for starting one.
+    patch_response = client.patch(
+        f"/api/production-cycles/{optimization_cycle.id}"
+        f"/resources/{wood.id}",
+        json={"available_quantity": "2500.0000"},
+    )
+    assert patch_response.status_code == 200, patch_response.text
+
+    _generate_and_apply(client, optimization_cycle.id)
+
+    all_time_after = get_cycle_consumed_by_resource(
+        db, optimization_cycle.id,
+    )
+    since_update_after = get_cycle_consumed_by_resource_since_update(
+        db, optimization_cycle.id,
+    )
+
+    # Wood: the scoped total must be LESS than the all-time total by
+    # exactly the pre-edit contribution - the second apply's own
+    # consumption, and nothing from before the edit.
+    assert (
+        since_update_after[wood.id]
+        == all_time_after[wood.id] - pre_edit_wood_consumption
+    )
+    assert since_update_after[wood.id] < all_time_after[wood.id]
+
+    # Every OTHER resource (never edited) must be unaffected - scoped
+    # and all-time totals still agree exactly.
+    for resource_id, scoped_total in since_update_after.items():
+        if resource_id == wood.id:
+            continue
+
+        assert scoped_total == all_time_after[resource_id]
+
+    # Requirement 3: the pre-edit application record itself is still
+    # fully present - get_cycle_consumed_by_resource (never scoped)
+    # still reports the complete, untouched history.
+    assert all_time_after[wood.id] >= pre_edit_wood_consumption
+
+
+def test_since_update_does_not_hide_overconsumption_within_the_new_week(
+    client, db, optimization_cycle, test_products, test_resources,
+):
+    """
+    Requirement 8: overconsumption must never be silently hidden, even
+    when it is scoped to "this week" rather than the cycle's whole
+    lifetime - two repeated applies after an edit, against a
+    deliberately small post-edit quantity, must still show negative
+    remaining / >100% utilization for that resource, not a clamped
+    "everything is fine" figure at the service layer (display-layer
+    clamping is a separate, already-approved frontend concern, not
+    tested here).
+    """
+    wood = next(
+        resource for resource in test_resources
+        if resource.name == "Test Wood"
+    )
+
+    _generate_and_apply(client, optimization_cycle.id)
+
+    # "New week" starts with a small Wood allowance - small enough
+    # that two more full applies against it will overshoot.
+    patch_response = client.patch(
+        f"/api/production-cycles/{optimization_cycle.id}"
+        f"/resources/{wood.id}",
+        json={"available_quantity": "50.0000"},
+    )
+    assert patch_response.status_code == 200, patch_response.text
+
+    _generate_and_apply(client, optimization_cycle.id)
+    _generate_and_apply(client, optimization_cycle.id)
+
+    response = client.get(
+        f"/api/resource-utilization/{optimization_cycle.id}"
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    wood_row = next(
+        row for row in data["resources"]
+        if row["resource_id"] == wood.id
+    )
+
+    assert Decimal(wood_row["remaining_quantity"]) < Decimal("0")
+    assert Decimal(wood_row["utilization_rate"]) > Decimal("100.00")
+    assert wood_row["status"] == "bottleneck"
+
+
+def test_since_update_also_resets_on_a_price_only_edit_known_limitation(
+    client, db, optimization_cycle, test_products, test_resources,
+):
+    """
+    KNOWN, REPORTED LIMITATION - not a silent side effect.
+
+    CycleResource.updated_at is a single column shared by BOTH
+    available_quantity and unit_price (confirmed in models.py and
+    update_cycle_resource's plain setattr loop) - there is no separate
+    "quantity last changed" timestamp without a schema change, which
+    was explicitly out of scope for this fix. A price-only edit
+    therefore ALSO resets get_cycle_consumed_by_resource_since_update's
+    cutoff for that resource, even though no quantity actually
+    changed. This test exists to make that limitation visible and
+    verified, not to hide it - see get_cycle_consumed_by_resource_
+    since_update's own docstring for the full explanation.
+    """
+    from app.services.production_application import (
+        get_cycle_consumed_by_resource_since_update,
+    )
+
+    wood = next(
+        resource for resource in test_resources
+        if resource.name == "Test Wood"
+    )
+
+    _generate_and_apply(client, optimization_cycle.id)
+
+    before_price_edit = get_cycle_consumed_by_resource_since_update(
+        db, optimization_cycle.id,
+    )
+    assert before_price_edit.get(wood.id, Decimal("0")) > Decimal("0")
+
+    # Price-only edit - available_quantity is NOT sent at all.
+    patch_response = client.patch(
+        f"/api/production-cycles/{optimization_cycle.id}"
+        f"/resources/{wood.id}",
+        json={"unit_price": "99.0000"},
+    )
+    assert patch_response.status_code == 200, patch_response.text
+
+    after_price_edit = get_cycle_consumed_by_resource_since_update(
+        db, optimization_cycle.id,
+    )
+
+    # The documented limitation: a pure price edit still resets the
+    # cutoff, so the prior apply's Wood consumption is now excluded
+    # even though Wood's quantity itself never changed.
+    assert wood.id not in after_price_edit
+
+
+def test_since_update_excludes_both_earlier_weeks_after_a_second_edit(
+    client, db, optimization_cycle, test_products, test_resources,
+):
+    """
+    Gap identified in code review: editing the same resource TWICE in
+    sequence must scope consumption to ONLY what's been applied since
+    the SECOND (latest) edit - excluding both the pre-first-edit
+    consumption AND the between-the-two-edits consumption, not just
+    the oldest one. CycleResource.updated_at only ever stores the
+    latest edit's timestamp (no history table), so this is the
+    behavior the helper's single-cutoff-per-resource design implies -
+    this test locks it in rather than leaving it verified by
+    inspection only.
+    """
+    from app.services.production_application import (
+        get_cycle_consumed_by_resource,
+        get_cycle_consumed_by_resource_since_update,
+    )
+
+    wood = next(
+        resource for resource in test_resources
+        if resource.name == "Test Wood"
+    )
+
+    # Week 1.
+    _generate_and_apply(client, optimization_cycle.id)
+
+    # Week 2 starts: first edit.
+    first_edit = client.patch(
+        f"/api/production-cycles/{optimization_cycle.id}"
+        f"/resources/{wood.id}",
+        json={"available_quantity": "2500.0000"},
+    )
+    assert first_edit.status_code == 200, first_edit.text
+
+    _generate_and_apply(client, optimization_cycle.id)
+
+    all_time_after_week_2 = get_cycle_consumed_by_resource(
+        db, optimization_cycle.id,
+    )
+
+    # Week 3 starts: second edit, superseding the first.
+    second_edit = client.patch(
+        f"/api/production-cycles/{optimization_cycle.id}"
+        f"/resources/{wood.id}",
+        json={"available_quantity": "3000.0000"},
+    )
+    assert second_edit.status_code == 200, second_edit.text
+
+    _generate_and_apply(client, optimization_cycle.id)
+
+    all_time_after_week_3 = get_cycle_consumed_by_resource(
+        db, optimization_cycle.id,
+    )
+    since_update_after_week_3 = (
+        get_cycle_consumed_by_resource_since_update(
+            db, optimization_cycle.id,
+        )
+    )
+
+    # Scoped total for Wood must equal EXACTLY week 3's own
+    # contribution - all_time(week 1+2+3) minus all_time(week 1+2)
+    # leaves only week 3's increment, with both earlier weeks
+    # excluded, not just the oldest one.
+    week_3_only_contribution = (
+        all_time_after_week_3[wood.id] - all_time_after_week_2[wood.id]
+    )
+
+    assert (
+        since_update_after_week_3[wood.id] == week_3_only_contribution
+    )
+    assert (
+        since_update_after_week_3[wood.id]
+        < all_time_after_week_3[wood.id]
+    )
+
+    # Every other, never-edited resource keeps accumulating across
+    # all three weeks exactly as before.
+    for resource_id, scoped_total in since_update_after_week_3.items():
+        if resource_id == wood.id:
+            continue
+
+        assert scoped_total == all_time_after_week_3[resource_id]
+
+
+def test_since_update_includes_an_application_applied_exactly_at_the_cutoff(
+    db, test_resources, test_products,
+):
+    """
+    Gap identified in code review: the exclusion condition is
+    `applied_at < cutoff`, meaning an application whose applied_at is
+    EXACTLY EQUAL to the resource's updated_at must be INCLUDED, never
+    excluded. Real HTTP-driven timestamps never produce an exact tie
+    (microsecond-precision wall-clock values essentially never
+    collide), so this constructs the tie directly and deterministically
+    instead of relying on timing.
+    """
+    from app.database.models import (
+        CycleResource,
+        OptimizationRun,
+        ProductionApplication,
+        ProductionApplicationResourceItem,
+        ProductionCycle,
+    )
+    from app.services.production_application import (
+        get_cycle_consumed_by_resource_since_update,
+    )
+
+    wood = next(
+        resource for resource in test_resources
+        if resource.name == "Test Wood"
+    )
+
+    cycle = ProductionCycle(
+        cycle_date=datetime(2026, 6, 1),
+        start_date=datetime(2026, 6, 1),
+        end_date=datetime(2026, 6, 1),
+        status="PLANNED",
+    )
+    db.add(cycle)
+    db.commit()
+    db.refresh(cycle)
+
+    exact_instant = datetime(2026, 6, 1, 12, 0, 0)
+
+    cycle_resource = CycleResource(
+        production_cycle_id=cycle.id,
+        resource_id=wood.id,
+        available_quantity=Decimal("1000.0000"),
+        unit_price=Decimal("84.0000"),
+    )
+    db.add(cycle_resource)
+    db.commit()
+    db.refresh(cycle_resource)
+
+    # Force updated_at to the exact tie instant - bypasses the
+    # onupdate default, which only fills in a value for a column NOT
+    # explicitly assigned in this flush.
+    cycle_resource.updated_at = exact_instant
+    db.add(cycle_resource)
+    db.commit()
+
+    run = OptimizationRun(
+        production_cycle_id=cycle.id,
+        started_at=exact_instant,
+        status="OPTIMAL",
+    )
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+
+    application = ProductionApplication(
+        application_number="PA-TIE-TEST",
+        production_cycle_id=cycle.id,
+        optimization_run_id=run.id,
+        applied_at=exact_instant,
+    )
+    db.add(application)
+    db.commit()
+    db.refresh(application)
+
+    resource_item = ProductionApplicationResourceItem(
+        production_application_id=application.id,
+        resource_id=wood.id,
+        resource_name=wood.name,
+        unit=wood.unit,
+        consumed_quantity=Decimal("123.4500"),
+    )
+    db.add(resource_item)
+    db.commit()
+
+    # Sanity check the tie was actually constructed as intended before
+    # asserting anything about the function under test.
+    db.refresh(cycle_resource)
+    db.refresh(application)
+    assert cycle_resource.updated_at == exact_instant
+    assert application.applied_at == exact_instant
+
+    try:
+        since_update = get_cycle_consumed_by_resource_since_update(
+            db, cycle.id,
+        )
+
+        assert since_update.get(wood.id) == Decimal("123.4500")
+
+    finally:
+        db.delete(resource_item)
+        db.delete(application)
+        db.delete(run)
+        db.delete(cycle_resource)
+        db.delete(cycle)
+        db.commit()
+
+
+def test_latest_cycle_route_uses_the_since_update_scoped_helper(
+    client, db, optimization_cycle, test_products, test_resources,
+):
+    """
+    Gap identified in code review: both Resource Utilization GET
+    handlers were changed to call the new scoped helper, but only the
+    /{cycle_id} route had an HTTP-level test proving it. This exercises
+    the bare /api/resource-utilization ("latest cycle") route the same
+    way test_since_update_excludes_consumption_from_before_a_quantity_
+    edit already does for the explicit-cycle route, confirming the
+    latest-cycle route is not still reading the old all-time helper.
+    """
+    wood = next(
+        resource for resource in test_resources
+        if resource.name == "Test Wood"
+    )
+
+    _generate_and_apply(client, optimization_cycle.id)
+
+    # "A new production week": edit Wood's quantity in place. If
+    # optimization_cycle is not the latest cycle for some reason, this
+    # assertion will fail loudly below rather than silently pass.
+    patch_response = client.patch(
+        f"/api/production-cycles/{optimization_cycle.id}"
+        f"/resources/{wood.id}",
+        json={"available_quantity": "2500.0000"},
+    )
+    assert patch_response.status_code == 200, patch_response.text
+
+    _generate_and_apply(client, optimization_cycle.id)
+
+    response = client.get("/api/resource-utilization")
+    assert response.status_code == 200
+
+    data = response.json()
+    assert data["cycle_id"] == optimization_cycle.id
+
+    wood_row = next(
+        row for row in data["resources"]
+        if row["resource_id"] == wood.id
+    )
+
+    # If the latest-cycle route were still calling the all-time
+    # helper, consumed_quantity here would include BOTH applies'
+    # worth of Wood - this asserts it reflects only the post-edit
+    # (second) apply, exactly like the explicit-cycle route already
+    # does.
+    from app.services.production_application import (
+        get_cycle_consumed_by_resource,
+        get_cycle_consumed_by_resource_since_update,
+    )
+
+    all_time = get_cycle_consumed_by_resource(db, optimization_cycle.id)
+    since_update = get_cycle_consumed_by_resource_since_update(
+        db, optimization_cycle.id,
+    )
+
+    assert since_update[wood.id] < all_time[wood.id]
+    assert Decimal(wood_row["consumed_quantity"]) == since_update[wood.id]
+
+
+# --- Empty-scoped-consumption fallback fix ---------------------------
+#
+# Bug: consumption_override=consumed or None in both Resource
+# Utilization GET handlers treated an EMPTY dict from
+# get_cycle_consumed_by_resource_since_update as equivalent to "no
+# override at all", falling through to calculate_resource_utilization's
+# allocation-derived branch - which reads the CURRENT ProductionAllocation
+# row (the last applied plan) and silently resurrects its stale,
+# pre-edit consumption. This is reachable any time editing a cycle's
+# resource(s) ("starting a new week") makes every one of that cycle's
+# qualifying applications fall before their own resource's cutoff -
+# trivially true for a single-resource cycle, and for the realistic
+# "edit every resource together" workflow on a multi-resource one.
+#
+# Fix: pass `consumed` straight through, never collapsed through
+# `or None`. calculate_resource_utilization already defaults any
+# resource missing from the dict to Decimal("0") on its own, so an
+# empty dict already means "zero consumption for everything" with no
+# fallback required - correct both right after an edit (nothing
+# applied since) and for a cycle with no applications at all.
+#
+# Scope: this fix lives entirely in resource_utilization.py's two GET
+# handlers. Resource Management (CRUD, quantity/price update
+# behavior, validation, models/schema, update_at semantics) is
+# untouched - these tests only assert on what the Resource Utilization
+# Report returns, never on Resource Management's own behavior.
+
+def test_edit_with_no_new_apply_reports_zero_not_stale_allocation(
+    client, db, optimization_cycle, test_products, test_resources,
+):
+    """
+    The exact empirically-reproduced regression: apply once, edit
+    EVERY resource on the cycle ("start a new week" - the realistic
+    workflow, and the condition that actually empties the scoped
+    dict: editing only one of several resources leaves the others'
+    entries in place, since each resource's exclusion is independent -
+    see test_edit_with_no_new_apply_reports_zero_on_the_latest_cycle_
+    route_too's sibling single-resource test for that narrower case),
+    then check the report WITHOUT applying again. Before the fix this
+    returned the stale pre-edit consumption for every resource
+    (re-derived from the still-unchanged ProductionAllocation row
+    once the WHOLE dict went empty); after the fix it must report
+    zero - nothing has been applied since any of the edits yet.
+    """
+    _generate_and_apply(client, optimization_cycle.id)
+
+    before_edit = client.get(
+        f"/api/resource-utilization/{optimization_cycle.id}"
+    )
+    assert before_edit.status_code == 200
+    assert any(
+        Decimal(row["consumed_quantity"]) > Decimal("0")
+        for row in before_edit.json()["resources"]
+    )
+
+    for resource in test_resources:
+        patch_response = client.patch(
+            f"/api/production-cycles/{optimization_cycle.id}"
+            f"/resources/{resource.id}",
+            json={"available_quantity": "2500.0000"},
+        )
+        assert patch_response.status_code == 200, patch_response.text
+
+    # Deliberately NO new Generate/Apply here - this is the exact
+    # condition that triggered the bug.
+    response = client.get(
+        f"/api/resource-utilization/{optimization_cycle.id}"
+    )
+    assert response.status_code == 200
+    data = response.json()
+
+    for row in data["resources"]:
+        assert Decimal(row["consumed_quantity"]) == Decimal("0")
+        assert Decimal(row["remaining_quantity"]) == Decimal(
+            row["available_quantity"]
+        )
+        assert Decimal(row["utilization_rate"]) == Decimal("0.00")
+        assert row["status"] == "normal"
+
+    assert data["bottlenecks"] == []
+
+
+def test_edit_with_no_new_apply_reports_zero_on_the_latest_cycle_route_too(
+    client, db, optimization_cycle, test_products, test_resources,
+):
+    """
+    Same regression, exercised through the OTHER GET handler
+    (/api/resource-utilization, latest-cycle) - both call sites had
+    the identical bug and both needed the identical fix. Edits every
+    resource on the cycle, same reasoning as the sibling test above:
+    only emptying every resource's own entry empties the dict as a
+    whole.
+    """
+    _generate_and_apply(client, optimization_cycle.id)
+
+    for resource in test_resources:
+        patch_response = client.patch(
+            f"/api/production-cycles/{optimization_cycle.id}"
+            f"/resources/{resource.id}",
+            json={"available_quantity": "2500.0000"},
+        )
+        assert patch_response.status_code == 200, patch_response.text
+
+    response = client.get("/api/resource-utilization")
+    assert response.status_code == 200
+    data = response.json()
+    assert data["cycle_id"] == optimization_cycle.id
+
+    for row in data["resources"]:
+        assert Decimal(row["consumed_quantity"]) == Decimal("0")
+
+    assert data["bottlenecks"] == []
+
+
+def test_single_resource_cycle_edit_with_no_new_apply_reports_zero(
+    client, db,
+):
+    """
+    The narrowest reproduction of the bug: a cycle with only ONE
+    resource. Before the fix, get_cycle_consumed_by_resource_since_update
+    returning a single-key dict that then gets entirely scoped out by
+    one edit is exactly {} - the minimal input that flips `consumed or
+    None` to None. Built from scratch (not optimization_cycle's 4
+    shared resources) so the scoped dict is guaranteed empty after one
+    edit, independent of any other fixture resource keeping it
+    non-empty.
+    """
+    from app.database.models import (
+        Product,
+        ProductionCycle,
+        ProductResourceRequirement,
+        Resource,
+        CycleResource,
+    )
+    from app.services.auth import hash_password
+    from app.database.models import User
+
+    db.query(User).filter(
+        User.username == "single_resource_regression_user"
+    ).delete()
+    db.commit()
+
+    user = User(
+        username="single_resource_regression_user",
+        email="single_resource_regression_user@example.com",
+        password_hash=hash_password("RegressionPassword9!"),
+        is_active=True,
+    )
+    db.add(user)
+    db.commit()
+
+    wood = Resource(
+        name="Regression Single Wood",
+        resource_type="material",
+        unit="bf",
+        is_active=True,
+    )
+    db.add(wood)
+    db.commit()
+    db.refresh(wood)
+
+    table = Product(
+        name="Regression Single Table",
+        selling_price=Decimal("1000.00"),
+        labor_cost=Decimal("0.00"),
+        minimum_demand=Decimal("1"),
+        is_active=True,
+    )
+    db.add(table)
+    db.commit()
+    db.refresh(table)
+
+    requirement = ProductResourceRequirement(
+        product_id=table.id,
+        resource_id=wood.id,
+        quantity_required=Decimal("10.0000"),
+    )
+    db.add(requirement)
+    db.commit()
+
+    cycle = ProductionCycle(
+        cycle_date=datetime(2026, 2, 1),
+        start_date=datetime(2026, 2, 1),
+        end_date=datetime(2026, 2, 8),
+        status="OPEN",
+    )
+    db.add(cycle)
+    db.commit()
+    db.refresh(cycle)
+
+    cycle_resource = CycleResource(
+        production_cycle_id=cycle.id,
+        resource_id=wood.id,
+        available_quantity=Decimal("100.0000"),
+        unit_price=Decimal("1.00"),
+    )
+    db.add(cycle_resource)
+    db.commit()
+
+    try:
+        login = client.post(
+            "/api/auth/login",
+            json={
+                "username": "single_resource_regression_user",
+                "password": "RegressionPassword9!",
+            },
+        )
+        assert login.status_code == 200
+        token = login.json()["access_token"]
+        headers = {"Authorization": f"Bearer {token}"}
+
+        optimize_response = client.post(
+            f"/api/production-cycles/{cycle.id}/optimize",
+            json={"objective": "MAX_PROFIT"},
+            headers=headers,
+        )
+        assert optimize_response.status_code == 200, optimize_response.text
+
+        apply_response = client.post(
+            f"/api/production-cycles/{cycle.id}/optimize/apply",
+            headers=headers,
+        )
+        assert apply_response.status_code == 200, apply_response.text
+
+        before_edit = client.get(
+            f"/api/resource-utilization/{cycle.id}", headers=headers,
+        )
+        wood_before = before_edit.json()["resources"][0]
+        assert Decimal(wood_before["consumed_quantity"]) > Decimal("0")
+
+        patch_response = client.patch(
+            f"/api/production-cycles/{cycle.id}/resources/{wood.id}",
+            json={"available_quantity": "500.0000"},
+            headers=headers,
+        )
+        assert patch_response.status_code == 200, patch_response.text
+
+        response = client.get(
+            f"/api/resource-utilization/{cycle.id}", headers=headers,
+        )
+        assert response.status_code == 200
+        data = response.json()
+
+        wood_row = data["resources"][0]
+        assert Decimal(wood_row["consumed_quantity"]) == Decimal("0")
+        assert Decimal(wood_row["remaining_quantity"]) == Decimal(
+            "500.0000"
+        )
+        assert Decimal(wood_row["utilization_rate"]) == Decimal("0.00")
+        assert wood_row["status"] == "normal"
+
+    finally:
+        from app.database.models import (
+            ProductionAllocation,
+            ProductionApplication,
+            ProductionApplicationItem,
+            ProductionApplicationResourceItem,
+            OptimizationResult,
+            OptimizationRun,
+        )
+
+        application_ids = [
+            row[0] for row in db.query(ProductionApplication.id).filter(
+                ProductionApplication.production_cycle_id == cycle.id
+            ).all()
+        ]
+
+        if application_ids:
+            db.query(ProductionApplicationResourceItem).filter(
+                ProductionApplicationResourceItem
+                .production_application_id.in_(application_ids)
+            ).delete(synchronize_session=False)
+            db.query(ProductionApplicationItem).filter(
+                ProductionApplicationItem.production_application_id.in_(
+                    application_ids
+                )
+            ).delete(synchronize_session=False)
+            db.query(ProductionApplication).filter(
+                ProductionApplication.id.in_(application_ids)
+            ).delete(synchronize_session=False)
+
+        db.query(ProductionAllocation).filter(
+            ProductionAllocation.production_cycle_id == cycle.id
+        ).delete(synchronize_session=False)
+
+        run_ids = [
+            row[0] for row in db.query(OptimizationRun.id).filter(
+                OptimizationRun.production_cycle_id == cycle.id
+            ).all()
+        ]
+        if run_ids:
+            db.query(OptimizationResult).filter(
+                OptimizationResult.optimization_run_id.in_(run_ids)
+            ).delete(synchronize_session=False)
+            db.query(OptimizationRun).filter(
+                OptimizationRun.id.in_(run_ids)
+            ).delete(synchronize_session=False)
+
+        db.query(CycleResource).filter(
+            CycleResource.production_cycle_id == cycle.id
+        ).delete(synchronize_session=False)
+        db.delete(cycle)
+        db.delete(requirement)
+        db.delete(table)
+        db.delete(wood)
+        db.query(User).filter(
+            User.username == "single_resource_regression_user"
+        ).delete()
+        db.commit()
