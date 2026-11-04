@@ -226,17 +226,18 @@ def test_repeated_applies_succeed_without_fresh_capacity(
         assert labor_item.consumed_quantity == Decimal("576.0000")
 
 
-def test_resource_utilization_shows_true_over_allocation_after_repeated_applies(
+def test_resource_utilization_shows_only_the_latest_apply_after_repeated_applies(
     client, db, cleanup_applications, optimization_cycle,
 ):
     """
-    Requirement 3 of the approved business-rule change: utilization
-    reporting must show the TRUE, uncapped total after repeated
-    applies - never capped at 100%, never reset, and
-    remaining_quantity may go negative. Two applies of the same plan
-    each consume Test Labor's full 576 capacity, for 1152 against a
-    declared 576 - double its capacity - and the report must say so
-    plainly rather than hide it.
+    Business requirement (supersedes this test's earlier "shows the
+    true cumulative total" version): the Resource Utilization Report
+    must show the LATEST successfully applied Production Allocation
+    ONLY - never the combined consumption of earlier applications. The
+    ledger itself still accumulates (both ProductionApplication rows
+    below remain, and get_cycle_consumed_by_resource - unscoped -
+    would still report 1152) - only this REPORT's displayed figure is
+    scoped to the second apply's own 576, not 576 + 576.
     """
 
     _optimize(client, optimization_cycle.id)
@@ -262,17 +263,32 @@ def test_resource_utilization_shows_true_over_allocation_after_repeated_applies(
         if item["resource_name"] == "Test Labor"
     )
 
+    # The latest apply's own consumption (576) - never the two
+    # applies' combined 1152.
     assert Decimal(labor["consumed_quantity"]) == Decimal(
-        "1152.0000"
+        "576.0000"
     )
     assert Decimal(labor["available_quantity"]) == Decimal(
         "576.0000"
     )
-    assert Decimal(labor["utilization_rate"]) == Decimal("200.00")
+    assert Decimal(labor["utilization_rate"]) == Decimal("100.00")
     assert Decimal(labor["remaining_quantity"]) == Decimal(
-        "-576.0000"
+        "0.0000"
     )
     assert labor["status"] == "bottleneck"
+
+    # The ledger itself is untouched - the unscoped, all-time helper
+    # still reports the full cumulative total across both applies.
+    from app.services.production_application import (
+        get_cycle_consumed_by_resource,
+    )
+
+    labor_resource = next(
+        resource for resource in optimization_cycle.cycle_resources
+        if resource.resource.name == "Test Labor"
+    )
+    all_time = get_cycle_consumed_by_resource(db, optimization_cycle.id)
+    assert all_time[labor_resource.resource_id] == Decimal("1152.0000")
 
 
 def test_production_allocation_still_holds_only_the_latest_plan(
